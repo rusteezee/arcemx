@@ -360,16 +360,26 @@ async def _start_health_server(port: int):
                 from fetchers.indmoney_mcp import sync_to_supabase
                 try:
                     result = await sync_to_supabase(user_id=uid)
-                    # Also re-run Gemini analysis in background after sync
+                    # Kick off Gemini analysis in background. Don't block the
+                    # HTTP response on it — the dashboard polls the analysis
+                    # table separately so a slow Gemini call will not time out
+                    # the client.
                     refresh_analysis = bool(payload.get("refresh_analysis", True))
                     if refresh_analysis:
                         try:
                             from analyzer.aggregator import run as run_analysis
                             import asyncio as _asyncio
-                            # Run in thread pool since aggregator is sync
-                            loop = _asyncio.get_event_loop()
-                            await loop.run_in_executor(None, run_analysis)
-                            result["analysis"] = "refreshed"
+
+                            async def _bg_analysis():
+                                try:
+                                    loop = _asyncio.get_event_loop()
+                                    await loop.run_in_executor(None, run_analysis)
+                                    print("Background analysis refresh complete")
+                                except Exception as bgerr:
+                                    print(f"Background analysis failed: {bgerr}")
+
+                            _asyncio.create_task(_bg_analysis())
+                            result["analysis"] = "queued"
                         except Exception as ae:
                             result["analysis_error"] = str(ae)
                     out = _json.dumps({"ok": True, **result}).encode()

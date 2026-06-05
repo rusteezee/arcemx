@@ -60,7 +60,7 @@ def build_payload() -> dict:
     merged.sort(key=lambda n: n.get("published_at") or "", reverse=True)
     news_compact = [
         {"src": n["source"], "title": n["title"], "pub": n.get("published_at")}
-        for n in merged[:50]
+        for n in merged[:120]
     ]
     print(f"News in payload: {len(news_compact)} items")
 
