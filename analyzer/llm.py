@@ -56,6 +56,12 @@ Return STRICT JSON only matching this schema:
 
 If user_holdings empty, return empty portfolio_verdicts.
 If user_wishlist empty, return empty wishlist_signals.
+
+CRITICAL: reasoning_breakdown is REQUIRED on every response. You MUST include all 5 keys
+(technicals, macro, news_flow, sentiment, prior_call_check) with non-empty string values.
+Each value must be a concrete 1-2 sentence breakdown for that dimension. Do NOT omit
+this object. Do NOT leave any key empty. If you have no data for a key, say so
+explicitly in that key's value rather than skipping it.
 """
 
 
