@@ -108,26 +108,28 @@ export function Demo() {
             <div className="p-5 border-b border-border">
               <div className="section-num">Short Term Picks</div>
             </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
-                  <th className="px-4 py-3 font-medium">Ticker</th>
-                  <th className="px-4 py-3 font-medium">Entry</th>
-                  <th className="px-4 py-3 font-medium">Target</th>
-                  <th className="px-4 py-3 font-medium">Stop</th>
-                </tr>
-              </thead>
-              <tbody>
-                {SAMPLE.shortTerm.map((r) => (
-                  <tr key={r.t} className="border-t border-border">
-                    <td className="px-4 py-3 font-medium">{r.t}</td>
-                    <td className="px-4 py-3 num text-[var(--muted)]">{r.e}</td>
-                    <td className="px-4 py-3 num text-[var(--gain)]">{r.g}</td>
-                    <td className="px-4 py-3 num text-[var(--loss)]">{r.s}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[560px]">
+                <thead>
+                  <tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
+                    <th className="px-4 py-3 font-medium">Ticker</th>
+                    <th className="px-4 py-3 font-medium">Entry</th>
+                    <th className="px-4 py-3 font-medium">Target</th>
+                    <th className="px-4 py-3 font-medium">Stop</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {SAMPLE.shortTerm.map((r) => (
+                    <tr key={r.t} className="border-t border-border">
+                      <td className="px-4 py-3 font-medium">{r.t}</td>
+                      <td className="px-4 py-3 num text-[var(--muted)] whitespace-nowrap">{r.e}</td>
+                      <td className="px-4 py-3 num text-[var(--gain)] whitespace-nowrap">{r.g}</td>
+                      <td className="px-4 py-3 num text-[var(--loss)] whitespace-nowrap">{r.s}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
