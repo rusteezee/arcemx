@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+  --muted: #a1a1aa;
+  --muted-bg: #18181b;
+  --border: #27272a;
+  --accent: #fafafa;
+  --gain: #4ade80;
+  --loss: #f87171;
+  --warn: #facc15;
+  --card: #111111;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-bg: var(--muted-bg);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+  --color-warn: var(--warn);
+  --color-card: var(--card);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* { border-color: var(--border); }
+
+html { scroll-behavior: smooth; }
+section[id] { scroll-margin-top: 100px; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+::selection { background: var(--foreground); color: var(--background); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+.section-num {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.glyph {
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: 300;
+  color: var(--muted);
+  user-select: none;
+}
+
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  background: var(--foreground); color: var(--background);
+  padding: 0.75rem 1.4rem; border-radius: 999px;
+  font-size: 0.92rem; font-weight: 500;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  border: none; cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  border: 1px solid var(--border); color: var(--foreground);
+  padding: 0.7rem 1.3rem; border-radius: 999px;
+  font-size: 0.92rem; font-weight: 500;
+  background: transparent;
+  transition: background 0.15s ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-ghost:hover { background: var(--muted-bg); }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.card:hover { border-color: color-mix(in srgb, var(--foreground) 18%, var(--border)); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.25rem 0.75rem; border-radius: 999px;
+  font-size: 0.74rem; font-weight: 500;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border);
+  background: var(--muted-bg);
+  color: var(--foreground);
+}
+.pill-gain { color: var(--gain); border-color: color-mix(in srgb, var(--gain) 35%, transparent); background: color-mix(in srgb, var(--gain) 8%, transparent); }
+.pill-loss { color: var(--loss); border-color: color-mix(in srgb, var(--loss) 35%, transparent); background: color-mix(in srgb, var(--loss) 8%, transparent); }
+.pill-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+
+.headline {
+  font-size: clamp(2.8rem, 6vw, 5.5rem);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+}
+.sub-headline {
+  font-size: clamp(1rem, 1.5vw, 1.2rem);
+  color: var(--muted);
+  letter-spacing: -0.01em;
+  line-height: 1.55;
+}
+
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+.spotlight {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 600px;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(ellipse 62% 80% at 50% 0%, color-mix(in srgb, var(--foreground) 14%, transparent), transparent 70%);
+}
