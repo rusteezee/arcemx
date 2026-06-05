@@ -43,7 +43,14 @@ Return STRICT JSON only matching this schema:
   "global_factors": ["..."],
   "key_news_drivers": ["..."],
   "search_trend_signals": ["..."],
-  "reasoning": "2-3 paragraph synthesis",
+  "reasoning": "2-3 sentence synthesis summarising the call",
+  "reasoning_breakdown": {
+    "technicals": "1-2 sentence breakdown of NIFTY/Bank NIFTY technical setup: trend, key levels, RSI, MACD, breakout/breakdown signals.",
+    "macro": "1-2 sentence breakdown of macro context: USD/INR, crude, RBI tone, rate-cut expectations, global cues.",
+    "news_flow": "1-2 sentence breakdown of dominant news catalysts driving sectors today.",
+    "sentiment": "1-2 sentence breakdown of search trend / Reddit / FII-DII flow signals.",
+    "prior_call_check": "1-2 sentence reflection on yesterday's call: hit or miss, what self_feedback says, how confidence was adjusted."
+  },
   "disclaimer": "Not SEBI-registered investment advice. For educational purposes only. Do your own research."
 }
 

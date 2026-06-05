@@ -170,11 +170,7 @@ export default function TodayPage() {
       </Section>
 
       <Section num="005 / 005" title="Reasoning" glyph="✦">
-        <div className="card p-6">
-          <p className="text-sm leading-relaxed text-[var(--foreground)]">
-            {raw.reasoning || "No reasoning available."}
-          </p>
-        </div>
+        <ReasoningCard summary={raw.reasoning} breakdown={raw.reasoning_breakdown} />
       </Section>
     </>
   );
@@ -222,4 +218,54 @@ function VerdictPill({ v }: { v: string }) {
     exit: "pill-loss",
   };
   return <span className={`pill ${map[v?.toLowerCase()] || ""}`}>{v?.toUpperCase()}</span>;
+}
+
+const REASONING_LABELS: Record<string, string> = {
+  technicals: "Technicals",
+  macro: "Macro",
+  news_flow: "News Flow",
+  sentiment: "Sentiment",
+  prior_call_check: "Prior Call Check",
+};
+
+function ReasoningCard({
+  summary,
+  breakdown,
+}: {
+  summary?: string;
+  breakdown?: Record<string, string> | null;
+}) {
+  const points = breakdown
+    ? Object.entries(breakdown).filter(([, v]) => typeof v === "string" && v.trim().length > 0)
+    : [];
+
+  if (!summary && points.length === 0) {
+    return (
+      <div className="card p-6">
+        <p className="text-sm leading-relaxed text-[var(--muted)]">No reasoning available.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-6 md:p-8">
+      {summary && (
+        <p className="text-sm md:text-[0.95rem] text-foreground leading-relaxed mb-6 max-w-3xl">
+          {summary}
+        </p>
+      )}
+      {points.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">
+          {points.map(([key, text]) => (
+            <div key={key} className="border-l border-border pl-4">
+              <div className="text-[0.7rem] uppercase tracking-wider text-[var(--muted)] mb-1.5 font-medium">
+                {REASONING_LABELS[key] || key.replace(/_/g, " ")}
+              </div>
+              <p className="text-sm text-[var(--muted)] leading-relaxed">{text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

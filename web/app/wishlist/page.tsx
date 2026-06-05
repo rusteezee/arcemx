@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Section } from "@/components/Section";
+import { motion } from "framer-motion";
 import { EmptyState } from "@/components/EmptyState";
 import { TickerRow } from "@/components/TickerRow";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
@@ -61,71 +60,68 @@ export default function WishlistPage() {
         </h1>
       </div>
 
-      {ind.length > 0 && (
-        <Section num="001" title="Indian Stocks" glyph="✦">
-          <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.05 }}
-            className="card overflow-hidden"
-          >
-            <table className="data" style={{ tableLayout: "fixed" }}>
-              <colgroup>
-                <col style={{ width: "24%" }} />
-                <col style={{ width: "19%" }} />
-                <col style={{ width: "19%" }} />
-                <col style={{ width: "19%" }} />
-                <col style={{ width: "19%" }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Last</th>
-                  <th>Day %</th>
-                  <th>52W high</th>
-                  <th>52W low</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ind.map((r) => <TickerRow key={r.ticker} {...r} price={r.last} />)}
-              </tbody>
-            </table>
-          </motion.div>
-        </Section>
-      )}
-
-      {us.length > 0 && (
-        <Section num="002" title="US Stocks" glyph="◈">
-          <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-            className="card overflow-hidden"
-          >
-            <table className="data" style={{ tableLayout: "fixed" }}>
-              <colgroup>
-                <col style={{ width: "24%" }} />
-                <col style={{ width: "19%" }} />
-                <col style={{ width: "19%" }} />
-                <col style={{ width: "19%" }} />
-                <col style={{ width: "19%" }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Last</th>
-                  <th>Day %</th>
-                  <th>52W high</th>
-                  <th>52W low</th>
-                </tr>
-              </thead>
-              <tbody>
-                {us.map((r) => <TickerRow key={r.ticker} {...r} price={r.last} />)}
-              </tbody>
-            </table>
-          </motion.div>
-        </Section>
-      )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-14">
+        {ind.length > 0 && (
+          <WishlistBlock num="001" title="Indian Stocks" glyph="✦" rows={ind} delay={0.05} />
+        )}
+        {us.length > 0 && (
+          <WishlistBlock num="002" title="US Stocks" glyph="◈" rows={us} delay={0.15} />
+        )}
+      </div>
     </>
+  );
+}
+
+function WishlistBlock({
+  num,
+  title,
+  glyph,
+  rows,
+  delay,
+}: {
+  num: string;
+  title: string;
+  glyph: string;
+  rows: WL[];
+  delay: number;
+}) {
+  return (
+    <div>
+      <div className="mb-5">
+        <div className="section-num mb-2">{num}</div>
+        <h2 className="text-2xl font-semibold tracking-tight flex items-center gap-3">
+          <span className="glyph text-lg">{glyph}</span>
+          {title}
+        </h2>
+      </div>
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay }}
+        className="card overflow-hidden"
+      >
+        <table className="data" style={{ tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: "24%" }} />
+            <col style={{ width: "19%" }} />
+            <col style={{ width: "19%" }} />
+            <col style={{ width: "19%" }} />
+            <col style={{ width: "19%" }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Last</th>
+              <th>Day %</th>
+              <th>52W high</th>
+              <th>52W low</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => <TickerRow key={r.ticker} {...r} price={r.last} />)}
+          </tbody>
+        </table>
+      </motion.div>
+    </div>
   );
 }
