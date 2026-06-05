@@ -21,6 +21,8 @@ CALLBACK_PORT = 3030
 
 
 class FileTokenStorage:
+    """Local-only fallback (used if no Supabase env)."""
+
     def __init__(self, path: Path):
         self.path = path
         self.client_path = path.with_suffix(".client.json")
@@ -46,6 +48,79 @@ class FileTokenStorage:
 
     async def set_client_info(self, info):
         self.client_path.write_text(json.dumps(info.model_dump(mode="json")))
+
+
+class SupabaseTokenStorage:
+    """OAuth tokens persisted in Supabase mcp_tokens table. Works across hosts."""
+
+    PROVIDER = "indmoney"
+
+    def __init__(self, user_id: str = "default"):
+        self.user_id = user_id
+        self._sb = None
+
+    def _client(self):
+        if self._sb is None:
+            url = os.getenv("SUPABASE_URL")
+            key = os.getenv("SUPABASE_KEY")
+            if not url or not key:
+                raise RuntimeError("SUPABASE_URL/SUPABASE_KEY missing")
+            self._sb = create_client(url, key)
+        return self._sb
+
+    def _row(self) -> dict | None:
+        try:
+            res = self._client().table("mcp_tokens").select("*").eq(
+                "provider", self.PROVIDER
+            ).eq("user_id", self.user_id).limit(1).execute()
+            return res.data[0] if res.data else None
+        except Exception as e:
+            print(f"Supabase read fail: {e}")
+            return None
+
+    def _upsert(self, fields: dict):
+        payload = {
+            "provider": self.PROVIDER,
+            "user_id": self.user_id,
+            "updated_at": "now()",
+            **fields,
+        }
+        self._client().table("mcp_tokens").upsert(
+            payload, on_conflict="provider,user_id"
+        ).execute()
+
+    async def get_tokens(self):
+        row = self._row()
+        if not row or not row.get("tokens"):
+            return None
+        try:
+            return OAuthToken(**row["tokens"])
+        except Exception as e:
+            print(f"Token parse fail: {e}")
+            return None
+
+    async def set_tokens(self, tokens):
+        self._upsert({"tokens": tokens.model_dump(mode="json")})
+
+    async def get_client_info(self):
+        row = self._row()
+        if not row or not row.get("client_info"):
+            return None
+        try:
+            return OAuthClientInformationFull(**row["client_info"])
+        except Exception as e:
+            print(f"Client info parse fail: {e}")
+            return None
+
+    async def set_client_info(self, info):
+        self._upsert({"client_info": info.model_dump(mode="json")})
+
+
+def _pick_storage(user_id: str = "default"):
+    """Use Supabase if configured, else local file."""
+    if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"):
+        return SupabaseTokenStorage(user_id=user_id)
+    return FileTokenStorage(TOKEN_FILE)
 
 
 async def _capture_callback() -> tuple[str, str]:
@@ -95,8 +170,8 @@ async def _capture_callback() -> tuple[str, str]:
     return captured.get("code"), captured.get("state")
 
 
-def _build_auth_sync():
-    storage = FileTokenStorage(TOKEN_FILE)
+def _build_auth_sync(user_id: str = "default"):
+    storage = _pick_storage(user_id)
 
     async def redirect_handler(url: str):
         import webbrowser
@@ -126,12 +201,12 @@ def _build_auth_sync():
     )
 
 
-async def _build_auth():
-    return _build_auth_sync()
+async def _build_auth(user_id: str = "default"):
+    return _build_auth_sync(user_id)
 
 
-async def call_tool(tool_name: str, args: dict) -> dict:
-    auth = _build_auth_sync()
+async def call_tool(tool_name: str, args: dict, user_id: str = "default") -> dict:
+    auth = _build_auth_sync(user_id)
     async with streamablehttp_client(MCP_URL, auth=auth) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -244,7 +319,7 @@ async def sync_to_supabase(user_id: str = "default"):
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
     sb = create_client(url, key)
 
-    auth = _build_auth_sync()
+    auth = _build_auth_sync(user_id)
     async with streamablehttp_client(MCP_URL, auth=auth) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()

@@ -8,7 +8,6 @@ After this, all bot/cron calls use saved refresh token automatically.
 """
 import asyncio
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 
 from mcp import ClientSession
@@ -20,13 +19,16 @@ load_dotenv()
 
 
 async def main():
+    uid = os.getenv("TELEGRAM_CHAT_ID", "default")
+    backend = "Supabase" if (os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY")) else f"local file ({TOKEN_FILE})"
     print(f"INDmoney MCP: {MCP_URL}")
-    print(f"Token file:   {TOKEN_FILE}")
+    print(f"User ID:      {uid}")
+    print(f"Token store:  {backend}")
     print()
     print("Starting OAuth flow. Browser will open. Log in + authorize.")
     print()
 
-    auth = await _build_auth()
+    auth = await _build_auth(uid)
     async with streamablehttp_client(MCP_URL, auth=auth) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -34,7 +36,7 @@ async def main():
             print(f"\nAuth OK. {len(tools.tools)} tools available:")
             for t in tools.tools:
                 print(f"  - {t.name}")
-            print(f"\nTokens saved → {TOKEN_FILE}")
+            print(f"\nTokens saved → {backend}")
             print("You can now run: python -m fetchers.indmoney_mcp")
 
 
