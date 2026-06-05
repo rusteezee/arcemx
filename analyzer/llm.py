@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.0-flash"
 
 SYSTEM_PROMPT = """You are an Indian equity markets analyst with a moderate-aggressive risk lens.
 Your output is for an individual retail investor in India. You consider technical signals,
