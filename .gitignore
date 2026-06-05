@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.db
+*.sqlite
+data/cache/
+.DS_Store
+.streamlit/secrets.toml
+.indmoney_tokens.json

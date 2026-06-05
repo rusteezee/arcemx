@@ -1,0 +1,53 @@
+ticker,name,cap
+^NSEI,NIFTY 50 Index,index
+^BSESN,SENSEX Index,index
+^NSEBANK,Bank Nifty,index
+RELIANCE.NS,Reliance Industries,large
+TCS.NS,Tata Consultancy Services,large
+HDFCBANK.NS,HDFC Bank,large
+INFY.NS,Infosys,large
+ICICIBANK.NS,ICICI Bank,large
+HINDUNILVR.NS,Hindustan Unilever,large
+ITC.NS,ITC,large
+SBIN.NS,State Bank of India,large
+BHARTIARTL.NS,Bharti Airtel,large
+KOTAKBANK.NS,Kotak Mahindra Bank,large
+LT.NS,Larsen & Toubro,large
+AXISBANK.NS,Axis Bank,large
+ASIANPAINT.NS,Asian Paints,large
+MARUTI.NS,Maruti Suzuki,large
+HCLTECH.NS,HCL Tech,large
+SUNPHARMA.NS,Sun Pharma,large
+TITAN.NS,Titan,large
+BAJFINANCE.NS,Bajaj Finance,large
+WIPRO.NS,Wipro,large
+ULTRACEMCO.NS,UltraTech Cement,large
+NESTLEIND.NS,Nestle India,large
+ADANIENT.NS,Adani Enterprises,large
+NTPC.NS,NTPC,large
+POWERGRID.NS,Power Grid,large
+M&M.NS,Mahindra & Mahindra,large
+TATASTEEL.NS,Tata Steel,large
+JSWSTEEL.NS,JSW Steel,large
+ONGC.NS,ONGC,large
+COALINDIA.NS,Coal India,large
+HINDALCO.NS,Hindalco,large
+ADANIPORTS.NS,Adani Ports,large
+GRASIM.NS,Grasim,large
+BAJAJFINSV.NS,Bajaj Finserv,large
+BPCL.NS,BPCL,large
+BRITANNIA.NS,Britannia,large
+CIPLA.NS,Cipla,large
+DIVISLAB.NS,Divis Lab,large
+DRREDDY.NS,Dr Reddy's,large
+EICHERMOT.NS,Eicher Motors,large
+HEROMOTOCO.NS,Hero MotoCorp,large
+INDUSINDBK.NS,IndusInd Bank,large
+SBILIFE.NS,SBI Life,large
+SHRIRAMFIN.NS,Shriram Finance,large
+TATACONSUM.NS,Tata Consumer,large
+TECHM.NS,Tech Mahindra,large
+TRENT.NS,Trent,large
+APOLLOHOSP.NS,Apollo Hospitals,large
+BAJAJ-AUTO.NS,Bajaj Auto,large
+HDFCLIFE.NS,HDFC Life,large
