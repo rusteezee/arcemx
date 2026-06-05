@@ -315,6 +315,9 @@ async def scheduled_sync():
         print(f"Scheduled sync failed: {e}")
 
 
+_BG_TASKS: set = set()
+
+
 async def _start_health_server(port: int):
     """HTTP server for Render port scan + /trigger/sync webhook."""
     trigger_secret = os.getenv("TRIGGER_SECRET", "")
@@ -372,13 +375,18 @@ async def _start_health_server(port: int):
 
                             async def _bg_analysis():
                                 try:
+                                    print("Background analysis starting...")
                                     loop = _asyncio.get_event_loop()
                                     await loop.run_in_executor(None, run_analysis)
                                     print("Background analysis refresh complete")
                                 except Exception as bgerr:
+                                    import traceback
                                     print(f"Background analysis failed: {bgerr}")
+                                    traceback.print_exc()
 
-                            _asyncio.create_task(_bg_analysis())
+                            task = _asyncio.create_task(_bg_analysis())
+                            _BG_TASKS.add(task)
+                            task.add_done_callback(_BG_TASKS.discard)
                             result["analysis"] = "queued"
                         except Exception as ae:
                             result["analysis_error"] = str(ae)
