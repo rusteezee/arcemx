@@ -2,7 +2,7 @@
 import os
 import json
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client
@@ -26,9 +26,42 @@ def build_payload() -> dict:
     signals = screen_universe(universe)
     ranked = rank_candidates(signals, n=15)
 
-    print("Fetching news...")
-    news = fetch_rss()[:80] + fetch_gnews()[:40]
-    news_compact = [{"src": n["source"], "title": n["title"], "pub": n.get("published_at")} for n in news]
+    print("Fetching news (live + DB lookback)...")
+    # Live pull (latest possible)
+    live_news = fetch_rss()[:80] + fetch_gnews()[:40]
+    # DB lookback: pull last 72h to bridge weekend/gap days
+    lookback_hours = 72
+    db_news = []
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
+    if url and key:
+        try:
+            sb = create_client(url, key)
+            since = (datetime.utcnow() - timedelta(hours=lookback_hours)).isoformat()
+            res = sb.table("news").select("source,title,url,published_at").gte(
+                "published_at", since
+            ).order("published_at", desc=True).limit(200).execute()
+            db_news = res.data or []
+            print(f"DB news (last {lookback_hours}h): {len(db_news)}")
+        except Exception as e:
+            print(f"DB news fetch fail: {e}")
+
+    # Merge + dedupe by URL
+    seen_urls = set()
+    merged = []
+    for n in live_news + db_news:
+        u = n.get("url") or ""
+        if u and u in seen_urls:
+            continue
+        if u:
+            seen_urls.add(u)
+        merged.append(n)
+    # Sort by published_at desc
+    merged.sort(key=lambda n: n.get("published_at") or "", reverse=True)
+    news_compact = [
+        {"src": n["source"], "title": n["title"], "pub": n.get("published_at")}
+        for n in merged[:120]
+    ]
+    print(f"News in payload: {len(news_compact)} items")
 
     print("Fetching trends...")
     trends = fetch_trends()
@@ -40,14 +73,29 @@ def build_payload() -> dict:
     idx_snap = latest_snapshot(["^NSEI", "^BSESN", "^NSEBANK", "^DJI", "^IXIC", "^GSPC"])
 
     print("User holdings + wishlist...")
-    holdings, wishlist = [], []
-    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
+    holdings, wishlist, prior_call = [], [], None
     if url and key:
         sb = create_client(url, key)
         h = sb.table("portfolio").select("ticker,qty,avg_buy_price").execute()
         holdings = h.data or []
         w = sb.table("wishlist").select("ticker").execute()
         wishlist = [x["ticker"] for x in (w.data or [])]
+        # Prior analysis for self-context
+        try:
+            prev = sb.table("analysis").select("run_at,market_mood,raw_json").order(
+                "run_at", desc=True
+            ).limit(1).execute()
+            if prev.data:
+                pr = prev.data[0]
+                prior_call = {
+                    "run_at": pr.get("run_at"),
+                    "market_mood": pr.get("market_mood"),
+                    "nifty_outlook": (pr.get("raw_json") or {}).get("nifty_outlook"),
+                    "sensex_outlook": (pr.get("raw_json") or {}).get("sensex_outlook"),
+                    "short_term_picks": (pr.get("raw_json") or {}).get("short_term_picks", [])[:5],
+                }
+        except Exception as e:
+            print(f"Prior call fetch fail: {e}")
 
     return {
         "timestamp": datetime.utcnow().isoformat(),
@@ -59,6 +107,8 @@ def build_payload() -> dict:
         "reddit_hot": reddit_posts[:20],
         "user_holdings": holdings,
         "user_wishlist": wishlist,
+        "prior_call": prior_call,
+        "news_lookback_hours": 72,
     }
 
 
