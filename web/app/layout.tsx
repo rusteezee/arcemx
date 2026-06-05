@@ -37,19 +37,19 @@ export default function RootLayout({
           </div>
         </main>
         <footer className="border-t border-border py-8 mt-10">
-          <div className="max-w-7xl mx-auto px-6 lg:px-10 flex justify-between items-center text-xs text-[var(--muted)]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 flex flex-col sm:flex-row justify-between sm:items-center items-start gap-4 text-xs text-[var(--muted)]">
             <div className="flex items-baseline gap-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/logo-mark.svg"
                 alt=""
                 aria-hidden
-                className="h-6 w-auto select-none pointer-events-none"
+                className="h-6 w-auto select-none pointer-events-none shrink-0"
                 draggable={false}
               />
               <span>Arc&apos;emX! · Built with intent.</span>
             </div>
-            <span className="pill text-[0.7rem] tracking-wide">
+            <span className="pill text-[0.7rem] tracking-wide self-start sm:self-auto">
               Not SEBI registered investment advice. Educational only.
             </span>
           </div>
