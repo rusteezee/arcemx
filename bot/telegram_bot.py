@@ -360,6 +360,18 @@ async def _start_health_server(port: int):
                 from fetchers.indmoney_mcp import sync_to_supabase
                 try:
                     result = await sync_to_supabase(user_id=uid)
+                    # Also re-run Gemini analysis in background after sync
+                    refresh_analysis = bool(payload.get("refresh_analysis", True))
+                    if refresh_analysis:
+                        try:
+                            from analyzer.aggregator import run as run_analysis
+                            import asyncio as _asyncio
+                            # Run in thread pool since aggregator is sync
+                            loop = _asyncio.get_event_loop()
+                            await loop.run_in_executor(None, run_analysis)
+                            result["analysis"] = "refreshed"
+                        except Exception as ae:
+                            result["analysis_error"] = str(ae)
                     out = _json.dumps({"ok": True, **result}).encode()
                     status_line = b"HTTP/1.1 200 OK\r\n"
                 except Exception as e:
