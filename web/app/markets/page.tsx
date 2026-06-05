@@ -1,0 +1,176 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Section } from "@/components/Section";
+import { Stat } from "@/components/Stat";
+import { LineChart } from "@/components/LineChart";
+import { Heatmap } from "@/components/Heatmap";
+import { sb, DEFAULT_UID } from "@/lib/supabase";
+import { fetchQuote, fetchHistory } from "@/lib/quotes";
+import { formatPct, stripTicker } from "@/lib/utils";
+
+const NIFTY50 = [
+  "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
+  "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
+  "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "HCLTECH.NS",
+  "SUNPHARMA.NS", "TITAN.NS", "BAJFINANCE.NS", "WIPRO.NS", "NTPC.NS",
+  "POWERGRID.NS", "M&M.NS", "TATASTEEL.NS", "JSWSTEEL.NS", "ONGC.NS",
+];
+
+const INDICES = [
+  { sym: "^NSEI", name: "Nifty 50" },
+  { sym: "^BSESN", name: "Sensex" },
+  { sym: "^NSEBANK", name: "Bank Nifty" },
+];
+
+const PRESETS = ["^NSEI", "^BSESN", "^NSEBANK", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS"];
+const PERIODS: { label: string; range: string }[] = [
+  { label: "1M", range: "1mo" },
+  { label: "3M", range: "3mo" },
+  { label: "6M", range: "6mo" },
+  { label: "1Y", range: "1y" },
+  { label: "5Y", range: "5y" },
+];
+
+export default function MarketsPage() {
+  const [idxQuotes, setIdxQuotes] = useState<Record<string, any>>({});
+  const [sel, setSel] = useState("^NSEI");
+  const [period, setPeriod] = useState("6mo");
+  const [chart, setChart] = useState<Array<{ date: string; value: number }>>([]);
+  const [heat, setHeat] = useState<Array<{ ticker: string; pct: number; weight: number }>>([]);
+  const [custom, setCustom] = useState("");
+
+  useEffect(() => {
+    INDICES.forEach(async ({ sym }) => {
+      const q = await fetchQuote(sym);
+      if (q) setIdxQuotes((p) => ({ ...p, [sym]: q }));
+    });
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const q = await fetchHistory(sel, period);
+      if (q?.history) {
+        setChart(q.history.map((h) => ({ date: h.date, value: h.close })));
+      } else {
+        setChart([]);
+      }
+    })();
+  }, [sel, period]);
+
+  useEffect(() => {
+    (async () => {
+      const wl = await sb.from("wishlist").select("ticker").eq("user_id", DEFAULT_UID);
+      const pf = await sb.from("portfolio").select("ticker").eq("user_id", DEFAULT_UID);
+      const extra = [
+        ...(wl.data?.map((r: any) => r.ticker) || []),
+        ...(pf.data?.map((r: any) => r.ticker) || []),
+      ];
+      const all = Array.from(new Set([...NIFTY50, ...extra]));
+      const rows: Array<{ ticker: string; pct: number; weight: number }> = [];
+      await Promise.all(
+        all.map(async (t) => {
+          const q = await fetchQuote(t);
+          if (q?.last != null) {
+            rows.push({ ticker: t, pct: q.pct ?? 0, weight: Math.abs(q.last) + 1 });
+          }
+        })
+      );
+      setHeat(rows);
+    })();
+  }, []);
+
+  return (
+    <>
+      <div className="mb-12">
+        <div className="section-num mb-2">000 · Markets</div>
+        <h1 className="headline mb-3">
+          Live Indices, Charts, <span className="italic">Heatmap.</span>
+        </h1>
+      </div>
+
+      <Section num="001 / 003" title="Indices" glyph="✦">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {INDICES.map(({ sym, name }) => {
+            const q = idxQuotes[sym];
+            return (
+              <Stat
+                key={sym}
+                label={name}
+                value={q?.last != null ? q.last.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "·"}
+                delta={q?.pct != null ? formatPct(q.pct) : undefined}
+                deltaPositive={q?.pct >= 0}
+              />
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section
+        num="002 / 003"
+        title="Chart"
+        glyph="◈"
+        action={
+          <div className="flex gap-1.5 flex-wrap">
+            {PERIODS.map((p) => (
+              <button
+                key={p.range}
+                onClick={() => setPeriod(p.range)}
+                className={`px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
+                  period === p.range
+                    ? "bg-foreground text-background"
+                    : "hover:bg-[var(--muted-bg)]"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <div className="card p-6">
+          <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap">
+              {PRESETS.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setSel(p)}
+                  className={`px-2.5 py-1 text-xs rounded-md border border-border transition-colors ${
+                    sel === p ? "bg-foreground text-background" : "hover:bg-[var(--muted-bg)]"
+                  }`}
+                >
+                  {stripTicker(p)}
+                </button>
+              ))}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (custom) setSel(custom.toUpperCase());
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  value={custom}
+                  onChange={(e) => setCustom(e.target.value)}
+                  placeholder="Add ticker"
+                  className="px-2.5 py-1 text-xs rounded-md border border-border bg-transparent w-28 focus:outline-none focus:border-foreground"
+                />
+              </form>
+            </div>
+            <div className="text-sm text-[var(--muted)]">{stripTicker(sel)}</div>
+          </div>
+          <LineChart data={chart} height={380} color="var(--foreground)" />
+        </div>
+      </Section>
+
+      <Section
+        num="003 / 003"
+        title="Heatmap"
+        glyph="⬡"
+        description="NIFTY 50 plus your portfolio and wishlist. Tone by day percent change."
+      >
+        <Heatmap items={heat} />
+      </Section>
+    </>
+  );
+}
