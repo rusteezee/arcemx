@@ -315,6 +315,31 @@ async def scheduled_sync():
         print(f"Scheduled sync failed: {e}")
 
 
+async def _start_health_server(port: int):
+    """Tiny HTTP server so Render's port scan passes."""
+    async def handle(reader, writer):
+        try:
+            await reader.readline()
+            while True:
+                ln = await reader.readline()
+                if ln in (b"\r\n", b"\n", b""):
+                    break
+            body = b"OK"
+            resp = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/plain\r\n"
+                b"Content-Length: 2\r\n"
+                b"Connection: close\r\n\r\n" + body
+            )
+            writer.write(resp)
+            await writer.drain()
+        finally:
+            writer.close()
+    server = await asyncio.start_server(handle, "0.0.0.0", port)
+    print(f"Health server on :{port}")
+    return server
+
+
 async def _post_init(app: Application):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -322,6 +347,10 @@ async def _post_init(app: Application):
     scheduler.add_job(scheduled_sync, CronTrigger(hour=8, minute=0, day_of_week="mon-fri"))
     scheduler.start()
     app.bot_data["scheduler"] = scheduler
+
+    port = int(os.getenv("PORT", "0"))
+    if port:
+        app.bot_data["health"] = await _start_health_server(port)
 
 
 def main():
