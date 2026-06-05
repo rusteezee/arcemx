@@ -173,12 +173,21 @@ async def _capture_callback() -> tuple[str, str]:
 def _build_auth_sync(user_id: str = "default"):
     storage = _pick_storage(user_id)
 
+    is_headless = bool(os.getenv("RENDER") or os.getenv("ARCEMX_NO_BROWSER"))
+
     async def redirect_handler(url: str):
+        if is_headless:
+            raise RuntimeError(
+                "INDmoney OAuth re-auth required. Tokens expired or revoked. "
+                "Re-run `python -m fetchers.indmoney_auth` locally to refresh."
+            )
         import webbrowser
         print(f"\nAuthorize INDmoney in browser:\n{url}\n")
         webbrowser.open(url)
 
     async def callback_handler():
+        if is_headless:
+            raise RuntimeError("Headless host cannot run interactive OAuth flow.")
         print("Waiting for browser callback on http://localhost:3030/callback ...")
         code, state = await _capture_callback()
         if not code:
