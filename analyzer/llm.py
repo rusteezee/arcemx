@@ -68,8 +68,8 @@ explicitly in that key's value rather than skipping it.
 def analyze(payload: dict) -> dict:
     model = genai.GenerativeModel(MODEL, system_instruction=SYSTEM_PROMPT,
                                   generation_config={"response_mime_type": "application/json"})
-    user_msg = "Analyze this market snapshot and return JSON per schema:\n\n" + json.dumps(payload, default=str)[:120000]
-    resp = model.generate_content(user_msg)
+    user_msg = "Analyze this market snapshot and return JSON per schema:\n\n" + json.dumps(payload, default=str)[:80000]
+    resp = model.generate_content(user_msg, request_options={"timeout": 90})
     try:
         return json.loads(resp.text)
     except json.JSONDecodeError:
