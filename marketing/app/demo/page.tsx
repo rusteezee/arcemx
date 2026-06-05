@@ -165,7 +165,7 @@ export default function DemoPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-20 pb-16 lg:pt-24">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 pt-20 pb-16 lg:pt-24">
       <div className="mb-8">
         <span className="pill mb-4">Interactive Demo · Sample Data</span>
         <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
@@ -258,7 +258,7 @@ function TodayView() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
         <div className="card overflow-hidden">
           <div className="p-5 border-b border-border"><div className="section-num">Short Term</div></div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
             <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
               <th className="px-4 py-3 font-medium">Ticker</th>
               <th className="px-4 py-3 font-medium">Entry</th>
@@ -273,12 +273,12 @@ function TodayView() {
                 <td className="px-4 py-3 num text-[var(--loss)]">{r.stop}</td>
               </tr>
             ))}</tbody>
-          </table>
+          </table></div>
         </div>
 
         <div className="card overflow-hidden">
           <div className="p-5 border-b border-border"><div className="section-num">Long Term</div></div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
             <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
               <th className="px-4 py-3 font-medium">Ticker</th>
               <th className="px-4 py-3 font-medium">Entry</th>
@@ -293,13 +293,13 @@ function TodayView() {
                 <td className="px-4 py-3 num text-[var(--muted)]">{r.stop}</td>
               </tr>
             ))}</tbody>
-          </table>
+          </table></div>
         </div>
       </div>
 
       <div className="card overflow-hidden">
         <div className="p-5 border-b border-border"><div className="section-num">Your Portfolio Verdicts</div></div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
           <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
             <th className="px-4 py-3 font-medium">Ticker</th>
             <th className="px-4 py-3 font-medium">Verdict</th>
@@ -316,7 +316,7 @@ function TodayView() {
               <td className="px-4 py-3 num text-[var(--loss)]">{v.stop}</td>
             </tr>
           ))}</tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );
@@ -371,7 +371,7 @@ function PortfolioView() {
         <div className="card p-5"><div className="section-num mb-2">Holdings</div><div className="text-2xl font-semibold num">{d.rows.length}</div></div>
       </div>
       <div className="card overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
           <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
             <th className="px-4 py-3 font-medium">Ticker</th>
             <th className="px-4 py-3 font-medium">Qty</th>
@@ -390,7 +390,7 @@ function PortfolioView() {
               <td className={`px-4 py-3 num font-medium ${r.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{r.pct >= 0 ? "+" : ""}{r.pct.toFixed(2)}%</td>
             </tr>
           ))}</tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );
@@ -404,7 +404,12 @@ function WishlistView() {
       <div>
         <div className="section-num mb-3">Indian Stocks</div>
         <div className="card overflow-hidden">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm table-fixed">
+            <colgroup>
+              <col style={{ width: "42%" }} />
+              <col style={{ width: "30%" }} />
+              <col style={{ width: "28%" }} />
+            </colgroup>
             <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
               <th className="px-4 py-3 font-medium">Ticker</th>
               <th className="px-4 py-3 font-medium">Last</th>
@@ -412,7 +417,7 @@ function WishlistView() {
             </tr></thead>
             <tbody>{ind.map((w) => (
               <tr key={w.t} className="border-t border-border">
-                <td className="px-4 py-3 font-medium">{w.t}</td>
+                <td className="px-4 py-3 font-medium truncate">{w.t}</td>
                 <td className="px-4 py-3 num">₹{w.last.toFixed(2)}</td>
                 <td className={`px-4 py-3 num font-medium ${w.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{w.pct >= 0 ? "+" : ""}{w.pct.toFixed(2)}%</td>
               </tr>
@@ -423,7 +428,12 @@ function WishlistView() {
       <div>
         <div className="section-num mb-3">US Stocks</div>
         <div className="card overflow-hidden">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm table-fixed">
+            <colgroup>
+              <col style={{ width: "42%" }} />
+              <col style={{ width: "30%" }} />
+              <col style={{ width: "28%" }} />
+            </colgroup>
             <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
               <th className="px-4 py-3 font-medium">Ticker</th>
               <th className="px-4 py-3 font-medium">Last</th>
@@ -431,7 +441,7 @@ function WishlistView() {
             </tr></thead>
             <tbody>{us.map((w) => (
               <tr key={w.t} className="border-t border-border">
-                <td className="px-4 py-3 font-medium">{w.t}</td>
+                <td className="px-4 py-3 font-medium truncate">{w.t}</td>
                 <td className="px-4 py-3 num">${w.last.toFixed(2)}</td>
                 <td className={`px-4 py-3 num font-medium ${w.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{w.pct >= 0 ? "+" : ""}{w.pct.toFixed(2)}%</td>
               </tr>
@@ -454,7 +464,7 @@ function AccuracyView() {
         <div className="card p-5"><div className="section-num mb-2">Window</div><div className="text-2xl font-semibold num">30 days</div></div>
       </div>
       <div className="card overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
           <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
             <th className="px-4 py-3 font-medium">Dimension</th>
             <th className="px-4 py-3 font-medium">7d</th>
@@ -471,7 +481,7 @@ function AccuracyView() {
               ))}
             </tr>
           ))}</tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );
@@ -480,7 +490,7 @@ function AccuracyView() {
 function HistoryView() {
   return (
     <div className="card overflow-hidden">
-      <table className="w-full text-sm">
+      <div className="overflow-x-auto"><table className="w-full text-sm min-w-[480px]">
         <thead><tr className="text-left text-[var(--muted)] text-[0.7rem] uppercase tracking-wider">
           <th className="px-4 py-3 font-medium">When</th>
           <th className="px-4 py-3 font-medium">Mood</th>
@@ -491,7 +501,7 @@ function HistoryView() {
             <td className="px-4 py-3"><MoodPill mood={h.mood} /></td>
           </tr>
         ))}</tbody>
-      </table>
+      </table></div>
     </div>
   );
 }

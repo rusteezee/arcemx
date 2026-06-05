@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useRef, useState, useLayoutEffect } from "react";
+import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getMarketState, marketStateLabel, isMarketOpen, type MarketState } from "@/lib/marketState";
 
@@ -39,6 +40,10 @@ export function Nav() {
   const [syncing, setSyncing] = useState(false);
   const [syncState, setSyncState] = useState<"idle" | "ok" | "error">("idle");
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Close mobile menu on route change
+  useEffect(() => { setMobileOpen(false); }, [path]);
 
   // Measure active item position relative to nav buttons container
   useLayoutEffect(() => {
@@ -51,7 +56,6 @@ export function Nav() {
     setPill({ left: aRect.left - cRect.left, width: aRect.width, ready: true });
   }, [path]);
 
-  // Re-measure on resize
   useEffect(() => {
     const onResize = () => {
       const container = navItemsRef.current;
@@ -66,7 +70,6 @@ export function Nav() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // Refresh market state every minute
   useEffect(() => {
     const update = () => setMkt(getMarketState());
     update();
@@ -74,7 +77,6 @@ export function Nav() {
     return () => clearInterval(t);
   }, []);
 
-  // Load last sync
   const fetchLastSync = async () => {
     try {
       const r = await fetch("/api/last-sync", { cache: "no-store" });
@@ -121,20 +123,20 @@ export function Nav() {
   };
 
   const syncText = syncing ? "Syncing" : syncMsg ?? timeAgo(lastSync);
-
   const open = isMarketOpen(mkt);
 
   return (
-    <div className="sticky top-4 z-40 px-4 pointer-events-none">
-      <div className="max-w-fit mx-auto pointer-events-auto">
+    <div className="sticky top-4 z-40 px-3 sm:px-4 pointer-events-none">
+      <div className="md:max-w-fit md:mx-auto pointer-events-auto">
         <motion.nav
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
           className={cn(
-            "grid items-center pl-9 pr-4 py-[11px] gap-20",
+            "flex md:grid items-center w-full",
+            "pl-4 pr-2 md:pl-9 md:pr-4 py-[9px] md:py-[11px] gap-2 md:gap-20",
             "rounded-full border border-border",
-            "bg-[var(--card)]/55 backdrop-blur-md",
+            "bg-[var(--card)]/65 backdrop-blur-md",
             "shadow-[0_8px_30px_rgba(0,0,0,0.08)]"
           )}
           style={{ gridTemplateColumns: "1fr auto 1fr" }}
@@ -142,20 +144,21 @@ export function Nav() {
           <Link
             href="/"
             aria-label="Arc'emX! home"
-            className="flex items-center justify-self-start text-foreground"
+            className="flex items-center md:justify-self-start text-foreground shrink-0"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo-banner.svg"
               alt="Arc'emX!"
-              className="h-8 w-auto select-none pointer-events-none"
+              className="h-7 md:h-8 w-auto select-none pointer-events-none"
               draggable={false}
             />
           </Link>
 
+          {/* Desktop items */}
           <div
             ref={navItemsRef}
-            className="relative flex items-center gap-1 justify-self-center"
+            className="hidden md:flex relative items-center gap-1 justify-self-center"
           >
             {pill.ready && (
               <motion.span
@@ -173,7 +176,7 @@ export function Nav() {
                   href={item.href}
                   data-active={active}
                   className={cn(
-                    "relative z-10 px-5 py-[7px] rounded-full text-sm font-medium transition-colors",
+                    "relative z-10 px-5 py-[7px] rounded-full text-sm font-medium transition-colors whitespace-nowrap",
                     active
                       ? "text-background"
                       : "text-[var(--muted)] hover:text-foreground"
@@ -186,10 +189,10 @@ export function Nav() {
           </div>
 
           {/* Right side controls */}
-          <div className="flex items-center gap-2.5 justify-self-end">
-            {/* Market state dot - fixed width */}
+          <div className="flex items-center gap-1.5 md:gap-2.5 md:justify-self-end ml-auto md:ml-0">
+            {/* Market state dot */}
             <div
-              className="flex items-center gap-1.5 px-2.5 py-[5px] rounded-full border border-border w-[78px] justify-center"
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-[5px] rounded-full border border-border w-[78px] justify-center"
               title={`Market ${marketStateLabel(mkt)}`}
             >
               <span className="relative flex h-2 w-2 shrink-0">
@@ -208,13 +211,14 @@ export function Nav() {
               </span>
             </div>
 
-            {/* Sync button - fixed width */}
+            {/* Sync button - compact on mobile (icon only) */}
             <button
               onClick={onSync}
               disabled={syncing}
               className={cn(
-                "flex items-center gap-1.5 px-2.5 py-[5px] rounded-full border border-border",
-                "text-[0.72rem] font-medium transition-colors w-[96px] justify-center overflow-hidden",
+                "flex items-center gap-1.5 rounded-full border border-border",
+                "text-[0.72rem] font-medium transition-colors overflow-hidden",
+                "size-9 justify-center sm:size-auto sm:w-[96px] sm:px-2.5 sm:py-[5px]",
                 syncing ? "opacity-70" : "hover:bg-[var(--muted-bg)]",
                 "disabled:cursor-not-allowed",
                 syncState === "error" && "border-[color-mix(in_srgb,var(--loss)_50%,transparent)]"
@@ -222,7 +226,7 @@ export function Nav() {
               title={syncMsg || "Sync from INDmoney"}
             >
               <svg
-                width="12" height="12" viewBox="0 0 24 24" fill="none"
+                width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.2"
                 strokeLinecap="round" strokeLinejoin="round"
                 className={cn("shrink-0", syncing && "animate-spin")}
@@ -230,7 +234,7 @@ export function Nav() {
                 <path d="M21 12a9 9 0 1 1-3-6.7" />
                 <path d="M21 3v6h-6" />
               </svg>
-              <div className="relative h-4 flex-1 overflow-hidden">
+              <div className="hidden sm:block relative h-4 flex-1 overflow-hidden">
                 <AnimatePresence mode="popLayout" initial={false}>
                   <motion.span
                     key={syncText}
@@ -252,8 +256,57 @@ export function Nav() {
                 </AnimatePresence>
               </div>
             </button>
+
+            {/* Mobile hamburger */}
+            <button
+              onClick={() => setMobileOpen((v) => !v)}
+              aria-label={mobileOpen ? "Close menu" : "Open menu"}
+              className="md:hidden flex items-center justify-center size-9 rounded-full border border-border text-foreground hover:bg-[var(--muted-bg)] transition-colors"
+            >
+              {mobileOpen ? <X className="size-4" /> : <Menu className="size-4" />}
+            </button>
           </div>
         </motion.nav>
+
+        {/* Mobile dropdown */}
+        <AnimatePresence>
+          {mobileOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+              className="md:hidden mt-2 rounded-2xl border border-border bg-[var(--card)]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.2)] p-2"
+            >
+              {items.map((item) => {
+                const active = path === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setMobileOpen(false)}
+                    className={cn(
+                      "block px-4 py-2.5 rounded-xl text-sm font-medium transition-colors",
+                      active
+                        ? "bg-foreground text-background"
+                        : "text-[var(--muted)] hover:text-foreground hover:bg-[var(--muted-bg)]"
+                    )}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+              {/* Market state shown in mobile menu since hidden in nav */}
+              <div className="sm:hidden mt-2 px-4 py-2.5 flex items-center justify-between text-xs text-[var(--muted)]">
+                <span className="flex items-center gap-2">
+                  <span className={cn("size-2 rounded-full", open ? "bg-[var(--gain)]" : "bg-[var(--muted)]")} />
+                  Market {marketStateLabel(mkt)}
+                </span>
+                <span>{timeAgo(lastSync)}</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

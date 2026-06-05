@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const homeItems = [
@@ -36,6 +36,10 @@ export function Nav() {
   const [pill, setPill] = useState<{ left: number; width: number; ready: boolean }>({
     left: 0, width: 0, ready: false,
   });
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Close mobile menu on route change
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
 
   // Reset active when route (and items) change
   useEffect(() => {
@@ -68,7 +72,7 @@ export function Nav() {
     return () => window.removeEventListener("scroll", onScroll);
   }, [isDemoPage]);
 
-  // Hash listener for demo page (external hash changes)
+  // Hash listener for demo page
   useEffect(() => {
     if (!isDemoPage) return;
     const onHash = () => {
@@ -107,9 +111,9 @@ export function Nav() {
   const handleItemClick = (href: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
     lockUntilRef.current = Date.now() + 1000;
     setActive(href);
+    setMobileOpen(false);
     if (isDemoPage) {
       e.preventDefault();
-      // Update hash without scrolling; dispatch hashchange so demo page reacts
       if (typeof window !== "undefined") {
         history.replaceState(null, "", href);
         window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -118,16 +122,17 @@ export function Nav() {
   };
 
   return (
-    <div className="sticky top-4 z-40 px-4 pointer-events-none">
-      <div className="max-w-fit mx-auto pointer-events-auto">
+    <div className="sticky top-4 z-40 px-3 sm:px-4 pointer-events-none">
+      <div className="md:max-w-fit md:mx-auto pointer-events-auto">
         <motion.nav
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
           className={cn(
-            "grid items-center pl-7 pr-3 py-[11px] gap-24",
+            "flex md:grid items-center w-full",
+            "pl-4 pr-2 md:pl-7 md:pr-3 py-[9px] md:py-[11px]",
             "rounded-full border border-border",
-            "bg-[var(--card)]/55 backdrop-blur-md",
+            "bg-[var(--card)]/65 backdrop-blur-md",
             "shadow-[0_8px_30px_rgba(0,0,0,0.08)]"
           )}
           style={{ gridTemplateColumns: "1fr auto 1fr" }}
@@ -135,18 +140,19 @@ export function Nav() {
           <Link
             href="/"
             aria-label="Arc'emX! home"
-            className="flex items-center justify-self-start text-foreground"
+            className="flex items-center md:justify-self-start text-foreground shrink-0"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo-banner.svg"
               alt="Arc'emX!"
-              className="h-8 w-auto select-none pointer-events-none"
+              className="h-7 md:h-8 w-auto select-none pointer-events-none"
               draggable={false}
             />
           </Link>
 
-          <div ref={itemsRef} className="relative flex items-center gap-1 justify-self-center">
+          {/* Desktop items */}
+          <div ref={itemsRef} className="hidden md:flex relative items-center gap-1 justify-self-center md:mx-24">
             {pill.ready && (
               <motion.span
                 aria-hidden
@@ -165,7 +171,7 @@ export function Nav() {
                   data-active={isActive}
                   onClick={handleItemClick(item.href)}
                   className={cn(
-                    "relative z-10 px-5 py-[7px] rounded-full text-sm font-medium transition-colors",
+                    "relative z-10 px-5 py-[7px] rounded-full text-sm font-medium transition-colors whitespace-nowrap",
                     isActive ? activeTextClass : "text-[var(--muted)] hover:text-foreground"
                   )}
                 >
@@ -175,25 +181,66 @@ export function Nav() {
             })}
           </div>
 
-          <div className="flex items-center gap-2 justify-self-end">
+          {/* Right controls */}
+          <div className="flex items-center gap-1.5 md:gap-2 md:justify-self-end ml-auto md:ml-0">
             {isDemoPage ? (
               <Link
                 href="/"
-                className="btn-primary text-xs !py-[7px] !px-4"
+                className="btn-primary text-xs !py-[7px] !px-3 md:!px-4"
               >
                 <ArrowLeft className="size-3.5" />
-                Back
+                <span className="hidden sm:inline">Back</span>
               </Link>
             ) : (
               <a
                 href={DASHBOARD_URL}
-                className="btn-primary text-xs !py-[7px] !px-4"
+                className="btn-primary text-xs !py-[7px] !px-3 md:!px-4 whitespace-nowrap"
               >
-                Try Dashboard
+                <span className="hidden sm:inline">Try </span>Dashboard
               </a>
             )}
+            {/* Mobile hamburger */}
+            <button
+              onClick={() => setMobileOpen((v) => !v)}
+              aria-label={mobileOpen ? "Close menu" : "Open menu"}
+              className="md:hidden flex items-center justify-center size-9 rounded-full border border-border text-foreground hover:bg-[var(--muted-bg)] transition-colors"
+            >
+              {mobileOpen ? <X className="size-4" /> : <Menu className="size-4" />}
+            </button>
           </div>
         </motion.nav>
+
+        {/* Mobile dropdown */}
+        <AnimatePresence>
+          {mobileOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+              className="md:hidden mt-2 rounded-2xl border border-border bg-[var(--card)]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.2)] p-2"
+            >
+              {items.map((item) => {
+                const isActive = active === item.href;
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    onClick={handleItemClick(item.href)}
+                    className={cn(
+                      "block px-4 py-2.5 rounded-xl text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-foreground text-background"
+                        : "text-[var(--muted)] hover:text-foreground hover:bg-[var(--muted-bg)]"
+                    )}
+                  >
+                    {item.label}
+                  </a>
+                );
+              })}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
