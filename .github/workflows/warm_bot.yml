@@ -1,0 +1,28 @@
+name: Warm Render Bot
+
+# Render free tier sleeps after 15 min idle. Ping bot every 10 min to keep it warm
+# during waking hours so the dashboard sync button responds instantly.
+
+on:
+  schedule:
+    - cron: "*/10 0-19 * * *"  # every 10 min, 00:00-19:59 UTC = 5:30 AM - 1:29 AM IST
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping bot health endpoint
+        run: |
+          set -e
+          URL="${BOT_URL:-https://arcemx.onrender.com/health}"
+          echo "Pinging $URL"
+          # Allow up to 60s for cold-start wake; consider any 2xx/3xx as success
+          status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
+          echo "HTTP $status"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 400 ]; then
+            echo "Warmup ping failed"
+            exit 1
+          fi
+        env:
+          BOT_URL: ${{ vars.BOT_URL }}
