@@ -13,6 +13,7 @@ from fetchers.trends import fetch_trends
 from fetchers.reddit import fetch_hot
 from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm import analyze
+from analyzer.feedback import build_feedback as _load_feedback
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,6 +110,7 @@ def build_payload() -> dict:
         "user_wishlist": wishlist,
         "prior_call": prior_call,
         "news_lookback_hours": 72,
+        "self_feedback": _load_feedback(),
     }
 
 

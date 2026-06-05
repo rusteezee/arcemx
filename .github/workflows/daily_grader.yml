@@ -1,0 +1,29 @@
+name: Daily Prediction Grader
+
+on:
+  schedule:
+    # 21:00 IST = 15:30 UTC, Mon-Fri (after market close)
+    - cron: "30 15 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Grade past predictions
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -m analyzer.grader
