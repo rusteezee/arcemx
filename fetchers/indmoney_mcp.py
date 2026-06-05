@@ -385,6 +385,16 @@ async def sync_to_supabase(user_id: str = "default"):
                 except Exception as e:
                     print(f"holding upsert fail {ticker}: {e}")
 
+    # Log sync timestamp
+    try:
+        sb.table("sync_log").insert({
+            "user_id": user_id,
+            "source": "manual",
+            "ok": True,
+        }).execute()
+    except Exception as e:
+        print(f"sync_log insert fail: {e}")
+
     print(f"\nSynced: {n_h} holdings, {n_w} watchlist items")
     return {"holdings": n_h, "watchlist": n_w}
 

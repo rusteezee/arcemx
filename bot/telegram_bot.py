@@ -316,14 +316,66 @@ async def scheduled_sync():
 
 
 async def _start_health_server(port: int):
-    """Tiny HTTP server so Render's port scan passes."""
+    """HTTP server for Render port scan + /trigger/sync webhook."""
+    trigger_secret = os.getenv("TRIGGER_SECRET", "")
+
     async def handle(reader, writer):
         try:
-            await reader.readline()
+            request_line = (await reader.readline()).decode(errors="ignore").strip()
+            method = request_line.split(" ")[0] if request_line else ""
+            path = request_line.split(" ")[1] if " " in request_line else "/"
+
+            headers: dict[str, str] = {}
             while True:
                 ln = await reader.readline()
                 if ln in (b"\r\n", b"\n", b""):
                     break
+                line = ln.decode(errors="ignore")
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    headers[k.strip().lower()] = v.strip()
+
+            content_length = int(headers.get("content-length", "0") or "0")
+            body_bytes = await reader.readexactly(content_length) if content_length else b""
+
+            if method == "POST" and path.startswith("/trigger/sync"):
+                token = headers.get("x-trigger-token", "")
+                if not trigger_secret or token != trigger_secret:
+                    msg = b'{"error":"unauthorized"}'
+                    resp = (
+                        b"HTTP/1.1 401 Unauthorized\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: " + str(len(msg)).encode() + b"\r\n"
+                        b"Connection: close\r\n\r\n" + msg
+                    )
+                    writer.write(resp); await writer.drain(); return
+
+                import json as _json
+                try:
+                    payload = _json.loads(body_bytes or b"{}")
+                except Exception:
+                    payload = {}
+                uid = str(payload.get("user_id") or os.getenv("TELEGRAM_CHAT_ID", "default"))
+
+                from fetchers.indmoney_mcp import sync_to_supabase
+                try:
+                    result = await sync_to_supabase(user_id=uid)
+                    out = _json.dumps({"ok": True, **result}).encode()
+                    status_line = b"HTTP/1.1 200 OK\r\n"
+                except Exception as e:
+                    out = _json.dumps({"ok": False, "error": str(e)}).encode()
+                    status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+
+                resp = (
+                    status_line +
+                    b"Content-Type: application/json\r\n"
+                    b"Access-Control-Allow-Origin: *\r\n"
+                    b"Content-Length: " + str(len(out)).encode() + b"\r\n"
+                    b"Connection: close\r\n\r\n" + out
+                )
+                writer.write(resp); await writer.drain(); return
+
+            # default health response
             body = b"OK"
             resp = (
                 b"HTTP/1.1 200 OK\r\n"
@@ -333,8 +385,14 @@ async def _start_health_server(port: int):
             )
             writer.write(resp)
             await writer.drain()
+        except Exception as e:
+            print(f"health handler error: {e}")
         finally:
-            writer.close()
+            try:
+                writer.close()
+            except Exception:
+                pass
+
     server = await asyncio.start_server(handle, "0.0.0.0", port)
     print(f"Health server on :{port}")
     return server
