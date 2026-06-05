@@ -367,7 +367,7 @@ function PortfolioView() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <div className="card p-5"><div className="section-num mb-2">Invested</div><div className="text-2xl font-semibold num">₹{d.summary.invested.toLocaleString("en-IN")}</div></div>
         <div className="card p-5"><div className="section-num mb-2">Current</div><div className="text-2xl font-semibold num">₹{d.summary.current.toLocaleString("en-IN")}</div></div>
-        <div className="card p-5"><div className="section-num mb-2">P&L</div><div className={`text-2xl font-semibold num ${d.summary.pnl >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{d.summary.pnl >= 0 ? "+" : ""}₹{d.summary.pnl.toLocaleString("en-IN")}</div><div className={`text-xs num mt-1 ${d.summary.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{d.summary.pct >= 0 ? "+" : ""}{d.summary.pct}%</div></div>
+        <div className="card p-5"><div className="section-num mb-2">P&L</div><div className="text-2xl font-semibold num">{d.summary.pnl >= 0 ? "+" : ""}₹{d.summary.pnl.toLocaleString("en-IN")}</div><div className={`text-xs num mt-1 ${d.summary.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{d.summary.pct >= 0 ? "+" : ""}{d.summary.pct}%</div></div>
         <div className="card p-5"><div className="section-num mb-2">Holdings</div><div className="text-2xl font-semibold num">{d.rows.length}</div></div>
       </div>
       <div className="card overflow-hidden">
