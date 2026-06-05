@@ -153,6 +153,7 @@ table.data th, table.data td { padding: 0.7rem 1rem; text-align: left; border-bo
 table.data th { font-weight: 500; color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; }
 table.data tr:last-child td { border-bottom: none; }
 table.data tr:hover td { background: var(--muted-bg); }
+table.data td.num { white-space: nowrap; }
 
 /* Mobile: allow tables to scroll horizontally inside their card */
 @media (max-width: 768px) {

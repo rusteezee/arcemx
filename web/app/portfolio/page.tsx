@@ -153,10 +153,10 @@ export default function PortfolioPage() {
                   <td className="num">{r.currency}{r.last.toFixed(2)}</td>
                   <td className="num text-[var(--muted)]">{r.currency}{r.invested.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
                   <td className="num">{r.currency}{r.current.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                  <td className={`num font-medium ${r.pnl >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                  <td className={`num font-medium whitespace-nowrap ${r.pnl >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
                     {r.pnl >= 0 ? "+" : ""}{r.currency}{r.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                   </td>
-                  <td className={`num font-medium ${r.pnl_pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                  <td className={`num font-medium whitespace-nowrap ${r.pnl_pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
                     {formatPct(r.pnl_pct)}
                   </td>
                 </tr>
