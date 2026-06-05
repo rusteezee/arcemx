@@ -386,7 +386,7 @@ function PortfolioView() {
               <td className="px-4 py-3 num">{r.qty}</td>
               <td className="px-4 py-3 num">₹{r.avg.toFixed(2)}</td>
               <td className="px-4 py-3 num">₹{r.last.toFixed(2)}</td>
-              <td className={`px-4 py-3 num font-medium whitespace-nowrap ${r.pnl >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{r.pnl >= 0 ? "+" : ""}₹{r.pnl}</td>
+              <td className={`px-4 py-3 num font-medium whitespace-nowrap ${r.pnl >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{r.pnl >= 0 ? "+" : ""}₹{r.pnl.toLocaleString("en-IN")}</td>
               <td className={`px-4 py-3 num font-medium ${r.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{r.pct >= 0 ? "+" : ""}{r.pct.toFixed(2)}%</td>
             </tr>
           ))}</tbody>
