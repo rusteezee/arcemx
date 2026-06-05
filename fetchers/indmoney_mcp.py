@@ -324,9 +324,94 @@ NAME_TO_NSE = {
 }
 
 
+async def _refresh_tokens_if_needed(user_id: str) -> bool:
+    """Manually refresh access token via INDmoney token endpoint.
+    Bypasses SDK auto-refresh which doesn't work reliably with our storage.
+    Returns True if tokens valid after this call.
+    """
+    import httpx
+    import time
+
+    storage = SupabaseTokenStorage(user_id=user_id)
+    row = storage._row()
+    if not row or not row.get("tokens"):
+        return False
+    tokens = row["tokens"]
+    client_info = row.get("client_info") or {}
+
+    refresh_token = tokens.get("refresh_token")
+    client_id = client_info.get("client_id")
+    if not refresh_token or not client_id:
+        print("Missing refresh_token or client_id")
+        return False
+
+    # Check if access likely still valid (updated_at + expires_in - 60s buffer)
+    try:
+        from datetime import datetime, timezone
+        updated_at = datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+        expires_in = int(tokens.get("expires_in", 3600))
+        if datetime.now(timezone.utc).timestamp() < updated_at.timestamp() + expires_in - 60:
+            print(f"Access token still valid for user {user_id}, skipping refresh")
+            return True
+    except Exception:
+        pass
+
+    # Discover token endpoint
+    discovery_url = MCP_URL.rstrip("/").rsplit("/", 1)[0] + "/.well-known/oauth-authorization-server"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            disc = await client.get(discovery_url)
+            disc.raise_for_status()
+            token_endpoint = disc.json().get("token_endpoint")
+        except Exception as e:
+            print(f"Discovery failed: {e}")
+            # Fallback common endpoint
+            token_endpoint = MCP_URL.rstrip("/").rsplit("/", 1)[0] + "/token"
+
+        # Hit token endpoint with refresh_token grant
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        }
+        client_secret = client_info.get("client_secret")
+        if client_secret:
+            data["client_secret"] = client_secret
+
+        try:
+            r = await client.post(token_endpoint, data=data,
+                                  headers={"Content-Type": "application/x-www-form-urlencoded"})
+            if r.status_code != 200:
+                print(f"Token refresh failed: {r.status_code} {r.text[:200]}")
+                return False
+            new_tokens = r.json()
+            # Preserve refresh_token if not returned (common OAuth practice)
+            if "refresh_token" not in new_tokens and refresh_token:
+                new_tokens["refresh_token"] = refresh_token
+            # Persist via direct DB update
+            sb = storage._client()
+            sb.table("mcp_tokens").update({
+                "tokens": new_tokens,
+                "updated_at": "now()",
+            }).eq("provider", "indmoney").eq("user_id", user_id).execute()
+            print(f"Token refreshed for user {user_id}")
+            return True
+        except Exception as e:
+            print(f"Token refresh error: {e}")
+            return False
+
+
 async def sync_to_supabase(user_id: str = "default"):
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
     sb = create_client(url, key)
+
+    # Proactively refresh access token before MCP session
+    refreshed = await _refresh_tokens_if_needed(user_id)
+    if not refreshed:
+        raise RuntimeError(
+            "INDmoney tokens expired or refresh failed. Run "
+            "`python -m fetchers.indmoney_auth` locally to re-authorize."
+        )
 
     auth = _build_auth_sync(user_id)
     async with streamablehttp_client(MCP_URL, auth=auth) as (read, write, _):
