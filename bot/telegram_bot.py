@@ -316,10 +316,21 @@ async def scheduled_sync():
 
 
 _BG_TASKS: set = set()
+_STUB_SRV = None
 
 
 async def _start_health_server(port: int):
     """HTTP server for Render port scan + /trigger/sync webhook."""
+    # Shut down the stub HTTP server first so we can rebind the same port.
+    global _STUB_SRV
+    if _STUB_SRV is not None:
+        try:
+            _STUB_SRV.shutdown()
+            _STUB_SRV.server_close()
+            print("Stub HTTP server shut down; binding real handler")
+        except Exception as e:
+            print(f"Stub shutdown error (continuing): {e}")
+        _STUB_SRV = None
     trigger_secret = os.getenv("TRIGGER_SECRET", "")
 
     async def handle(reader, writer):
@@ -445,7 +456,47 @@ async def _post_init(app: Application):
         app.bot_data["health"] = await _start_health_server(port)
 
 
+def _start_stub_http_server(port: int):
+    """Bind a tiny blocking HTTP server in a daemon thread so Render's port
+    scan passes immediately, before the full PTB application is initialised.
+    Once _post_init runs, the real health server takes over on the same port —
+    but if Telegram getUpdates hits a Conflict (old instance still polling),
+    PTB will retry forever and never reach post_init, which used to time out
+    the entire Render deploy. The stub keeps the port open regardless."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _Stub(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        def log_message(self, *a, **k):  # silence default access logs
+            pass
+
+    try:
+        srv = ThreadingHTTPServer(("0.0.0.0", port), _Stub)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        print(f"Stub HTTP server bound on :{port}")
+        return srv
+    except OSError as e:
+        print(f"Stub HTTP server bind failed (port may already be in use): {e}")
+        return None
+
+
 def main():
+    # Bind a stub HTTP server immediately so Render's port scan sees the
+    # port open within seconds, even if Telegram polling has a Conflict
+    # against a still-shutting-down previous instance.
+    global _STUB_SRV
+    _port_env = int(os.getenv("PORT", "0"))
+    if _port_env:
+        _STUB_SRV = _start_stub_http_server(_port_env)
+
     app = Application.builder().token(TOKEN).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
