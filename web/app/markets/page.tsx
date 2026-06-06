@@ -175,13 +175,15 @@ export default function MarketsPage() {
               </form>
             </div>
             <div className="text-sm text-[var(--muted)] flex items-center gap-3">
-              {chartLoading && (
+              {chartLoading ? (
                 <span className="flex items-center gap-1.5 text-xs">
                   <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
                   Loading
                 </span>
-              )}
-              <span>{stripTicker(sel)}</span>
+              ) : chart.length > 0 ? (
+                <span className="text-xs num">{chart.length} pts</span>
+              ) : null}
+              <span>{stripTicker(sel)} · {period.toUpperCase()}</span>
             </div>
           </div>
           {chartError ? (
@@ -197,6 +199,11 @@ export default function MarketsPage() {
               data={chart}
               height={380}
               color="var(--foreground)"
+              yTickFormatter={(v) =>
+                v >= 1000
+                  ? v.toLocaleString("en-IN", { maximumFractionDigits: 0 })
+                  : v.toFixed(2)
+              }
             />
           )}
         </div>

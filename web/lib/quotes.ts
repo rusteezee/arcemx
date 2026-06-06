@@ -44,9 +44,34 @@ export async function fetchQuote(ticker: string, range = "5d"): Promise<Quote | 
   }
 }
 
+// Pick the best Yahoo interval for a given range so 5Y doesn't try to return
+// 1250 daily candles (which Yahoo sometimes throttles to a few points).
+function intervalForRange(range: string): string {
+  switch (range) {
+    case "1mo":
+    case "3mo":
+      return "1d";
+    case "6mo":
+    case "1y":
+      return "1d";
+    case "2y":
+    case "5y":
+      return "1wk";
+    case "10y":
+    case "max":
+      return "1mo";
+    default:
+      return "1d";
+  }
+}
+
 export async function fetchHistory(ticker: string, range = "6mo"): Promise<Quote | null> {
   try {
-    const r = await fetch(`/api/quote/${encodeURIComponent(ticker)}?range=${range}&interval=1d`);
+    const interval = intervalForRange(range);
+    const r = await fetch(
+      `/api/quote/${encodeURIComponent(ticker)}?range=${range}&interval=${interval}&t=${Date.now()}`,
+      { cache: "no-store" }
+    );
     if (!r.ok) return null;
     const data = await r.json();
     const result = data?.chart?.result?.[0];
