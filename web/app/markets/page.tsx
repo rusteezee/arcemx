@@ -37,6 +37,8 @@ export default function MarketsPage() {
   const [sel, setSel] = useState("^NSEI");
   const [period, setPeriod] = useState("6mo");
   const [chart, setChart] = useState<Array<{ date: string; value: number }>>([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState<string | null>(null);
   const [heat, setHeat] = useState<Array<{ ticker: string; pct: number; weight: number }>>([]);
   const [custom, setCustom] = useState("");
 
@@ -48,14 +50,29 @@ export default function MarketsPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setChartLoading(true);
+    setChartError(null);
     (async () => {
-      const q = await fetchHistory(sel, period);
-      if (q?.history) {
-        setChart(q.history.map((h) => ({ date: h.date, value: h.close })));
-      } else {
-        setChart([]);
+      try {
+        const q = await fetchHistory(sel, period);
+        if (cancelled) return;
+        if (q?.history && q.history.length > 0) {
+          setChart(q.history.map((h) => ({ date: h.date, value: h.close })));
+        } else {
+          setChart([]);
+          setChartError("No data for this ticker / range. Yahoo may be rate-limiting. Try another range or wait.");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setChart([]);
+          setChartError("Chart fetch failed. Retry.");
+        }
+      } finally {
+        if (!cancelled) setChartLoading(false);
       }
     })();
+    return () => { cancelled = true; };
   }, [sel, period]);
 
   useEffect(() => {
@@ -157,9 +174,31 @@ export default function MarketsPage() {
                 />
               </form>
             </div>
-            <div className="text-sm text-[var(--muted)]">{stripTicker(sel)}</div>
+            <div className="text-sm text-[var(--muted)] flex items-center gap-3">
+              {chartLoading && (
+                <span className="flex items-center gap-1.5 text-xs">
+                  <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+                  Loading
+                </span>
+              )}
+              <span>{stripTicker(sel)}</span>
+            </div>
           </div>
-          <LineChart data={chart} height={380} color="var(--foreground)" />
+          {chartError ? (
+            <div
+              style={{ height: 380 }}
+              className="flex items-center justify-center text-center text-sm text-[var(--muted)] px-6"
+            >
+              {chartError}
+            </div>
+          ) : (
+            <LineChart
+              key={`${sel}-${period}`}
+              data={chart}
+              height={380}
+              color="var(--foreground)"
+            />
+          )}
         </div>
       </Section>
 

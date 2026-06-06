@@ -19,20 +19,33 @@ export async function GET(
 
   try {
     const r = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 arcemx-web" },
-      next: { revalidate: 60 },
+      headers: {
+        // Yahoo blocks generic UAs and 'python' libs; mimic a real browser
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+      },
+      cache: "no-store",
     });
     if (!r.ok) {
       return NextResponse.json(
         { error: "yahoo_failed", status: r.status },
-        { status: r.status }
+        {
+          status: r.status,
+          headers: { "cache-control": "no-store" },
+        }
       );
     }
     const data = await r.json();
     return NextResponse.json(data, {
-      headers: { "cache-control": "public, s-maxage=60, stale-while-revalidate=120" },
+      // Short cache so consecutive button clicks for the same range are fast,
+      // but data stays fresh enough for live indices.
+      headers: { "cache-control": "public, s-maxage=30, stale-while-revalidate=60" },
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json(
+      { error: String(e) },
+      { status: 500, headers: { "cache-control": "no-store" } }
+    );
   }
 }
