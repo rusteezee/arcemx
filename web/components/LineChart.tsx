@@ -65,13 +65,13 @@ export function LineChart({
           />
           <YAxis
             tick={{ fontSize: 11, fill: "var(--muted)" }}
-            axisLine={{ stroke: "var(--border)" }}
+            axisLine={false}
             tickLine={false}
             tickFormatter={yTickFormatter}
             domain={["dataMin", "dataMax"]}
             width={68}
             tickMargin={6}
-            padding={{ top: 6, bottom: 10 }}
+            padding={{ top: 0, bottom: 10 }}
           />
           <Tooltip
             contentStyle={{
@@ -112,10 +112,11 @@ export function LineChart({
         <YAxis
           tick={{ fontSize: 11, fill: "var(--muted)" }}
           tickLine={false}
+          axisLine={false}
           tickFormatter={yTickFormatter}
           width={68}
           tickMargin={6}
-          padding={{ top: 6, bottom: 10 }}
+          padding={{ top: 0, bottom: 10 }}
         />
         <Tooltip
           contentStyle={{
