@@ -1,7 +1,9 @@
-// Quote / history proxy with Yahoo primary + Stooq fallback.
+// Quote / history proxy. Runs in Node (not edge) because Yahoo throttles
+// the shared edge / Deno Deploy IP pool and returns thin data. Node /
+// Netlify Functions use AWS Lambda IPs that Yahoo treats normally.
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 const RANGE_SECONDS: Record<string, number> = {
   "1d": 86400,
@@ -49,80 +51,6 @@ async function fetchYahoo(ticker: string, range: string, interval: string) {
   return data;
 }
 
-// Stooq CSV → Yahoo-shaped JSON. Stooq is a free public source that works
-// when Yahoo throttles or returns thin data.
-async function fetchStooq(ticker: string, range: string, interval: string) {
-  // Map Yahoo-style tickers to Stooq symbols.
-  // Indices: ^NSEI → ^nse, ^BSESN → ^bse, ^NSEBANK → ^nsei is wrong; Stooq uses ^nse only.
-  // Stocks: RELIANCE.NS → reliance.in, TCS.NS → tcs.in, NVDA → nvda.us
-  let sym: string;
-  const t = ticker.toUpperCase();
-  if (t === "^NSEI") sym = "^nse";
-  else if (t === "^BSESN") sym = "^bse";
-  else if (t === "^NSEBANK") sym = "^nsei";
-  else if (t.endsWith(".NS")) sym = t.replace(/\.NS$/i, "").toLowerCase() + ".in";
-  else if (t.endsWith(".BO")) sym = t.replace(/\.BO$/i, "").toLowerCase() + ".in";
-  else sym = t.toLowerCase() + ".us"; // assume US stock fallback
-
-  const intervalCode = interval === "1wk" ? "w" : interval === "1mo" ? "m" : "d";
-  const now = new Date();
-  const span = RANGE_SECONDS[range] ?? RANGE_SECONDS["6mo"];
-  const start = new Date(now.getTime() - span * 1000);
-  const fmt = (d: Date) =>
-    `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-
-  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=${intervalCode}&d1=${fmt(start)}&d2=${fmt(now)}`;
-  const r = await fetch(url, {
-    headers: { "User-Agent": UA },
-    cache: "no-store",
-  });
-  if (!r.ok) throw new Error(`stooq_${r.status}`);
-  const csv = await r.text();
-  const lines = csv.trim().split(/\r?\n/);
-  if (lines.length < 2) throw new Error("stooq_empty");
-  // header: Date,Open,High,Low,Close,Volume
-  const rows = lines.slice(1).map((l) => l.split(","));
-  const timestamp: number[] = [];
-  const close: (number | null)[] = [];
-  const open: (number | null)[] = [];
-  const high: (number | null)[] = [];
-  const low: (number | null)[] = [];
-  const volume: (number | null)[] = [];
-  for (const r of rows) {
-    const [date, o, h, lo, c, v] = r;
-    if (!date) continue;
-    const ts = Math.floor(new Date(date + "T00:00:00Z").getTime() / 1000);
-    if (isNaN(ts)) continue;
-    timestamp.push(ts);
-    open.push(o ? parseFloat(o) : null);
-    high.push(h ? parseFloat(h) : null);
-    low.push(lo ? parseFloat(lo) : null);
-    close.push(c ? parseFloat(c) : null);
-    volume.push(v ? parseFloat(v) : null);
-  }
-  if (timestamp.length < 2) throw new Error("stooq_thin");
-  const last = close[close.length - 1] as number;
-  const prev = close[close.length - 2] as number;
-  // Mimic Yahoo response shape so the client code stays the same.
-  return {
-    chart: {
-      result: [
-        {
-          meta: {
-            regularMarketPrice: last,
-            previousClose: prev,
-            regularMarketDayHigh: high[high.length - 1],
-            regularMarketDayLow: low[low.length - 1],
-          },
-          timestamp,
-          indicators: { quote: [{ open, high, low, close, volume }] },
-        },
-      ],
-      error: null,
-    },
-  };
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ ticker: string }> }
@@ -133,30 +61,15 @@ export async function GET(
   const range = req.nextUrl.searchParams.get("range") || "6mo";
   const interval = req.nextUrl.searchParams.get("interval") || "1d";
 
-  let data: any = null;
-  const errors: string[] = [];
   try {
-    data = await fetchYahoo(ticker, range, interval);
+    const data = await fetchYahoo(ticker, range, interval);
+    return NextResponse.json(data, {
+      headers: { "cache-control": "public, s-maxage=30, stale-while-revalidate=60" },
+    });
   } catch (e: any) {
-    errors.push(`yahoo:${e?.message || e}`);
-  }
-
-  if (!data) {
-    try {
-      data = await fetchStooq(ticker, range, interval);
-    } catch (e: any) {
-      errors.push(`stooq:${e?.message || e}`);
-    }
-  }
-
-  if (!data) {
     return NextResponse.json(
-      { error: "all_sources_failed", detail: errors.join("; ") },
+      { error: "yahoo_failed", detail: String(e?.message || e) },
       { status: 502, headers: { "cache-control": "no-store" } }
     );
   }
-
-  return NextResponse.json(data, {
-    headers: { "cache-control": "public, s-maxage=30, stale-while-revalidate=60" },
-  });
 }
