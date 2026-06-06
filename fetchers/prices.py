@@ -18,6 +18,32 @@ def load_universe() -> list[str]:
     return df["ticker"].tolist()
 
 
+def load_user_tickers() -> list[str]:
+    """Pull portfolio + wishlist tickers from Supabase so the prices table
+    covers everything the dashboard needs to chart, not just the static
+    universe.csv. Returns [] when Supabase is not configured (local dev)."""
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
+    if not url or not key:
+        return []
+    try:
+        sb = create_client(url, key)
+        pf = sb.table("portfolio").select("ticker").execute()
+        wl = sb.table("wishlist").select("ticker").execute()
+        out: set[str] = set()
+        for row in (pf.data or []):
+            t = row.get("ticker")
+            if t:
+                out.add(t)
+        for row in (wl.data or []):
+            t = row.get("ticker")
+            if t:
+                out.add(t)
+        return sorted(out)
+    except Exception as e:
+        print(f"load_user_tickers failed: {e}")
+        return []
+
+
 def fetch_ohlcv(tickers: list[str], period: str = "6mo", interval: str = "1d") -> pd.DataFrame:
     data = yf.download(
         tickers=tickers,
@@ -84,8 +110,10 @@ def latest_snapshot(tickers: list[str]) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    tickers = load_universe()
-    print(f"Fetching {len(tickers)} tickers...")
+    universe = load_universe()
+    user = load_user_tickers()
+    tickers = sorted({*universe, *user})
+    print(f"Universe: {len(universe)}, user holdings/wishlist: {len(user)}, total unique: {len(tickers)}")
     df = fetch_ohlcv(tickers, period="6mo")
     print(f"Rows: {len(df)}")
     n = push_to_supabase(df)
