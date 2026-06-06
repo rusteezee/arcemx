@@ -93,6 +93,8 @@ export function LineChart({
 
   if (fill) {
     return (
+      <div className="overflow-x-auto">
+        <div style={{ minWidth: 720 }}>
       <ResponsiveContainer width="100%" height={height}>
         <AreaChart data={numericData} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
           <defs>
@@ -140,10 +142,14 @@ export function LineChart({
           />
         </AreaChart>
       </ResponsiveContainer>
+        </div>
+      </div>
     );
   }
 
   return (
+    <div className="overflow-x-auto">
+      <div style={{ minWidth: 720 }}>
     <ResponsiveContainer width="100%" height={height}>
       <RLineChart data={numericData} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
         <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
@@ -171,5 +177,7 @@ export function LineChart({
         <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} />
       </RLineChart>
     </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
