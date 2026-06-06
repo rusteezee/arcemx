@@ -25,6 +25,20 @@ interface LineChartProps {
   yTickFormatter?: (val: number) => string;
 }
 
+// Build an array of N evenly-spaced ticks from the data so every chart
+// has the same number of x-axis labels regardless of point density.
+function buildXTicks(data: Point[], n: number): string[] {
+  if (data.length === 0) return [];
+  if (data.length <= n) return data.map((d) => d.date);
+  const out: string[] = [];
+  const step = (data.length - 1) / (n - 1);
+  for (let i = 0; i < n; i++) {
+    const idx = Math.round(i * step);
+    out.push(data[idx].date);
+  }
+  return Array.from(new Set(out));
+}
+
 export function LineChart({
   data,
   height = 300,
@@ -43,6 +57,10 @@ export function LineChart({
     );
   }
 
+  const X_TICK_COUNT = 10;
+  const Y_TICK_COUNT = 5;
+  const xTicks = buildXTicks(data, X_TICK_COUNT);
+
   if (fill) {
     return (
       <ResponsiveContainer width="100%" height={height}>
@@ -59,7 +77,8 @@ export function LineChart({
             tick={{ fontSize: 11, fill: "var(--muted)" }}
             axisLine={{ stroke: "var(--border)" }}
             tickLine={false}
-            minTickGap={48}
+            ticks={xTicks}
+            interval={0}
             tickMargin={10}
             padding={{ left: 8, right: 8 }}
           />
@@ -69,6 +88,8 @@ export function LineChart({
             tickLine={false}
             tickFormatter={yTickFormatter}
             domain={["dataMin", "dataMax"]}
+            tickCount={Y_TICK_COUNT}
+            interval={0}
             width={68}
             tickMargin={6}
             padding={{ top: 0, bottom: 10 }}
@@ -105,7 +126,8 @@ export function LineChart({
           dataKey="date"
           tick={{ fontSize: 11, fill: "var(--muted)" }}
           tickLine={false}
-          minTickGap={48}
+          ticks={xTicks}
+          interval={0}
           tickMargin={10}
           padding={{ left: 8, right: 8 }}
         />
@@ -114,6 +136,8 @@ export function LineChart({
           tickLine={false}
           axisLine={false}
           tickFormatter={yTickFormatter}
+          tickCount={Y_TICK_COUNT}
+          interval={0}
           width={68}
           tickMargin={6}
           padding={{ top: 0, bottom: 10 }}
