@@ -94,7 +94,7 @@ export function LineChart({
   if (fill) {
     return (
       <div className="overflow-x-auto">
-        <div style={{ minWidth: 720 }}>
+        <div style={{ minWidth: 1100 }}>
       <ResponsiveContainer width="100%" height={height}>
         <AreaChart data={numericData} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
           <defs>
