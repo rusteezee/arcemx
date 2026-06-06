@@ -25,18 +25,19 @@ interface LineChartProps {
   yTickFormatter?: (val: number) => string;
 }
 
-// Build an array of N evenly-spaced ticks from the data so every chart
-// has the same number of x-axis labels regardless of point density.
-function buildXTicks(data: Point[], n: number): string[] {
-  if (data.length === 0) return [];
-  if (data.length <= n) return data.map((d) => d.date);
-  const out: string[] = [];
-  const step = (data.length - 1) / (n - 1);
-  for (let i = 0; i < n; i++) {
-    const idx = Math.round(i * step);
-    out.push(data[idx].date);
-  }
-  return Array.from(new Set(out));
+// Build N uniformly-spaced numeric ticks across [min, max].
+function buildLinearTicks(min: number, max: number, n: number): number[] {
+  if (n <= 1 || max <= min) return [min];
+  const step = (max - min) / (n - 1);
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(min + step * i);
+  return out;
+}
+
+function formatTick(ts: number): string {
+  const d = new Date(ts);
+  // ISO yyyy-mm-dd to match rest of dashboard
+  return d.toISOString().slice(0, 10);
 }
 
 export function LineChart({
@@ -59,12 +60,37 @@ export function LineChart({
 
   const X_TICK_COUNT = 10;
   const Y_TICK_COUNT = 5;
-  const xTicks = buildXTicks(data, X_TICK_COUNT);
+
+  // Convert ISO date strings to numeric timestamps so the X axis can be
+  // treated as a continuous numeric scale. That lets us request exactly
+  // N evenly-spaced ticks across the full time range, regardless of how
+  // many actual data points exist.
+  const numericData = data
+    .map((d) => ({ ts: new Date(d.date + "T00:00:00Z").getTime(), value: d.value }))
+    .filter((d) => !Number.isNaN(d.ts));
+
+  const tsMin = numericData[0].ts;
+  const tsMax = numericData[numericData.length - 1].ts;
+  const xTicks = buildLinearTicks(tsMin, tsMax, X_TICK_COUNT);
+
+  const commonXAxis = {
+    type: "number" as const,
+    dataKey: "ts",
+    domain: [tsMin, tsMax] as [number, number],
+    scale: "time" as const,
+    ticks: xTicks,
+    interval: 0 as const,
+    tickFormatter: formatTick,
+    tick: { fontSize: 11, fill: "var(--muted)" },
+    tickLine: false as const,
+    tickMargin: 10,
+    allowDataOverflow: false as const,
+  };
 
   if (fill) {
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={data} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
+        <AreaChart data={numericData} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
           <defs>
             <linearGradient id="gFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={color} stopOpacity={0.18} />
@@ -73,14 +99,8 @@ export function LineChart({
           </defs>
           <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
           <XAxis
-            dataKey="date"
-            tick={{ fontSize: 11, fill: "var(--muted)" }}
+            {...commonXAxis}
             axisLine={{ stroke: "var(--border)" }}
-            tickLine={false}
-            ticks={xTicks}
-            interval={0}
-            tickMargin={10}
-            padding={{ left: 8, right: 8 }}
           />
           <YAxis
             tick={{ fontSize: 11, fill: "var(--muted)" }}
@@ -103,6 +123,7 @@ export function LineChart({
               fontFamily: "var(--font-geist-mono)",
             }}
             labelStyle={{ color: "var(--muted)", fontSize: 11 }}
+            labelFormatter={(label) => formatTick(label as number)}
           />
           <Area
             type="monotone"
@@ -120,17 +141,9 @@ export function LineChart({
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RLineChart data={data} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
+      <RLineChart data={numericData} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
         <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
-        <XAxis
-          dataKey="date"
-          tick={{ fontSize: 11, fill: "var(--muted)" }}
-          tickLine={false}
-          ticks={xTicks}
-          interval={0}
-          tickMargin={10}
-          padding={{ left: 8, right: 8 }}
-        />
+        <XAxis {...commonXAxis} />
         <YAxis
           tick={{ fontSize: 11, fill: "var(--muted)" }}
           tickLine={false}
@@ -149,6 +162,7 @@ export function LineChart({
             borderRadius: 8,
             fontSize: 12,
           }}
+          labelFormatter={(label) => formatTick(label as number)}
         />
         <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} />
       </RLineChart>
