@@ -36,8 +36,15 @@ function buildLinearTicks(min: number, max: number, n: number): number[] {
 
 function formatTick(ts: number): string {
   const d = new Date(ts);
-  // ISO yyyy-mm-dd to match rest of dashboard
-  return d.toISOString().slice(0, 10);
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function formatValue(v: unknown): string {
+  if (typeof v !== "number" || !isFinite(v)) return String(v);
+  return v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
 export function LineChart({
@@ -130,6 +137,7 @@ export function LineChart({
             }}
             labelStyle={{ color: "var(--muted)", fontSize: 11 }}
             labelFormatter={(label) => formatTick(label as number)}
+            formatter={(val) => [formatValue(val), "value"]}
           />
           <Area
             type="monotone"
@@ -173,6 +181,7 @@ export function LineChart({
             fontSize: 12,
           }}
           labelFormatter={(label) => formatTick(label as number)}
+          formatter={(val) => [formatValue(val), "value"]}
         />
         <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} />
       </RLineChart>
