@@ -58,17 +58,39 @@ export async function GET(
   const { ticker } = await params;
   if (!ticker) return NextResponse.json({ error: "ticker required" }, { status: 400 });
 
-  const range = req.nextUrl.searchParams.get("range") || "6mo";
-  const interval = req.nextUrl.searchParams.get("interval") || "1d";
+  // Read both nextUrl and a parsed URL fallback in case one fails silently
+  // on the deployed runtime.
+  const url = new URL(req.url);
+  const range =
+    req.nextUrl.searchParams.get("range") ??
+    url.searchParams.get("range") ??
+    "6mo";
+  const interval =
+    req.nextUrl.searchParams.get("interval") ??
+    url.searchParams.get("interval") ??
+    "1d";
 
   try {
     const data = await fetchYahoo(ticker, range, interval);
+    // Stamp debug info so the client can confirm what the server actually saw.
+    const span = RANGE_SECONDS[range] ?? RANGE_SECONDS["6mo"];
+    const now = Math.floor(Date.now() / 1000);
+    (data as any)._arcemx = {
+      received_range: range,
+      received_interval: interval,
+      period1: now - span,
+      period2: now,
+    };
     return NextResponse.json(data, {
-      headers: { "cache-control": "public, s-maxage=30, stale-while-revalidate=60" },
+      headers: {
+        "cache-control": "public, s-maxage=30, stale-while-revalidate=60",
+        "x-arcemx-range": range,
+        "x-arcemx-interval": interval,
+      },
     });
   } catch (e: any) {
     return NextResponse.json(
-      { error: "yahoo_failed", detail: String(e?.message || e) },
+      { error: "yahoo_failed", detail: String(e?.message || e), received_range: range },
       { status: 502, headers: { "cache-control": "no-store" } }
     );
   }

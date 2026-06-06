@@ -39,6 +39,7 @@ export default function MarketsPage() {
   const [chart, setChart] = useState<Array<{ date: string; value: number }>>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [serverRange, setServerRange] = useState<string | null>(null);
   const [heat, setHeat] = useState<Array<{ ticker: string; pct: number; weight: number }>>([]);
   const [custom, setCustom] = useState("");
 
@@ -53,12 +54,14 @@ export default function MarketsPage() {
     let cancelled = false;
     setChartLoading(true);
     setChartError(null);
+    setServerRange(null);
     (async () => {
       try {
         const q = await fetchHistory(sel, period);
         if (cancelled) return;
         if (q?.history && q.history.length > 0) {
           setChart(q.history.map((h) => ({ date: h.date, value: h.close })));
+          setServerRange(q.debugRange || null);
         } else {
           setChart([]);
           setChartError("No data for this ticker / range. Yahoo may be rate-limiting. Try another range or wait.");
@@ -183,7 +186,14 @@ export default function MarketsPage() {
               ) : chart.length > 0 ? (
                 <span className="text-xs num">{chart.length} pts</span>
               ) : null}
-              <span>{stripTicker(sel)} · {period.toUpperCase()}</span>
+              <span>
+                {stripTicker(sel)} · {period.toUpperCase()}
+                {serverRange && serverRange !== period && (
+                  <span className="ml-2 text-[var(--loss)] text-xs">
+                    (server saw: {serverRange})
+                  </span>
+                )}
+              </span>
             </div>
           </div>
           {chartError ? (

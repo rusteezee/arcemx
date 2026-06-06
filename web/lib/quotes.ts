@@ -10,6 +10,7 @@ export interface Quote {
   yHigh?: number;
   yLow?: number;
   history?: Array<{ date: string; close: number }>;
+  debugRange?: string;
 }
 
 export async function fetchQuote(ticker: string, range = "5d"): Promise<Quote | null> {
@@ -87,12 +88,14 @@ export async function fetchHistory(ticker: string, range = "6mo"): Promise<Quote
       .filter((p) => p.close != null);
     const last = meta.regularMarketPrice ?? closes[closes.length - 1];
     const prev = meta.previousClose ?? closes[closes.length - 2];
+    const debug = data?._arcemx;
     return {
       ticker,
       last,
       prev,
       pct: prev ? ((last - prev) / prev) * 100 : 0,
       history,
+      debugRange: debug?.received_range,
     };
   } catch {
     return null;
