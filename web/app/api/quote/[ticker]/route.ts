@@ -83,7 +83,14 @@ export async function GET(
     };
     return NextResponse.json(data, {
       headers: {
-        "cache-control": "public, s-maxage=30, stale-while-revalidate=60",
+        // Netlify's CDN was collapsing different range= variants to one
+        // cached response because the query string isn't part of its
+        // default cache key. Disable caching outright so every range
+        // button hits the upstream.
+        "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+        "cdn-cache-control": "no-store",
+        "netlify-cdn-cache-control": "no-store",
+        Vary: "*",
         "x-arcemx-range": range,
         "x-arcemx-interval": interval,
       },
