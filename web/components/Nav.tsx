@@ -216,12 +216,16 @@ export function Nav() {
               onClick={onSync}
               disabled={syncing}
               className={cn(
-                "flex items-center gap-1.5 rounded-full border border-border",
-                "text-[0.72rem] font-medium transition-colors overflow-hidden",
+                "flex items-center gap-1.5 rounded-full border transition-all duration-300 overflow-hidden",
+                "text-[0.72rem] font-medium",
                 "size-9 justify-center sm:size-auto sm:w-[96px] sm:px-2.5 sm:py-[5px]",
-                syncing ? "opacity-70" : "hover:bg-[var(--muted-bg)]",
+                syncing ? "opacity-80 border-border" : "hover:bg-[var(--muted-bg)]",
                 "disabled:cursor-not-allowed",
-                syncState === "error" && "border-[color-mix(in_srgb,var(--loss)_50%,transparent)]"
+                syncState === "ok" &&
+                  "border-[color-mix(in_srgb,var(--gain)_60%,transparent)] bg-[color-mix(in_srgb,var(--gain)_14%,transparent)] text-[var(--gain)]",
+                syncState === "error" &&
+                  "border-[color-mix(in_srgb,var(--loss)_60%,transparent)] bg-[color-mix(in_srgb,var(--loss)_14%,transparent)] text-[var(--loss)]",
+                syncState === "idle" && !syncing && "border-border"
               )}
               title={syncMsg || "Sync from INDmoney"}
             >
@@ -229,7 +233,7 @@ export function Nav() {
                 width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.2"
                 strokeLinecap="round" strokeLinejoin="round"
-                className={cn("shrink-0", syncing && "animate-spin")}
+                className={cn("shrink-0 transition-colors duration-300", syncing && "animate-spin")}
               >
                 <path d="M21 12a9 9 0 1 1-3-6.7" />
                 <path d="M21 3v6h-6" />
