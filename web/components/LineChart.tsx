@@ -46,7 +46,7 @@ export function LineChart({
   if (fill) {
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+        <AreaChart data={data} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
           <defs>
             <linearGradient id="gFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={color} stopOpacity={0.18} />
@@ -59,7 +59,9 @@ export function LineChart({
             tick={{ fontSize: 11, fill: "var(--muted)" }}
             axisLine={{ stroke: "var(--border)" }}
             tickLine={false}
-            minTickGap={40}
+            minTickGap={48}
+            tickMargin={10}
+            padding={{ left: 8, right: 8 }}
           />
           <YAxis
             tick={{ fontSize: 11, fill: "var(--muted)" }}
@@ -67,7 +69,9 @@ export function LineChart({
             tickLine={false}
             tickFormatter={yTickFormatter}
             domain={["dataMin", "dataMax"]}
-            width={56}
+            width={68}
+            tickMargin={6}
+            padding={{ top: 6, bottom: 10 }}
           />
           <Tooltip
             contentStyle={{
@@ -95,10 +99,24 @@ export function LineChart({
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RLineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
+      <RLineChart data={data} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
         <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
-        <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} minTickGap={40} />
-        <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} tickFormatter={yTickFormatter} width={56} />
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 11, fill: "var(--muted)" }}
+          tickLine={false}
+          minTickGap={48}
+          tickMargin={10}
+          padding={{ left: 8, right: 8 }}
+        />
+        <YAxis
+          tick={{ fontSize: 11, fill: "var(--muted)" }}
+          tickLine={false}
+          tickFormatter={yTickFormatter}
+          width={68}
+          tickMargin={6}
+          padding={{ top: 6, bottom: 10 }}
+        />
         <Tooltip
           contentStyle={{
             background: "var(--card)",
