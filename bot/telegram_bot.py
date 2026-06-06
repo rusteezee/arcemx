@@ -4,6 +4,55 @@
 /import   (then send CSV file)
 """
 import os
+import sys
+
+
+def _emergency_port_bind():
+    """Bind the Render-required port BEFORE any heavy imports.
+
+    pandas, yfinance, telegram.ext, and supabase together take 30-60s
+    to cold-import on the Render free instance. If we let them load
+    first, Render's port scan times out and the deploy fails. Open
+    a minimal threaded HTTP server here at module top so the port is
+    listening within a couple of seconds, then keep importing.
+    """
+    port_str = os.getenv("PORT", "0")
+    try:
+        port = int(port_str)
+    except ValueError:
+        port = 0
+    if not port:
+        return None
+    try:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class _Stub(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"OK")
+
+            def log_message(self, *a, **k):
+                pass
+
+        srv = ThreadingHTTPServer(("0.0.0.0", port), _Stub)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        print(f"Emergency HTTP stub bound on :{port}", flush=True)
+        return srv
+    except Exception as e:
+        print(f"Emergency stub bind failed: {e}", flush=True)
+        return None
+
+
+_STUB_SRV = _emergency_port_bind()
+
+
+# Heavy imports start here — these take tens of seconds on cold start
+# but the port is already listening from the emergency bind above.
 import io
 import json
 import csv
@@ -316,7 +365,6 @@ async def scheduled_sync():
 
 
 _BG_TASKS: set = set()
-_STUB_SRV = None
 
 
 async def _start_health_server(port: int):
@@ -456,47 +504,11 @@ async def _post_init(app: Application):
         app.bot_data["health"] = await _start_health_server(port)
 
 
-def _start_stub_http_server(port: int):
-    """Bind a tiny blocking HTTP server in a daemon thread so Render's port
-    scan passes immediately, before the full PTB application is initialised.
-    Once _post_init runs, the real health server takes over on the same port —
-    but if Telegram getUpdates hits a Conflict (old instance still polling),
-    PTB will retry forever and never reach post_init, which used to time out
-    the entire Render deploy. The stub keeps the port open regardless."""
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    class _Stub(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            self.wfile.write(b"OK")
-
-        def log_message(self, *a, **k):  # silence default access logs
-            pass
-
-    try:
-        srv = ThreadingHTTPServer(("0.0.0.0", port), _Stub)
-        t = threading.Thread(target=srv.serve_forever, daemon=True)
-        t.start()
-        print(f"Stub HTTP server bound on :{port}")
-        return srv
-    except OSError as e:
-        print(f"Stub HTTP server bind failed (port may already be in use): {e}")
-        return None
-
-
 def main():
-    # Bind a stub HTTP server immediately so Render's port scan sees the
-    # port open within seconds, even if Telegram polling has a Conflict
-    # against a still-shutting-down previous instance.
-    global _STUB_SRV
-    _port_env = int(os.getenv("PORT", "0"))
-    if _port_env:
-        _STUB_SRV = _start_stub_http_server(_port_env)
-
+    # The stub HTTP server was already bound at module import time via
+    # _emergency_port_bind(), so the port is open before any heavy imports
+    # finished loading. _start_health_server will swap the stub for the
+    # real async handler once PTB's post_init runs.
     app = Application.builder().token(TOKEN).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
