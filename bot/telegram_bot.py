@@ -373,11 +373,15 @@ async def _start_health_server(port: int):
                             from analyzer.aggregator import run as run_analysis
                             import asyncio as _asyncio
 
+                            # Manual dashboard syncs use the lite model
+                            # (500/day free quota). Daily cron keeps the
+                            # primary model for highest quality.
+                            from analyzer.llm import LITE_MODEL as _LITE
                             async def _bg_analysis():
                                 try:
                                     print("Background analysis starting...")
                                     loop = _asyncio.get_event_loop()
-                                    await loop.run_in_executor(None, run_analysis)
+                                    await loop.run_in_executor(None, lambda: run_analysis(model_name=_LITE))
                                     print("Background analysis refresh complete")
                                 except Exception as bgerr:
                                     import traceback

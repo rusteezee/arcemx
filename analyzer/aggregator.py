@@ -114,10 +114,10 @@ def build_payload() -> dict:
     }
 
 
-def run() -> dict:
+def run(model_name: str | None = None) -> dict:
     payload = build_payload()
     print("Calling Gemini...")
-    result = analyze(payload)
+    result = analyze(payload, model_name=model_name)
     save(result, payload)
     return result
 

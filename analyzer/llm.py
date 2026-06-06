@@ -7,7 +7,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL = "gemini-3.1-flash-lite"
+# Best quality, 20/day free quota — reserved for the once-a-day cron call.
+PRIMARY_MODEL = "gemini-2.5-flash"
+# 500/day free quota — used for manual dashboard syncs so users never hit the cap.
+LITE_MODEL = "gemini-3.1-flash-lite"
+MODEL = PRIMARY_MODEL  # kept for backward compat
 
 SYSTEM_PROMPT = """You are an Indian equity markets analyst with a moderate-aggressive risk lens.
 Your output is for an individual retail investor in India. You consider technical signals,
@@ -65,8 +69,10 @@ explicitly in that key's value rather than skipping it.
 """
 
 
-def analyze(payload: dict) -> dict:
-    model = genai.GenerativeModel(MODEL, system_instruction=SYSTEM_PROMPT,
+def analyze(payload: dict, model_name: str | None = None) -> dict:
+    chosen = model_name or PRIMARY_MODEL
+    print(f"Gemini model: {chosen}")
+    model = genai.GenerativeModel(chosen, system_instruction=SYSTEM_PROMPT,
                                   generation_config={"response_mime_type": "application/json"})
     user_msg = "Analyze this market snapshot and return JSON per schema:\n\n" + json.dumps(payload, default=str)[:120000]
     resp = model.generate_content(user_msg, request_options={"timeout": 180})
