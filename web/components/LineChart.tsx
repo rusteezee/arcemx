@@ -73,28 +73,9 @@ export function LineChart({
   const tsMax = numericData[numericData.length - 1].ts;
   const xTicks = buildLinearTicks(tsMin, tsMax, X_TICK_COUNT);
 
-  // Custom tick: anchor first label to the left and last label to the right
-  // so they sit fully inside the chart area instead of overflowing the edges.
-  const CustomXTick = (props: any) => {
-    const { x, y, payload, index } = props;
-    const total = xTicks.length;
-    let anchor: "start" | "middle" | "end" = "middle";
-    if (index === 0) anchor = "start";
-    else if (index === total - 1) anchor = "end";
-    return (
-      <text
-        x={x}
-        y={y}
-        dy={14}
-        fontSize={11}
-        fill="var(--muted)"
-        textAnchor={anchor}
-      >
-        {formatTick(payload.value)}
-      </text>
-    );
-  };
-
+  // All X-axis labels are centred on their tick. Pad the plot horizontally
+  // so the first and last labels have room to render fully without being
+  // clipped, which keeps the visual gap between every label uniform.
   const commonXAxis = {
     type: "number" as const,
     dataKey: "ts",
@@ -103,9 +84,10 @@ export function LineChart({
     ticks: xTicks,
     interval: 0 as const,
     tickFormatter: formatTick,
-    tick: <CustomXTick />,
+    tick: { fontSize: 11, fill: "var(--muted)" },
     tickLine: false as const,
     tickMargin: 10,
+    padding: { left: 40, right: 40 },
     allowDataOverflow: false as const,
   };
 
