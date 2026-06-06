@@ -47,6 +47,15 @@ function formatValue(v: unknown): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
+// Default Y-axis tick formatter when a chart doesn't pass its own:
+// Indian commas, max 0 decimals for >=1000, 2 decimals otherwise.
+function defaultYTick(v: number): string {
+  if (typeof v !== "number" || !isFinite(v)) return String(v);
+  return v >= 1000
+    ? v.toLocaleString("en-IN", { maximumFractionDigits: 0 })
+    : v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+
 export function LineChart({
   data,
   height = 300,
@@ -119,7 +128,7 @@ export function LineChart({
             tick={{ fontSize: 11, fill: "var(--muted)" }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={yTickFormatter}
+            tickFormatter={yTickFormatter ?? defaultYTick}
             domain={["dataMin", "dataMax"]}
             tickCount={Y_TICK_COUNT}
             interval={0}
