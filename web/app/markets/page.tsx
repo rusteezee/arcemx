@@ -47,6 +47,37 @@ export default function MarketsPage() {
   const [custom, setCustom] = useState("");
   const [customTickers, setCustomTickers] = useState<string[]>([]);
 
+  // Hydrate the custom-ticker pill row from localStorage on mount so the
+  // user doesn't lose their additions after a refresh. Skipped on the
+  // server (no window) and on first render to keep SSR markup stable.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("arcemx.markets.customTickers");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const cleaned = parsed
+          .filter((x): x is string => typeof x === "string" && x.length > 0)
+          .filter((x) => !PRESETS.includes(x));
+        if (cleaned.length) setCustomTickers(cleaned);
+      }
+    } catch {
+      // Bad JSON or storage disabled — ignore, fall back to empty.
+    }
+  }, []);
+
+  // Persist whenever the custom-ticker row changes so refresh keeps them.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "arcemx.markets.customTickers",
+        JSON.stringify(customTickers)
+      );
+    } catch {
+      // Storage disabled — ignore.
+    }
+  }, [customTickers]);
+
   useEffect(() => {
     INDICES.forEach(async ({ sym }) => {
       const q = await fetchQuote(sym);
