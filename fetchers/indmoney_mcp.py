@@ -450,6 +450,17 @@ async def sync_to_supabase(user_id: str = "default"):
             h_resp = await session.call_tool("networth_holdings", {"asset_type": "IND_STOCK"})
             h_data = _extract(h_resp)
             holdings = h_data.get("holdings", [])
+            # Diagnostic: when the sync silently reports "0 holdings" but
+            # the debug probe shows 5, dump the parsed response so we can
+            # see whether the MCP payload was empty, paginated, or shaped
+            # differently than expected.
+            print(
+                f"[debug] holdings parse: type={type(h_data).__name__} "
+                f"keys={list(h_data.keys())[:10] if isinstance(h_data, dict) else 'N/A'} "
+                f"holdings_len={len(holdings)}"
+            )
+            if not holdings:
+                print(f"[debug] full h_data (truncated): {str(h_data)[:1000]}")
             n_h = 0
             for h in holdings:
                 name = h.get("investment", "")
