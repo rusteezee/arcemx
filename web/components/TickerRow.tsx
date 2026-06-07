@@ -1,4 +1,4 @@
-import { cn, currencySymbol, formatPct, stripTicker } from "@/lib/utils";
+import { cn, currencySymbol, formatPct, isIndian, stripTicker } from "@/lib/utils";
 
 interface TickerRowProps {
   ticker: string;
@@ -10,11 +10,17 @@ interface TickerRowProps {
 
 export function TickerRow({ ticker, price, pct, yHigh, yLow }: TickerRowProps) {
   const c = currencySymbol(ticker);
+  const locale = isIndian(ticker) ? "en-IN" : "en-US";
+  const fmt = (val: number) =>
+    val.toLocaleString(locale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   const positive = (pct ?? 0) >= 0;
   return (
     <tr>
       <td className="font-medium">{stripTicker(ticker)}</td>
-      <td className="num">{price != null ? `${c}${price.toFixed(2)}` : ""}</td>
+      <td className="num">{price != null ? `${c}${fmt(price)}` : ""}</td>
       <td
         className={cn(
           "num font-medium",
@@ -27,8 +33,8 @@ export function TickerRow({ ticker, price, pct, yHigh, yLow }: TickerRowProps) {
       >
         {formatPct(pct)}
       </td>
-      <td className="num text-[var(--muted)]">{yHigh ? `${c}${yHigh.toFixed(2)}` : ""}</td>
-      <td className="num text-[var(--muted)]">{yLow ? `${c}${yLow.toFixed(2)}` : ""}</td>
+      <td className="num text-[var(--muted)]">{yHigh ? `${c}${fmt(yHigh)}` : ""}</td>
+      <td className="num text-[var(--muted)]">{yLow ? `${c}${fmt(yLow)}` : ""}</td>
     </tr>
   );
 }
