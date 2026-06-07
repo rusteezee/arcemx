@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Arc'emX! — AI Market Intelligence for India",
+  title: "Arc'emX! · AI Market Intelligence for India",
   description:
     "A self-learning AI that reads the Indian equity market every morning. Built on Gemini, Supabase, and free-tier infra.",
 };

@@ -47,8 +47,8 @@ const SAMPLE = {
       { ticker: "COALINDIA", entry: "₹470 - ₹475", target: "₹485 - ₹490", stop: "₹465" },
     ],
     longTerm: [
-      { ticker: "APOLLOHOSP", entry: "₹6,800 - ₹6,900", target: "₹8,500", stop: "—" },
-      { ticker: "GRASIM", entry: "₹2,300 - ₹2,350", target: "₹2,800", stop: "—" },
+      { ticker: "APOLLOHOSP", entry: "₹6,800 - ₹6,900", target: "₹8,500", stop: "₹6,400" },
+      { ticker: "GRASIM", entry: "₹2,300 - ₹2,350", target: "₹2,800", stop: "₹2,200" },
     ],
     verdicts: [
       { ticker: "ANGELONE", verdict: "HOLD", reason: "Wait for stronger volume confirmation. Sector rotation pending.", target: "₹360", stop: "₹305" },
