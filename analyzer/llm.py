@@ -42,7 +42,7 @@ Return STRICT JSON only matching this schema:
   "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30}],
   "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "...", "horizon_months": 6-36}],
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],
-  "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "...", "stop_loss": "..."}],
+  "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "<numeric INR or INR range, e.g. 380 or 360-400>", "stop_loss": "<numeric INR, e.g. 290>"}],
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
   "global_factors": ["..."],
   "key_news_drivers": ["..."],
@@ -60,6 +60,18 @@ Return STRICT JSON only matching this schema:
 
 If user_holdings empty, return empty portfolio_verdicts.
 If user_wishlist empty, return empty wishlist_signals.
+
+CRITICAL — portfolio_verdicts target / stop_loss MUST be concrete numeric INR
+values, never "N/A" or prose. This applies to EVERY verdict including HOLD:
+- target = the next meaningful resistance / price you'd take partial profits at
+  while continuing to hold. Express as "₹<num>" or a range like "₹360-400".
+- stop_loss = the price level below which your thesis is broken and the
+  position should be exited. Express as "₹<num>".
+Use the holding's current_price (provided in the payload) as the anchor. If
+you genuinely cannot compute a level, infer it from the broader technical
+setup of the index or the closest comparable peer — never write "N/A",
+"Monitor", or any non-numeric placeholder. The dashboard renders these
+fields as actionable prices and they must always be parseable.
 
 CRITICAL: reasoning_breakdown is REQUIRED on every response. You MUST include all 5 keys
 (technicals, macro, news_flow, sentiment, prior_call_check) with non-empty string values.
