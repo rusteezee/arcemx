@@ -149,7 +149,13 @@ export default function TodayPage() {
       </Section>
 
       <Section num="003 / 005" title="Picks" glyph="◉">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/*
+          items-start lets each table size to its own row count instead
+          of stretching to the taller sibling. Short Term with 3 picks
+          and Long Term with 2 picks no longer leave dead space below
+          the shorter card.
+        */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
           <PickTable title="Short Term" rows={raw.short_term_picks || []} />
           <PickTable title="Long Term" rows={raw.long_term_picks || []} />
         </div>
