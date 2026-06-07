@@ -168,7 +168,17 @@ export default function MarketsPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (custom) setSel(custom.toUpperCase());
+                  const raw = custom.trim().toUpperCase();
+                  if (!raw) return;
+                  // Auto-qualify NSE tickers. Indices keep their ^ prefix,
+                  // anything already carrying a dot suffix (.NS, .BO, US
+                  // tickers like AAPL using "." would be rare) is left
+                  // alone, bare names like "SUZLON" default to "SUZLON.NS"
+                  // since this dashboard is India-first.
+                  const normalized =
+                    raw.startsWith("^") || raw.includes(".") ? raw : `${raw}.NS`;
+                  setSel(normalized);
+                  setCustom("");
                 }}
                 className="flex items-center gap-1"
               >
