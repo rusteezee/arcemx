@@ -27,7 +27,13 @@ from datetime import datetime
 from typing import Iterable
 
 import pandas as pd
+from dotenv import load_dotenv
 from supabase import create_client
+
+# Load Supabase credentials from .env the same way every other fetcher
+# in this repo does — keeps the local CLI experience consistent so the
+# user doesn't have to export env vars before running the importer.
+load_dotenv()
 
 EQUITY_SHEET = "Equity transactions report"
 HEADER_ROW_INDEX = 6  # zero-indexed; the row before this is blank
