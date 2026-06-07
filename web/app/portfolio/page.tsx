@@ -114,14 +114,28 @@ export default function PortfolioPage() {
       }
       const tickers = Array.from(new Set(txData.map((t) => t.ticker)));
       const firstDateIso = txData[0].execution_date.slice(0, 10);
-      const prRes = await sb
-        .from("prices")
-        .select("ticker,ts,close")
-        .in("ticker", tickers)
-        .gte("ts", firstDateIso)
-        .order("ts", { ascending: true });
+      // Supabase / PostgREST caps a single response at 1000 rows by
+      // default. With ~19 tickers × ~600 trading days we have ~7.5k
+      // closes to walk, so a single fetch would silently truncate to
+      // the earliest 1000 rows and every "recent" range button would
+      // render empty. Paginate explicitly with .range() until the
+      // server returns a short page.
+      const PAGE = 1000;
+      const allPrices: PriceRow[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const pr = await sb
+          .from("prices")
+          .select("ticker,ts,close")
+          .in("ticker", tickers)
+          .gte("ts", firstDateIso)
+          .order("ts", { ascending: true })
+          .range(from, from + PAGE - 1);
+        const page = (pr.data || []) as PriceRow[];
+        allPrices.push(...page);
+        if (page.length < PAGE) break;
+      }
       setTxs(txData);
-      setPrices((prRes.data || []) as PriceRow[]);
+      setPrices(allPrices);
       setFirstTxDate(firstDateIso);
       setTimelineLoading(false);
     })();
