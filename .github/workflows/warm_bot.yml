@@ -17,12 +17,19 @@ jobs:
           set -e
           URL="${BOT_URL:-https://arcemx.onrender.com/health}"
           echo "Pinging $URL"
-          # Allow up to 60s for cold-start wake; consider any 2xx/3xx as success
-          status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
-          echo "HTTP $status"
-          if [ "$status" -lt 200 ] || [ "$status" -ge 400 ]; then
-            echo "Warmup ping failed"
-            exit 1
-          fi
+          # Render free tier cold-start sometimes exceeds 60s, or the
+          # network blips. Retry up to 3 times with backoff before
+          # failing so a single slow wake doesn't mark the workflow red.
+          for attempt in 1 2 3; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$URL" || echo "000")
+            echo "Attempt $attempt -> HTTP $status"
+            if [ "$status" -ge 200 ] && [ "$status" -lt 400 ]; then
+              echo "Bot warm."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Warmup ping failed after 3 attempts"
+          exit 1
         env:
           BOT_URL: ${{ vars.BOT_URL }}
