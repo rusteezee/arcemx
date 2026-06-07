@@ -45,7 +45,11 @@ export function stripTicker(ticker: string): string {
  */
 export function formatINR(input: any, withSymbol = true): string {
   if (input == null || input === "") return "";
-  const str = String(input).trim();
+  // Strip any rupee symbol the upstream payload may already include so we
+  // don't double-prefix ("₹₹340"). Gemini sometimes emits "₹340" because
+  // the prompt schema example uses the symbol; the regex below would then
+  // attach a second ₹ in front of the matched digits.
+  const str = String(input).replace(/₹/g, "").trim();
   if (!str) return "";
 
   const symbol = withSymbol ? "₹" : "";
