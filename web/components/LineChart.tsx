@@ -194,7 +194,12 @@ export function LineChart({
               <stop offset="100%" stopColor={color} stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
+          <CartesianGrid
+            stroke="var(--border)"
+            strokeDasharray="2 4"
+            vertical={false}
+            syncWithTicks
+          />
           <XAxis
             {...commonXAxis}
             axisLine={{ stroke: "var(--border)" }}
@@ -244,7 +249,12 @@ export function LineChart({
       <div style={{ minWidth: 720 }}>
     <ResponsiveContainer width="100%" height={height}>
       <RLineChart data={numericData} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
-        <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
+        <CartesianGrid
+            stroke="var(--border)"
+            strokeDasharray="2 4"
+            vertical={false}
+            syncWithTicks
+          />
         <XAxis {...commonXAxis} />
         <YAxis
           tick={{ fontSize: 11, fill: "var(--muted)" }}

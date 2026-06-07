@@ -45,6 +45,7 @@ export default function MarketsPage() {
   const [serverRange, setServerRange] = useState<string | null>(null);
   const [heat, setHeat] = useState<Array<{ ticker: string; pct: number; weight: number }>>([]);
   const [custom, setCustom] = useState("");
+  const [customTickers, setCustomTickers] = useState<string[]>([]);
 
   useEffect(() => {
     INDICES.forEach(async ({ sym }) => {
@@ -165,6 +166,38 @@ export default function MarketsPage() {
                   {stripTicker(p)}
                 </button>
               ))}
+              {customTickers.map((t) => {
+                const active = sel === t;
+                return (
+                  <div
+                    key={t}
+                    className={`flex items-center text-xs rounded-md border border-border overflow-hidden transition-colors ${
+                      active ? "bg-foreground text-background" : "hover:bg-[var(--muted-bg)]"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSel(t)}
+                      className="pl-2.5 py-1 cursor-pointer"
+                    >
+                      {stripTicker(t)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomTickers((prev) => prev.filter((x) => x !== t));
+                        if (sel === t) setSel(PRESETS[0]);
+                      }}
+                      aria-label={`Remove ${stripTicker(t)}`}
+                      className={`px-1.5 py-1 ml-1 cursor-pointer ${
+                        active ? "hover:bg-background/20" : "hover:bg-[var(--muted-bg)]"
+                      }`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -177,6 +210,14 @@ export default function MarketsPage() {
                   // since this dashboard is India-first.
                   const normalized =
                     raw.startsWith("^") || raw.includes(".") ? raw : `${raw}.NS`;
+                  // Only push into the custom-ticker pills if it isn't
+                  // already a preset or another custom entry. PRESETS
+                  // stay fixed; the user can only add or remove their own.
+                  if (!PRESETS.includes(normalized)) {
+                    setCustomTickers((prev) =>
+                      prev.includes(normalized) ? prev : [...prev, normalized]
+                    );
+                  }
                   setSel(normalized);
                   setCustom("");
                 }}
