@@ -52,7 +52,10 @@ function intervalForRange(range: string): string {
     case "1d":
       return "5m";
     case "5d":
-      return "1h";
+      // 1W uses daily candles so point counts stay monotonic with longer
+      // ranges (1W ~= 5 pts, 1M ~= 21 pts, 3M ~= 60 pts ...). Hourly would
+      // inflate 1W past 1M and confuse the reader.
+      return "1d";
     case "1mo":
     case "3mo":
       return "1d";

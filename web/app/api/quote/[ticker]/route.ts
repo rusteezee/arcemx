@@ -7,7 +7,9 @@ export const runtime = "nodejs";
 
 const RANGE_SECONDS: Record<string, number> = {
   "1d": 86400,
-  "5d": 86400 * 5,
+  // 1W spans 7 calendar days so the window always covers a full 5
+  // trading-day week regardless of when the user opens the chart.
+  "5d": 86400 * 7,
   "1mo": 86400 * 31,
   "3mo": 86400 * 93,
   "6mo": 86400 * 186,

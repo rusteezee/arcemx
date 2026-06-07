@@ -41,37 +41,42 @@ function parseDate(s: string): number {
   return new Date(s + "T00:00:00Z").getTime();
 }
 
-const IST_TIME_FMT = new Intl.DateTimeFormat("en-IN", {
+// 24-hour IST formatter — we read the parts and convert to 12-hour
+// AM/PM uppercase ourselves to guarantee the brand format regardless of
+// locale defaults ("am"/"pm" lowercase vs "AM"/"PM" uppercase).
+const IST_HOUR24_FMT = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
   timeZone: "Asia/Kolkata",
 });
 
+function formatISTTime12(d: Date): string {
+  const parts = IST_HOUR24_FMT.formatToParts(d);
+  const h24 = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
+  const mi = parts.find((p) => p.type === "minute")?.value ?? "00";
+  const dayPeriod = h24 >= 12 ? "PM" : "AM";
+  const h12raw = h24 % 12 === 0 ? 12 : h24 % 12;
+  const h12 = String(h12raw).padStart(2, "0");
+  return `${h12}:${mi} ${dayPeriod}`;
+}
+
 const DAY_MS = 86400_000;
 
-function formatTickForSpan(ts: number, spanMs: number): string {
+function formatTickForSpan(ts: number, spanMs: number, isIntraday: boolean): string {
   const d = new Date(ts);
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
-  // 1D-ish span: time of day in IST only (NSE intraday window).
-  if (spanMs <= 1.5 * DAY_MS) {
-    const parts = IST_TIME_FMT.formatToParts(d);
-    const h = parts.find((p) => p.type === "hour")?.value ?? "00";
-    const mi = parts.find((p) => p.type === "minute")?.value ?? "00";
-    return `${h}:${mi}`;
+  if (isIntraday) {
+    // Sub-day span: time of day only (NSE intraday window).
+    if (spanMs <= 1.5 * DAY_MS) return formatISTTime12(d);
+    // Multi-day intraday: date + IST time.
+    return `${dd}/${mm} ${formatISTTime12(d)}`;
   }
-  // ~1W intraday: combined date + IST time so multi-day intraday is readable.
-  if (spanMs <= 10 * DAY_MS) {
-    const parts = IST_TIME_FMT.formatToParts(d);
-    const h = parts.find((p) => p.type === "hour")?.value ?? "00";
-    const mi = parts.find((p) => p.type === "minute")?.value ?? "00";
-    return `${dd}/${mm} ${h}:${mi}`;
-  }
-  // 1M-3M-ish: short date.
-  if (spanMs <= 120 * DAY_MS) return `${dd}/${mm}`;
-  // Long spans: full dd/mm/yyyy.
+  // Daily / weekly / monthly candles: always dd/mm/yyyy so the year is
+  // never ambiguous across the full chart, including 1M and 3M ranges
+  // that previously dropped the year and confused the reader.
   return `${dd}/${mm}/${yyyy}`;
 }
 
@@ -120,6 +125,11 @@ export function LineChart({
   const X_TICK_COUNT = 10;
   const Y_TICK_COUNT = 5;
 
+  // Detect intraday data by checking whether any date string carries a
+  // time component. Daily / weekly / monthly candles are date-only
+  // ("YYYY-MM-DD"); intraday candles are full ISO with a "T" separator.
+  const isIntraday = data.some((d) => typeof d.date === "string" && d.date.includes("T"));
+
   // Convert date strings (either "YYYY-MM-DD" or full ISO) to numeric
   // timestamps so the X axis can be treated as a continuous numeric scale.
   // That lets us request exactly N evenly-spaced ticks across the full time
@@ -132,18 +142,14 @@ export function LineChart({
   const tsMax = numericData[numericData.length - 1].ts;
   const spanMs = Math.max(1, tsMax - tsMin);
   const xTicks = buildLinearTicks(tsMin, tsMax, X_TICK_COUNT);
-  const xTickFormatter = (ts: number) => formatTickForSpan(ts, spanMs);
+  const xTickFormatter = (ts: number) => formatTickForSpan(ts, spanMs, isIntraday);
   const tooltipLabelFormatter = (label: number) => {
-    if (spanMs <= 10 * DAY_MS) {
-      // Include IST time for intraday tooltips.
+    if (isIntraday) {
       const d = new Date(label);
       const dd = String(d.getUTCDate()).padStart(2, "0");
       const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
       const yyyy = d.getUTCFullYear();
-      const parts = IST_TIME_FMT.formatToParts(d);
-      const h = parts.find((p) => p.type === "hour")?.value ?? "00";
-      const mi = parts.find((p) => p.type === "minute")?.value ?? "00";
-      return `${dd}/${mm}/${yyyy} ${h}:${mi} IST`;
+      return `${dd}/${mm}/${yyyy} ${formatISTTime12(d)} IST`;
     }
     return formatTick(label);
   };
