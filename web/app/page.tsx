@@ -10,16 +10,24 @@ import { formatINR, formatNumber } from "@/lib/utils";
 
 export default function TodayPage() {
   const [analysis, setAnalysis] = useState<any>(null);
+  const [lastSyncTs, setLastSyncTs] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const { data } = await sb
-        .from("analysis")
-        .select("*")
-        .order("run_at", { ascending: false })
-        .limit(1);
-      setAnalysis(data?.[0] || null);
+      const [{ data: aData }, lsRes] = await Promise.all([
+        sb
+          .from("analysis")
+          .select("*")
+          .order("run_at", { ascending: false })
+          .limit(1),
+        // Pull the same "latest of analysis or sync_log" timestamp the
+        // nav indicator uses so this page's "Last Update" card and the
+        // nav badge always agree on the most recent refresh moment.
+        fetch("/api/last-sync", { cache: "no-store" }).then((r) => r.json()),
+      ]);
+      setAnalysis(aData?.[0] || null);
+      setLastSyncTs(lsRes?.ts || null);
       setLoading(false);
     })();
   }, []);
@@ -36,7 +44,18 @@ export default function TodayPage() {
   const raw = analysis?.raw_json || {};
   const mood = raw.market_mood || "neutral";
   const conf = raw.confidence || 0;
-  const runAtDate = analysis?.run_at ? new Date(analysis.run_at) : null;
+  // Show the most recent of (analysis.run_at, sync_log latest) so this
+  // card reads the same as the nav badge. The two events refresh
+  // different parts of the dashboard (AI call vs INDmoney positions),
+  // but the user just wants one "this is how fresh the page is" number.
+  const analysisTs = analysis?.run_at ? new Date(analysis.run_at) : null;
+  const syncTs = lastSyncTs ? new Date(lastSyncTs) : null;
+  const runAtDate =
+    syncTs && analysisTs
+      ? syncTs > analysisTs
+        ? syncTs
+        : analysisTs
+      : syncTs ?? analysisTs;
   const runDateStr = runAtDate
     ? runAtDate.toLocaleDateString("en-IN", {
         timeZone: "Asia/Kolkata",
@@ -76,7 +95,7 @@ export default function TodayPage() {
           <Stat label="Confidence" value={`${conf}%`} glyph="◎" />
           <div className="card p-5">
             <div className="flex items-center justify-between mb-2">
-              <div className="section-num">Last AI Call</div>
+              <div className="section-num">Last Update</div>
               <span className="glyph text-sm">◈</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
