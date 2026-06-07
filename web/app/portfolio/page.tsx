@@ -21,6 +21,11 @@ interface PortfolioRow {
   currency: string;
 }
 
+function formatIsoDateDdMmYyyy(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
 const TIMELINE_RANGES: { label: string; days: number }[] = [
   { label: "1W", days: 7 },
   { label: "1M", days: 30 },
@@ -32,12 +37,30 @@ const TIMELINE_RANGES: { label: string; days: number }[] = [
   { label: "MAX", days: 0 },
 ];
 
+interface TxRow {
+  ticker: string;
+  side: "BUY" | "SELL";
+  qty: number;
+  execution_date: string;
+}
+
+interface PriceRow {
+  ticker: string;
+  ts: string;
+  close: number;
+}
+
 export default function PortfolioPage() {
   const [rows, setRows] = useState<PortfolioRow[]>([]);
   const [timeline, setTimeline] = useState<Array<{ date: string; value: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [timelineRange, setTimelineRange] = useState("6M");
   const [timelineLoading, setTimelineLoading] = useState(false);
+  // Raw ledger + price tape are pulled once and replayed locally for each
+  // range selection so switching ranges doesn't refetch from Supabase.
+  const [txs, setTxs] = useState<TxRow[]>([]);
+  const [prices, setPrices] = useState<PriceRow[]>([]);
+  const [firstTxDate, setFirstTxDate] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -70,52 +93,114 @@ export default function PortfolioPage() {
     })();
   }, []);
 
-  // Refetch timeline whenever portfolio rows or selected range changes.
+  // Pull the full historical ledger + every close we have for every
+  // ticker the user has ever traded. Done once on mount; range slicing
+  // happens locally.
   useEffect(() => {
-    if (!rows.length) {
-      setTimeline([]);
-      return;
-    }
-    const indRows = rows.filter((r) => r.currency === "₹");
-    if (!indRows.length) {
-      setTimeline([]);
-      return;
-    }
-    const tickers = indRows.map((r) => r.ticker);
-    const qtyMap: Record<string, number> = Object.fromEntries(
-      indRows.map((r) => [r.ticker, r.qty])
-    );
-    const rangeCfg = TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[3];
-
-    let cancelled = false;
-    setTimelineLoading(true);
     (async () => {
-      let query = sb
+      setTimelineLoading(true);
+      const txRes = await sb
+        .from("transactions")
+        .select("ticker,side,qty,execution_date")
+        .eq("user_id", DEFAULT_UID)
+        .order("execution_date", { ascending: true });
+      const txData = (txRes.data || []) as TxRow[];
+      if (!txData.length) {
+        setTxs([]);
+        setPrices([]);
+        setFirstTxDate(null);
+        setTimelineLoading(false);
+        return;
+      }
+      const tickers = Array.from(new Set(txData.map((t) => t.ticker)));
+      const firstDateIso = txData[0].execution_date.slice(0, 10);
+      const prRes = await sb
         .from("prices")
         .select("ticker,ts,close")
         .in("ticker", tickers)
+        .gte("ts", firstDateIso)
         .order("ts", { ascending: true });
-      if (rangeCfg.days > 0) {
-        const since = new Date(Date.now() - rangeCfg.days * 24 * 3600 * 1000).toISOString();
-        query = query.gte("ts", since);
-      }
-      const { data: pdata } = await query;
-      if (cancelled) return;
-      const byDate: Record<string, number> = {};
-      (pdata || []).forEach((p: any) => {
-        const d = p.ts.slice(0, 10);
-        byDate[d] = (byDate[d] || 0) + p.close * (qtyMap[p.ticker] || 0);
-      });
-      const series = Object.keys(byDate)
-        .sort()
-        .map((d) => ({ date: d, value: byDate[d] }));
-      setTimeline(series);
+      setTxs(txData);
+      setPrices((prRes.data || []) as PriceRow[]);
+      setFirstTxDate(firstDateIso);
       setTimelineLoading(false);
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [rows, timelineRange]);
+  }, []);
+
+  // Replay daily portfolio value from the ledger whenever range or
+  // underlying data changes. All compute is local and cheap (~900 days
+  // × ~20 tickers worst case).
+  useEffect(() => {
+    if (!txs.length || !prices.length) {
+      setTimeline([]);
+      return;
+    }
+    const rangeCfg = TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[3];
+    const firstIso = firstTxDate ?? txs[0].execution_date.slice(0, 10);
+    const rangeStartIso =
+      rangeCfg.days > 0
+        ? new Date(Date.now() - rangeCfg.days * 86400_000).toISOString().slice(0, 10)
+        : firstIso;
+    // The effective start is whichever is later: the window the user
+    // picked, or the first day they ever owned a share. Picking a
+    // 5Y range when the user only has 7 months of history naturally
+    // collapses to "since first buy".
+    const effectiveStartIso = rangeStartIso < firstIso ? firstIso : rangeStartIso;
+
+    // Group prices by date so each calendar day can look up every
+    // ticker's close in O(1).
+    const pricesByDate = new Map<string, Map<string, number>>();
+    for (const p of prices) {
+      const d = p.ts.slice(0, 10);
+      let inner = pricesByDate.get(d);
+      if (!inner) {
+        inner = new Map<string, number>();
+        pricesByDate.set(d, inner);
+      }
+      inner.set(p.ticker, p.close);
+    }
+    const sortedDates = Array.from(pricesByDate.keys()).sort();
+    if (!sortedDates.length) {
+      setTimeline([]);
+      return;
+    }
+
+    const qty: Record<string, number> = {};
+    // Carry forward the most recent close per ticker so weekends /
+    // holidays (no row in `prices` that day) still use the last
+    // available price instead of dropping the position to zero.
+    const lastPrice: Record<string, number> = {};
+    let txIdx = 0;
+    const series: Array<{ date: string; value: number }> = [];
+
+    for (const d of sortedDates) {
+      // Apply every transaction up to and including end-of-day d before
+      // valuing the portfolio at d's close.
+      while (txIdx < txs.length && txs[txIdx].execution_date.slice(0, 10) <= d) {
+        const t = txs[txIdx];
+        const change = Number(t.qty) * (t.side === "BUY" ? 1 : -1);
+        qty[t.ticker] = (qty[t.ticker] || 0) + change;
+        txIdx++;
+      }
+      const dayPrices = pricesByDate.get(d)!;
+      for (const [tkr, c] of dayPrices) lastPrice[tkr] = c;
+
+      if (d < effectiveStartIso) continue;
+
+      let total = 0;
+      for (const tkr in qty) {
+        const q = qty[tkr];
+        const p = lastPrice[tkr];
+        if (q && p) total += q * p;
+      }
+      // Suppress days where the running qty across all tickers is zero
+      // (pre-first-buy or fully exited gaps) so the chart doesn't show a
+      // misleading dive to zero.
+      if (total > 0) series.push({ date: d, value: total });
+    }
+
+    setTimeline(series);
+  }, [txs, prices, firstTxDate, timelineRange]);
 
   if (!loading && !rows.length) {
     return (
@@ -137,6 +222,19 @@ export default function PortfolioPage() {
   const usInv = us.reduce((s, r) => s + r.invested, 0);
   const usCur = us.reduce((s, r) => s + r.current, 0);
   const usPnl = usCur - usInv;
+
+  // For the badge: is the current range wider than what we actually have
+  // history for? If so, mention the cap so the user understands why 1Y /
+  // 3Y / 5Y / MAX all render the same chart.
+  const currentRangeCfg =
+    TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[3];
+  const isCapped = (() => {
+    if (!firstTxDate || currentRangeCfg.days <= 0) return false;
+    const windowStartIso = new Date(Date.now() - currentRangeCfg.days * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    return windowStartIso < firstTxDate;
+  })();
 
   return (
     <>
@@ -209,7 +307,7 @@ export default function PortfolioPage() {
         num="003 / 003"
         title="Value Timeline"
         glyph="⬡"
-        description="Indian holdings. Daily close × held qty."
+        description="Full investing history. Replays every buy and sell against daily close to value the entire portfolio at each point in time."
         action={
           <div className="flex gap-1.5 flex-wrap">
             {TIMELINE_RANGES.map((p) => (
@@ -248,6 +346,12 @@ export default function PortfolioPage() {
               height={320}
               color="var(--foreground)"
             />
+            {(isCapped || timelineRange === "MAX") && firstTxDate && (
+              <div className="mt-3 text-xs text-[var(--muted)]">
+                Showing full investing history since first buy on{" "}
+                {formatIsoDateDdMmYyyy(firstTxDate)}.
+              </div>
+            )}
           </div>
         ) : timeline.length === 1 ? (
           <EmptyState
