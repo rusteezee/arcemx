@@ -92,16 +92,16 @@ function formatTick(ts: number): string {
 
 function formatValue(v: unknown): string {
   if (typeof v !== "number" || !isFinite(v)) return String(v);
-  return v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
 // Default Y-axis tick formatter when a chart doesn't pass its own:
-// Indian commas, max 0 decimals for >=1000, 2 decimals otherwise.
+// ₹ prefix + Indian commas, 0 decimals for >=1000, 2 decimals otherwise.
 function defaultYTick(v: number): string {
   if (typeof v !== "number" || !isFinite(v)) return String(v);
   return v >= 1000
-    ? v.toLocaleString("en-IN", { maximumFractionDigits: 0 })
-    : v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+    ? `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`
+    : `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
 export function LineChart({
@@ -142,6 +142,16 @@ export function LineChart({
   const tsMax = numericData[numericData.length - 1].ts;
   const spanMs = Math.max(1, tsMax - tsMin);
   const xTicks = buildLinearTicks(tsMin, tsMax, X_TICK_COUNT);
+
+  // Compute explicit Y-axis ticks linearly across [yMin, yMax]. Recharts'
+  // built-in "nice rounding" picks tick values that don't space evenly
+  // against the actual data range, which produced uneven gaps and an
+  // overlapping top label (e.g. 85,707 crammed against 77,811). Using
+  // our own buildLinearTicks gives 5 perfectly uniform Y gridlines.
+  const yValues = numericData.map((d) => d.value);
+  const yMinRaw = Math.min(...yValues);
+  const yMaxRaw = Math.max(...yValues);
+  const yTicks = buildLinearTicks(yMinRaw, yMaxRaw, Y_TICK_COUNT);
   const xTickFormatter = (ts: number) => formatTickForSpan(ts, spanMs, isIntraday);
   const tooltipLabelFormatter = (label: number) => {
     if (isIntraday) {
@@ -194,12 +204,12 @@ export function LineChart({
             axisLine={false}
             tickLine={false}
             tickFormatter={yTickFormatter ?? defaultYTick}
-            domain={["dataMin", "dataMax"]}
-            tickCount={Y_TICK_COUNT}
+            domain={[yMinRaw, yMaxRaw]}
+            ticks={yTicks}
             interval={0}
-            width={68}
+            width={84}
             tickMargin={6}
-            padding={{ top: 0, bottom: 10 }}
+            padding={{ top: 14, bottom: 14 }}
           />
           <Tooltip
             contentStyle={{
@@ -240,12 +250,13 @@ export function LineChart({
           tick={{ fontSize: 11, fill: "var(--muted)" }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={yTickFormatter}
-          tickCount={Y_TICK_COUNT}
+          tickFormatter={yTickFormatter ?? defaultYTick}
+          domain={[yMinRaw, yMaxRaw]}
+          ticks={yTicks}
           interval={0}
-          width={68}
+          width={84}
           tickMargin={6}
-          padding={{ top: 0, bottom: 10 }}
+          padding={{ top: 14, bottom: 14 }}
         />
         <Tooltip
           contentStyle={{

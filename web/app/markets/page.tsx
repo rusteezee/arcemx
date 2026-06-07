@@ -212,11 +212,6 @@ export default function MarketsPage() {
               data={chart}
               height={380}
               color="var(--foreground)"
-              yTickFormatter={(v) =>
-                v >= 1000
-                  ? v.toLocaleString("en-IN", { maximumFractionDigits: 0 })
-                  : v.toFixed(2)
-              }
             />
           )}
         </div>
