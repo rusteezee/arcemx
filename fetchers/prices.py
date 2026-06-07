@@ -19,9 +19,11 @@ def load_universe() -> list[str]:
 
 
 def load_user_tickers() -> list[str]:
-    """Pull portfolio + wishlist tickers from Supabase so the prices table
-    covers everything the dashboard needs to chart, not just the static
-    universe.csv. Returns [] when Supabase is not configured (local dev)."""
+    """Pull portfolio + wishlist + historical-transactions tickers from
+    Supabase so the prices table covers everything the dashboard needs
+    to chart — including positions the user has fully sold off, which
+    the snapshot-based `portfolio` table no longer carries. Returns []
+    when Supabase is not configured (local dev)."""
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
     if not url or not key:
         return []
@@ -38,6 +40,17 @@ def load_user_tickers() -> list[str]:
             t = row.get("ticker")
             if t:
                 out.add(t)
+        # Historical transactions — covers ever-held positions even after
+        # they've been sold and removed from the current `portfolio` table.
+        try:
+            tx = sb.table("transactions").select("ticker").execute()
+            for row in (tx.data or []):
+                t = row.get("ticker")
+                if t:
+                    out.add(t)
+        except Exception as e:
+            # transactions table may not exist on older deployments; ignore.
+            print(f"load_user_tickers: transactions skip — {e}")
         return sorted(out)
     except Exception as e:
         print(f"load_user_tickers failed: {e}")
