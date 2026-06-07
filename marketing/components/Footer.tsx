@@ -23,6 +23,7 @@ export function Footer() {
               <li><a href="#features" className="text-[var(--muted)] hover:text-foreground transition-colors">Features</a></li>
               <li><a href="#how" className="text-[var(--muted)] hover:text-foreground transition-colors">How It Works</a></li>
               <li><a href="#demo" className="text-[var(--muted)] hover:text-foreground transition-colors">Demo</a></li>
+              <li><a href="#waitlist" className="text-[var(--muted)] hover:text-foreground transition-colors">Waitlist</a></li>
               <li><a href={DEMO_URL} className="text-[var(--muted)] hover:text-foreground transition-colors">Try Dashboard</a></li>
             </ul>
           </div>

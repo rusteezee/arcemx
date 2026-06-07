@@ -5,6 +5,7 @@ import { Demo } from "@/components/Demo";
 import { Stats } from "@/components/Stats";
 import { Docs } from "@/components/Docs";
 import { CTA } from "@/components/CTA";
+import { Waitlist } from "@/components/Waitlist";
 import { Footer } from "@/components/Footer";
 
 export default function Landing() {
@@ -16,6 +17,7 @@ export default function Landing() {
       <Demo />
       <Stats />
       <Docs />
+      <Waitlist />
       <CTA />
       <Footer />
     </>

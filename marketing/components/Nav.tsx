@@ -12,6 +12,7 @@ const homeItems = [
   { href: "#how", label: "How It Works" },
   { href: "#demo", label: "Demo" },
   { href: "#docs", label: "Docs" },
+  { href: "#waitlist", label: "Waitlist" },
 ];
 
 const demoItems = [
@@ -218,7 +219,7 @@ export function Nav() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2 }}
-              className="md:hidden mt-2 rounded-2xl border border-border bg-[var(--card)]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.2)] p-2"
+              className="md:hidden mt-2 rounded-[22px] border border-border bg-[var(--card)]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.2)] p-2"
             >
               {items.map((item) => {
                 const isActive = active === item.href;
@@ -228,7 +229,7 @@ export function Nav() {
                     href={item.href}
                     onClick={handleItemClick(item.href)}
                     className={cn(
-                      "block px-4 py-2.5 rounded-xl text-sm font-medium transition-colors",
+                      "block px-4 py-2.5 rounded-[14px] text-sm font-medium transition-colors",
                       isActive
                         ? "bg-foreground text-background"
                         : "text-[var(--muted)] hover:text-foreground hover:bg-[var(--muted-bg)]"

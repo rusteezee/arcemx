@@ -93,7 +93,7 @@ body {
 .card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 22px;
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
 .card:hover { border-color: color-mix(in srgb, var(--foreground) 18%, var(--border)); }
@@ -125,6 +125,21 @@ body {
 }
 
 .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+.form-input {
+  width: 100%;
+  background: var(--muted-bg);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  border-radius: 14px;
+  padding: 0.75rem 0.95rem;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.form-input::placeholder { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+.form-input:hover { border-color: color-mix(in srgb, var(--foreground) 22%, var(--border)); }
+.form-input:focus { border-color: var(--foreground); background: var(--card); }
 
 .spotlight {
   position: absolute;
