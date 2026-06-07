@@ -418,7 +418,7 @@ function WishlistView() {
             <tbody>{ind.map((w) => (
               <tr key={w.t} className="border-t border-border">
                 <td className="px-4 py-3 font-medium truncate">{w.t}</td>
-                <td className="px-4 py-3 num">₹{w.last.toFixed(2)}</td>
+                <td className="px-4 py-3 num">₹{w.last.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className={`px-4 py-3 num font-medium ${w.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{w.pct >= 0 ? "+" : ""}{w.pct.toFixed(2)}%</td>
               </tr>
             ))}</tbody>
@@ -442,7 +442,7 @@ function WishlistView() {
             <tbody>{us.map((w) => (
               <tr key={w.t} className="border-t border-border">
                 <td className="px-4 py-3 font-medium truncate">{w.t}</td>
-                <td className="px-4 py-3 num">${w.last.toFixed(2)}</td>
+                <td className="px-4 py-3 num">${w.last.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td className={`px-4 py-3 num font-medium ${w.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>{w.pct >= 0 ? "+" : ""}{w.pct.toFixed(2)}%</td>
               </tr>
             ))}</tbody>
