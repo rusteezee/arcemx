@@ -21,11 +21,6 @@ interface PortfolioRow {
   currency: string;
 }
 
-function formatIsoDateDdMmYyyy(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
-}
-
 const TIMELINE_RANGES: { label: string; days: number }[] = [
   { label: "1W", days: 7 },
   { label: "1M", days: 30 },
@@ -151,9 +146,18 @@ export default function PortfolioPage() {
     }
     const rangeCfg = TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[3];
     const firstIso = firstTxDate ?? txs[0].execution_date.slice(0, 10);
+    // Anchor the lookback to the most recent calendar day we actually
+    // have closes for (the last trading day in `prices`), not to today.
+    // Otherwise picking "1M" on a Sunday after a Friday close counts
+    // back from Sunday and the window starts ~2 days earlier than the
+    // user expects ("30 days from last market day").
+    const lastPriceIso = prices[prices.length - 1].ts.slice(0, 10);
+    const anchorMs = new Date(lastPriceIso + "T00:00:00Z").getTime();
     const rangeStartIso =
       rangeCfg.days > 0
-        ? new Date(Date.now() - rangeCfg.days * 86400_000).toISOString().slice(0, 10)
+        ? new Date(anchorMs - rangeCfg.days * 86400_000)
+            .toISOString()
+            .slice(0, 10)
         : firstIso;
     // The effective start is whichever is later: the window the user
     // picked, or the first day they ever owned a share. Picking a
@@ -239,19 +243,6 @@ export default function PortfolioPage() {
   const usInv = us.reduce((s, r) => s + r.invested, 0);
   const usCur = us.reduce((s, r) => s + r.current, 0);
   const usPnl = usCur - usInv;
-
-  // For the badge: is the current range wider than what we actually have
-  // history for? If so, mention the cap so the user understands why 1Y /
-  // 3Y / 5Y / MAX all render the same chart.
-  const currentRangeCfg =
-    TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[3];
-  const isCapped = (() => {
-    if (!firstTxDate || currentRangeCfg.days <= 0) return false;
-    const windowStartIso = new Date(Date.now() - currentRangeCfg.days * 86400_000)
-      .toISOString()
-      .slice(0, 10);
-    return windowStartIso < firstTxDate;
-  })();
 
   return (
     <>
@@ -363,12 +354,6 @@ export default function PortfolioPage() {
               height={320}
               color="var(--foreground)"
             />
-            {(isCapped || timelineRange === "MAX") && firstTxDate && (
-              <div className="mt-3 text-xs text-[var(--muted)]">
-                Showing full investing history since first buy on{" "}
-                {formatIsoDateDdMmYyyy(firstTxDate)}.
-              </div>
-            )}
           </div>
         ) : timeline.length === 1 ? (
           <EmptyState
