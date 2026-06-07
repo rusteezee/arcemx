@@ -22,7 +22,6 @@ interface PortfolioRow {
 }
 
 const TIMELINE_RANGES: { label: string; days: number }[] = [
-  { label: "1D", days: 2 },
   { label: "1W", days: 7 },
   { label: "1M", days: 30 },
   { label: "3M", days: 90 },
@@ -86,7 +85,7 @@ export default function PortfolioPage() {
     const qtyMap: Record<string, number> = Object.fromEntries(
       indRows.map((r) => [r.ticker, r.qty])
     );
-    const rangeCfg = TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[4];
+    const rangeCfg = TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[3];
 
     let cancelled = false;
     setTimelineLoading(true);
