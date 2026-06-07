@@ -15,6 +15,18 @@ against whichever tool returns the historical ledger.
 """
 import asyncio
 import json
+import sys
+
+# Windows default stdout codec is cp1252, which can't encode Unicode
+# characters that show up in INDmoney tool descriptions (e.g. "→").
+# Reconfigure stdout / stderr to UTF-8 so the probe never blows up on
+# a print, regardless of the host's locale.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from fetchers.indmoney_mcp import _build_auth_sync, MCP_URL
@@ -110,4 +122,29 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Tee everything we print into probe.txt with explicit UTF-8 so the
+    # PowerShell `>` redirect is no longer required and we never lose
+    # Unicode tool descriptions to a host codec mismatch.
+    import io
+    import builtins
+
+    real_print = builtins.print
+    buffer = io.StringIO()
+
+    def tee_print(*args, **kwargs):
+        # Mirror to the buffer with the same separators/end as the call.
+        text = (kwargs.get("sep", " ") or " ").join(str(a) for a in args)
+        end = kwargs.get("end", "\n")
+        buffer.write(text + end)
+        real_print(*args, **kwargs)
+
+    builtins.print = tee_print
+    try:
+        asyncio.run(main())
+    finally:
+        try:
+            with open("probe.txt", "w", encoding="utf-8", errors="replace") as f:
+                f.write(buffer.getvalue())
+            real_print("\n[probe.txt written]")
+        except Exception as e:
+            real_print(f"\n[probe.txt write failed: {e!r}]")
