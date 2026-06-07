@@ -40,7 +40,7 @@ Return STRICT JSON only matching this schema:
   "nifty_outlook": {"direction": "up|down|sideways", "range": "string", "drivers": ["..."]},
   "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "drivers": ["..."]},
   "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30}],
-  "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "...", "horizon_months": 6-36}],
+  "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "<numeric INR or INR range, e.g. 1750-1800>", "target": "<numeric INR multi-month target, e.g. 2200>", "stop_loss": "<numeric INR thesis-break level, e.g. 1600>", "horizon_months": 6-36}],
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],
   "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "<numeric INR or INR range, e.g. 380 or 360-400>", "stop_loss": "<numeric INR, e.g. 290>"}],
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
@@ -60,6 +60,13 @@ Return STRICT JSON only matching this schema:
 
 If user_holdings empty, return empty portfolio_verdicts.
 If user_wishlist empty, return empty wishlist_signals.
+
+CRITICAL — every short_term_picks and long_term_picks row MUST include
+concrete numeric INR values for entry / entry_zone, target, AND stop_loss.
+The dashboard renders these as actionable prices and will display blank
+cells if any of the three is missing. Long-term picks especially must
+not skip target and stop_loss just because the horizon is months out —
+project a reasonable multi-month target and a thesis-break stop level.
 
 CRITICAL — portfolio_verdicts target / stop_loss MUST be concrete numeric INR
 values, never "N/A" or prose. This applies to EVERY verdict including HOLD:

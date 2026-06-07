@@ -189,7 +189,7 @@ function PickTable({ title, rows }: { title: string; rows: any[] }) {
               <th>Ticker</th>
               <th>Entry</th>
               <th>Target</th>
-              <th>SL</th>
+              <th>Stop Loss</th>
             </tr>
           </thead>
           <tbody>
