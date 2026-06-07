@@ -49,6 +49,10 @@ export async function fetchQuote(ticker: string, range = "5d"): Promise<Quote | 
 // 1250 daily candles (which Yahoo sometimes throttles to a few points).
 function intervalForRange(range: string): string {
   switch (range) {
+    case "1d":
+      return "5m";
+    case "5d":
+      return "1h";
     case "1mo":
     case "3mo":
       return "1d";
@@ -56,6 +60,7 @@ function intervalForRange(range: string): string {
     case "1y":
       return "1d";
     case "2y":
+    case "3y":
     case "5y":
       return "1wk";
     case "10y":
@@ -80,9 +85,15 @@ export async function fetchHistory(ticker: string, range = "6mo"): Promise<Quote
     const meta = result.meta || {};
     const timestamps: number[] = result.timestamp || [];
     const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+    // Intraday intervals (5m / 1h) need the full timestamp to render
+    // distinct points within a single day. Daily / weekly / monthly intervals
+    // keep the date-only form for compactness.
+    const intraday = interval.endsWith("m") || interval.endsWith("h");
     const history = timestamps
       .map((ts, i) => ({
-        date: new Date(ts * 1000).toISOString().slice(0, 10),
+        date: intraday
+          ? new Date(ts * 1000).toISOString()
+          : new Date(ts * 1000).toISOString().slice(0, 10),
         close: closes[i] as number,
       }))
       .filter((p) => p.close != null);

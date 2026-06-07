@@ -21,10 +21,24 @@ interface PortfolioRow {
   currency: string;
 }
 
+const TIMELINE_RANGES: { label: string; days: number }[] = [
+  { label: "1D", days: 2 },
+  { label: "1W", days: 7 },
+  { label: "1M", days: 30 },
+  { label: "3M", days: 90 },
+  { label: "6M", days: 180 },
+  { label: "1Y", days: 365 },
+  { label: "3Y", days: 365 * 3 },
+  { label: "5Y", days: 365 * 5 },
+  { label: "MAX", days: 0 },
+];
+
 export default function PortfolioPage() {
   const [rows, setRows] = useState<PortfolioRow[]>([]);
   const [timeline, setTimeline] = useState<Array<{ date: string; value: number }>>([]);
   const [loading, setLoading] = useState(true);
+  const [timelineRange, setTimelineRange] = useState("6M");
+  const [timelineLoading, setTimelineLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -53,30 +67,56 @@ export default function PortfolioPage() {
         })
       );
       setRows(out);
-
-      // Timeline from prices table
-      if (out.length) {
-        const tickers = out.filter((r) => r.currency === "₹").map((r) => r.ticker);
-        const qtyMap: Record<string, number> = Object.fromEntries(out.map((r) => [r.ticker, r.qty]));
-        const since = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString();
-        const { data: pdata } = await sb
-          .from("prices")
-          .select("ticker,ts,close")
-          .in("ticker", tickers)
-          .gte("ts", since);
-        const byDate: Record<string, number> = {};
-        (pdata || []).forEach((p: any) => {
-          const d = p.ts.slice(0, 10);
-          byDate[d] = (byDate[d] || 0) + (p.close * (qtyMap[p.ticker] || 0));
-        });
-        const series = Object.keys(byDate)
-          .sort()
-          .map((d) => ({ date: d, value: byDate[d] }));
-        setTimeline(series);
-      }
       setLoading(false);
     })();
   }, []);
+
+  // Refetch timeline whenever portfolio rows or selected range changes.
+  useEffect(() => {
+    if (!rows.length) {
+      setTimeline([]);
+      return;
+    }
+    const indRows = rows.filter((r) => r.currency === "₹");
+    if (!indRows.length) {
+      setTimeline([]);
+      return;
+    }
+    const tickers = indRows.map((r) => r.ticker);
+    const qtyMap: Record<string, number> = Object.fromEntries(
+      indRows.map((r) => [r.ticker, r.qty])
+    );
+    const rangeCfg = TIMELINE_RANGES.find((r) => r.label === timelineRange) ?? TIMELINE_RANGES[4];
+
+    let cancelled = false;
+    setTimelineLoading(true);
+    (async () => {
+      let query = sb
+        .from("prices")
+        .select("ticker,ts,close")
+        .in("ticker", tickers)
+        .order("ts", { ascending: true });
+      if (rangeCfg.days > 0) {
+        const since = new Date(Date.now() - rangeCfg.days * 24 * 3600 * 1000).toISOString();
+        query = query.gte("ts", since);
+      }
+      const { data: pdata } = await query;
+      if (cancelled) return;
+      const byDate: Record<string, number> = {};
+      (pdata || []).forEach((p: any) => {
+        const d = p.ts.slice(0, 10);
+        byDate[d] = (byDate[d] || 0) + p.close * (qtyMap[p.ticker] || 0);
+      });
+      const series = Object.keys(byDate)
+        .sort()
+        .map((d) => ({ date: d, value: byDate[d] }));
+      setTimeline(series);
+      setTimelineLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rows, timelineRange]);
 
   if (!loading && !rows.length) {
     return (
@@ -166,13 +206,57 @@ export default function PortfolioPage() {
         </div>
       </Section>
 
-      <Section num="003 / 003" title="Value Timeline" glyph="⬡" description="Last 60 days, Indian holdings.">
-        {timeline.length ? (
-          <div className="card p-6">
-            <LineChart data={timeline} height={320} color="var(--foreground)" />
+      <Section
+        num="003 / 003"
+        title="Value Timeline"
+        glyph="⬡"
+        description="Indian holdings. Daily close × held qty."
+        action={
+          <div className="flex gap-1.5 flex-wrap">
+            {TIMELINE_RANGES.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => setTimelineRange(p.label)}
+                className={`px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
+                  timelineRange === p.label
+                    ? "bg-foreground text-background"
+                    : "hover:bg-[var(--muted-bg)]"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
+        }
+      >
+        {timelineLoading ? (
+          <div className="card p-6">
+            <div
+              style={{ height: 320 }}
+              className="flex items-center justify-center text-sm text-[var(--muted)]"
+            >
+              <span className="flex items-center gap-2">
+                <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+                Loading
+              </span>
+            </div>
+          </div>
+        ) : timeline.length >= 2 ? (
+          <div className="card p-6">
+            <LineChart
+              key={`pf-timeline-${timelineRange}`}
+              data={timeline}
+              height={320}
+              color="var(--foreground)"
+            />
+          </div>
+        ) : timeline.length === 1 ? (
+          <EmptyState
+            title="Only one data point in this range"
+            hint="Pick a wider range or wait for more daily prices to land."
+          />
         ) : (
-          <EmptyState title="No historical data yet" hint="Run the prices fetcher to populate." />
+          <EmptyState title="No historical data in this range" hint="Try a wider range or run the prices fetcher." />
         )}
       </Section>
     </>

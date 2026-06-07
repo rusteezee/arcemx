@@ -25,10 +25,13 @@ const INDICES = [
 
 const PRESETS = ["^NSEI", "^BSESN", "^NSEBANK", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS"];
 const PERIODS: { label: string; range: string }[] = [
+  { label: "1D", range: "1d" },
+  { label: "1W", range: "5d" },
   { label: "1M", range: "1mo" },
   { label: "3M", range: "3mo" },
   { label: "6M", range: "6mo" },
   { label: "1Y", range: "1y" },
+  { label: "3Y", range: "3y" },
   { label: "5Y", range: "5y" },
 ];
 
