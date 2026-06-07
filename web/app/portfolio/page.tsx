@@ -207,10 +207,13 @@ export default function PortfolioPage() {
         const p = lastPrice[tkr];
         if (q && p) total += q * p;
       }
-      // Suppress days where the running qty across all tickers is zero
-      // (pre-first-buy or fully exited gaps) so the chart doesn't show a
-      // misleading dive to zero.
-      if (total > 0) series.push({ date: d, value: total });
+      // Push every day in the window, including ones where total is
+      // zero. The user had ~14 months between fully exiting their
+      // earlier positions and re-entering in March 2026; that gap is
+      // part of the truth of the portfolio's value over time. Skipping
+      // it made 3M / 6M / 1Y look identical because they all rendered
+      // only the post-re-entry portion.
+      series.push({ date: d, value: total });
     }
 
     setTimeline(series);
