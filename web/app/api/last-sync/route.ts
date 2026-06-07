@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+// Disable Next.js route-handler caching. Without this the latest
+// timestamp can read several minutes stale because Next.js may serve a
+// prior response from its full-route cache.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
