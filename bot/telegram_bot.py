@@ -292,6 +292,17 @@ async def rm_wish(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Removed {t}")
 
 
+def _flatten_exception(e: BaseException) -> str:
+    """The MCP client wraps internal errors in anyio ExceptionGroups, so
+    a bare str(e) on the outer exception just reads
+    "unhandled errors in a TaskGroup (1 sub-exception)" and hides the
+    actual cause. Walk the .exceptions tree and return the first leaf
+    message that's not another group, so users see the real reason."""
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:
+        e = e.exceptions[0]
+    return f"{type(e).__name__}: {e}"
+
+
 async def sync_indmoney(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Pull holdings + watchlist from INDmoney MCP into Supabase."""
     from fetchers.indmoney_mcp import sync_to_supabase
@@ -303,9 +314,10 @@ async def sync_indmoney(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"✅ Synced {n['holdings']} holdings + {n['watchlist']} watchlist items.\n"
             "Run /portfolio or /wishlist to view."
         )
-    except Exception as e:
+    except BaseException as e:
+        msg = _flatten_exception(e)
         await update.message.reply_text(
-            f"❌ Sync failed: {e}\n\n"
+            f"❌ Sync failed: {msg}\n\n"
             "If auth expired, re-run on host: `python -m fetchers.indmoney_auth`"
         )
 
