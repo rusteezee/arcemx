@@ -446,21 +446,49 @@ async def sync_to_supabase(user_id: str = "default"):
                         print(f"wishlist fail {tk}: {e}")
 
             # ----- Holdings -----
+            # INDmoney's MCP occasionally returns HTTP 512 / service_error
+            # for /v1/holdings/ from Render's IP range. Retry a couple of
+            # times before giving up; on persistent failure raise so the
+            # caller (Telegram bot) can surface the actual cause.
             print("Fetching INDmoney holdings...")
-            h_resp = await session.call_tool("networth_holdings", {"asset_type": "IND_STOCK"})
-            h_data = _extract(h_resp)
-            holdings = h_data.get("holdings", [])
-            # Diagnostic: when the sync silently reports "0 holdings" but
-            # the debug probe shows 5, dump the parsed response so we can
-            # see whether the MCP payload was empty, paginated, or shaped
-            # differently than expected.
-            print(
-                f"[debug] holdings parse: type={type(h_data).__name__} "
-                f"keys={list(h_data.keys())[:10] if isinstance(h_data, dict) else 'N/A'} "
-                f"holdings_len={len(holdings)}"
-            )
-            if not holdings:
-                print(f"[debug] full h_data (truncated): {str(h_data)[:1000]}")
+            holdings: list = []
+            last_error_msg: str | None = None
+            for attempt in range(1, 4):
+                h_resp = await session.call_tool(
+                    "networth_holdings", {"asset_type": "IND_STOCK"}
+                )
+                h_data = _extract(h_resp)
+                # When INDmoney upstream errors the MCP wraps it as
+                # {"error": "service_error", "message": "API returned 512: ..."}
+                # rather than a holdings array. Detect both shapes.
+                if isinstance(h_data, dict) and h_data.get("error"):
+                    last_error_msg = h_data.get("message") or str(h_data)
+                    print(
+                        f"[attempt {attempt}/3] INDmoney holdings error: "
+                        f"{last_error_msg}"
+                    )
+                    if attempt < 3:
+                        await asyncio.sleep(2 * attempt)
+                        continue
+                    raise RuntimeError(
+                        "INDmoney holdings API is rate-limiting this host. "
+                        f"Last error: {last_error_msg}. Try again in a few "
+                        "minutes, or run `python -m fetchers.indmoney_mcp` "
+                        "locally."
+                    )
+                holdings = h_data.get("holdings", []) if isinstance(h_data, dict) else []
+                print(
+                    f"[debug] holdings parse: type={type(h_data).__name__} "
+                    f"keys={list(h_data.keys())[:10] if isinstance(h_data, dict) else 'N/A'} "
+                    f"holdings_len={len(holdings)}"
+                )
+                if holdings:
+                    break
+                # Empty array without an error string — also retry once.
+                if attempt < 3:
+                    print(f"[attempt {attempt}/3] holdings empty, retrying...")
+                    await asyncio.sleep(2 * attempt)
+                    continue
             n_h = 0
             for h in holdings:
                 name = h.get("investment", "")
