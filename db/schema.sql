@@ -58,3 +58,28 @@ create table if not exists wishlist (
     added_at timestamptz default now(),
     unique(user_id, ticker)
 );
+
+-- Full historical buy/sell ledger. Imported from the user's INDmoney
+-- "Transactions Report" XLSX exports so the Portfolio Value Timeline can
+-- replay total portfolio value over time (including positions later
+-- sold off, which the snapshot-based `portfolio` table can't show).
+create table if not exists transactions (
+    id bigserial primary key,
+    user_id text not null default 'default',
+    execution_date timestamptz not null,
+    scrip_symbol text not null,
+    ticker text not null,
+    scrip_name text,
+    isin text,
+    side text not null check (side in ('BUY','SELL')),
+    qty numeric not null,
+    price numeric not null,
+    exchange text,
+    order_id text,
+    order_status text,
+    source text default 'indmoney_xlsx',
+    fetched_at timestamptz default now(),
+    unique(user_id, order_id)
+);
+create index if not exists idx_tx_user_date on transactions(user_id, execution_date);
+create index if not exists idx_tx_user_ticker on transactions(user_id, ticker);
