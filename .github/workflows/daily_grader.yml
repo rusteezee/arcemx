@@ -2,8 +2,8 @@ name: Daily Prediction Grader
 
 on:
   schedule:
-    # 21:00 IST = 15:30 UTC, Mon-Fri (after market close)
-    - cron: "30 15 * * 1-5"
+    # 17:00 IST = 11:30 UTC, Mon-Fri (90 min after market close, yfinance EOD settled)
+    - cron: "30 11 * * 1-5"
   workflow_dispatch:
 
 jobs:
