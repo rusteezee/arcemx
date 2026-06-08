@@ -90,29 +90,63 @@ export function Nav() {
     return () => clearInterval(t);
   }, []);
 
-  const onSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    setSyncState("idle");
-    setSyncMsg(null);
+  // One sync attempt. Classifies the outcome into three buckets so the
+  // caller can decide whether a retry is worthwhile:
+  //   ok    -> bot synced successfully
+  //   cold  -> transport-level miss (network throw, 5xx, or an empty {}
+  //            body from the proxy when Render returned a non-JSON cold
+  //            start page). A retry after the bot wakes usually succeeds.
+  //   error -> bot was reached but the sync failed (e.g. INDmoney 512 or
+  //            an expired token). The bot already retries those itself,
+  //            so a client retry will not help; surface it.
+  const attemptSync = async (): Promise<{ ok: boolean; cold: boolean; err?: string }> => {
     try {
       const r = await fetch("/api/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      const j = await r.json();
-      if (r.ok && j.ok) {
+      let j: any = {};
+      try {
+        j = await r.json();
+      } catch {
+        j = {};
+      }
+      if (r.ok && j?.ok) return { ok: true, cold: false };
+      if (j && j.ok === false) return { ok: false, cold: false, err: j.error || "Sync failed" };
+      // Empty {} or a 5xx with no usable body => treat as a cold start.
+      return { ok: false, cold: true };
+    } catch {
+      return { ok: false, cold: true };
+    }
+  };
+
+  const onSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncState("idle");
+    setSyncMsg(null);
+    try {
+      let res = await attemptSync();
+      // Cold Render bot: show a waking state, give it ~6s to spin up,
+      // then retry once silently before surfacing any error.
+      if (!res.ok && res.cold) {
+        setSyncMsg("Waking");
+        await new Promise((r) => setTimeout(r, 6000));
+        res = await attemptSync();
+      }
+      if (res.ok) {
         setSyncState("ok");
         setSyncMsg("Synced");
         fetchLastSync();
+      } else if (res.cold) {
+        // Still cold after a retry: not a real failure, just a slow wake.
+        setSyncState("error");
+        setSyncMsg("Retry");
       } else {
         setSyncState("error");
         setSyncMsg("Error");
       }
-    } catch {
-      setSyncState("error");
-      setSyncMsg("Error");
     } finally {
       setSyncing(false);
       setTimeout(() => {
