@@ -303,7 +303,7 @@ export function LineChart({
                       <span style={{ fontWeight: 600 }}>{formatValue(cur)}</span>
                     </div>
                   )}
-                  {pct !== null && (
+                  {pct !== null && pnl !== null && (
                     <div
                       style={{
                         display: "flex",
@@ -316,8 +316,11 @@ export function LineChart({
                     >
                       <span style={{ color: "var(--muted)" }}>P&amp;L</span>
                       <span style={{ color: pnlColor, fontWeight: 600 }}>
-                        {positive ? "+" : ""}
-                        {pct.toFixed(2)}%
+                        {positive ? "+" : "-"}
+                        {formatValue(Math.abs(pnl))}
+                        {" "}
+                        ({positive ? "+" : ""}
+                        {pct.toFixed(2)}%)
                       </span>
                     </div>
                   )}
