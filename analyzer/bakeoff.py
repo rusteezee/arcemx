@@ -36,9 +36,9 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "data" / "bakeoff"
 
 DEFAULT_MODELS = [
-    "nvidia/nemotron-3-ultra:free",
-    "deepseek/deepseek-chat:free",
-    "google/gemini-2.0-flash-exp:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-31b-it:free",
 ]
 
 

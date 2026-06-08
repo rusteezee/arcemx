@@ -444,10 +444,13 @@ async def _start_health_server(port: int):
                             from analyzer.aggregator import run as run_analysis
                             import asyncio as _asyncio
 
-                            # Manual dashboard syncs use the lite model
-                            # (500/day free quota). Daily cron keeps the
-                            # primary model for highest quality.
-                            from analyzer.llm import LITE_MODEL as _LITE
+                            # OpenRouter migration: there is no separate
+                            # lite/primary tier anymore; LITE_MODEL is an
+                            # alias for PRIMARY_MODEL kept for back-compat,
+                            # and OpenRouter's server-side fallback chain
+                            # absorbs rate-limit spikes that previously
+                            # justified a second tier.
+                            from analyzer.llm_router import LITE_MODEL as _LITE
                             async def _bg_analysis():
                                 try:
                                     print("Background analysis starting...")

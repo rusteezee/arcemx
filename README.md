@@ -85,7 +85,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 
 - `SUPABASE_URL`
 - `SUPABASE_KEY`
-- `GEMINI_API_KEY`
+- `OPENROUTER_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `GNEWS_API_KEY` (optional)

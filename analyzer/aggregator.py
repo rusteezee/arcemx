@@ -12,7 +12,7 @@ from fetchers.news import fetch_rss, fetch_gnews
 from fetchers.trends import fetch_trends
 from fetchers.reddit import fetch_hot
 from analyzer.technical import screen_universe, rank_candidates
-from analyzer.llm import analyze
+from analyzer.llm_router import analyze
 from analyzer.feedback import build_feedback as _load_feedback
 from analyzer.market_context import build_market_context
 from analyzer.news_digest import build_news_digest
