@@ -106,7 +106,10 @@ function formatTick(ts: number): string {
 
 function formatValue(v: unknown): string {
   if (typeof v !== "number" || !isFinite(v)) return String(v);
-  return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  return `₹${v.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 // Default Y-axis tick formatter when a chart doesn't pass its own:
