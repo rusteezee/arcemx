@@ -75,40 +75,56 @@ def _parse_range(rng: str) -> tuple[float, float] | None:
 
 
 def grade_direction(predicted_dir: str, last_close: float, next_close: float) -> tuple[float, float]:
-    """Score 0-100 + raw delta %."""
+    """Strict direction score 0-100 + raw delta %.
+
+    Brutal by design: a directional call (up/down) is either right or wrong,
+    no half credit for a near-flat day. Only an explicit sideways call earns
+    partial credit, since calling sideways IS a claim of low movement.
+    """
     if last_close is None or next_close is None or last_close == 0:
         return 0, 0
     pct = (next_close - last_close) / last_close * 100
     p = (predicted_dir or "").lower()
     if p == "up":
-        # full marks if up >=0.2%, half if flat 0±0.2, zero if down
-        if pct > 0.2: score = 100
-        elif pct > -0.2: score = 50
-        else: score = 0
+        score = 100 if pct > 0.1 else 0
     elif p == "down":
-        if pct < -0.2: score = 100
-        elif pct < 0.2: score = 50
+        score = 100 if pct < -0.1 else 0
+    elif p in ("sideways", "flat", "neutral"):
+        if abs(pct) <= 0.4: score = 100
+        elif abs(pct) <= 0.8: score = 50
         else: score = 0
-    else:  # sideways
-        if abs(pct) <= 0.5: score = 100
-        elif abs(pct) <= 1.0: score = 60
-        else: score = 0
+    else:
+        score = 0
     return float(score), float(pct)
 
 
 def grade_range(rng_tuple: tuple[float, float] | None, actual_close: float) -> tuple[float, float]:
+    """Interval score 0-100 that rewards tightness, not just containment.
+
+    A loose band that always contains the close is useless, so plain
+    containment is not enough. This is a 0-100 mapping of the standard
+    interval-score idea:
+      - Hit: start at 100 and subtract a width penalty, so the tightest band
+        that still holds scores highest (width 0% -> 100, ~1.7% -> ~86,
+        3% -> ~76).
+      - Miss: collapse to a low score that decays fast with distance, so a
+        confident (narrow) wrong band is punished hard (0.5% miss -> ~28,
+        1% -> ~15, >=1.6% -> 0).
+    This makes the model hunt for the narrowest band it can actually hit.
+    Returns (score, width_pct on hit / -miss_pct on miss).
+    """
     if not rng_tuple or actual_close is None:
         return 0, 0
     lo, hi = rng_tuple
+    mid = (lo + hi) / 2
+    if mid <= 0:
+        return 0, 0
+    width_pct = (hi - lo) / mid * 100
     if lo <= actual_close <= hi:
-        return 100, 0
-    # partial: how close to band
-    if actual_close < lo:
-        miss = (lo - actual_close) / lo * 100
-    else:
-        miss = (actual_close - hi) / hi * 100
-    score = max(0, 100 - miss * 20)  # 1% miss = -20 pts
-    return float(score), float(miss)
+        return max(0.0, 100 - 8 * width_pct), float(width_pct)
+    miss = (lo - actual_close) if actual_close < lo else (actual_close - hi)
+    miss_pct = miss / mid * 100
+    return max(0.0, 40 - 25 * miss_pct), float(-miss_pct)
 
 
 def _ret_pct(ticker: str, base_ts: datetime, n: int) -> float | None:
