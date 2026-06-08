@@ -71,12 +71,27 @@ export default function AccuracyPage() {
     );
   }
 
-  // Calculate overall accuracy for headline stat
+  // Headline metrics. Direction is the real KPI: averaging it with Range
+  // into a single "accuracy" number flatters the weak dimension and hides
+  // that direction calls carry no edge yet. Show each naked instead.
   const last30 = summary.filter((s) => s.window_days === 30);
-  const overallAcc = last30.length
-    ? last30.reduce((a, s) => a + (s.accuracy_pct || 0), 0) / last30.length
-    : 0;
-  const totalSamples = last30.reduce((a, s) => a + (s.sample_size || 0), 0);
+  const dirRow = last30.find((s) => s.dimension === "direction_1d");
+  const rngRow = last30.find((s) => s.dimension === "range_1d");
+
+  const dirAcc = dirRow?.accuracy_pct ?? null;
+  const rngAcc = rngRow?.accuracy_pct ?? null;
+  const dirN = dirRow?.sample_size ?? 0;
+  const rngN = rngRow?.sample_size ?? 0;
+
+  // Edge over a coin flip. Within ±5 pts of 50 = no demonstrable edge
+  // (neutral), so we don't paint a near-random result green or red.
+  const dirEdge = dirAcc == null ? null : dirAcc - 50;
+  const dirEdgePositive =
+    dirEdge == null || Math.abs(dirEdge) < 5 ? undefined : dirEdge > 0;
+  const dirEdgeLabel =
+    dirEdge == null
+      ? "no data"
+      : `${dirEdge >= 0 ? "+" : ""}${dirEdge.toFixed(1)} pts vs 50% coin flip`;
 
   return (
     <>
@@ -92,9 +107,20 @@ export default function AccuracyPage() {
 
       <Section num="001 / 003" title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <Stat label="Avg accuracy" value={`${overallAcc.toFixed(1)}%`} glyph="◎" />
-          <Stat label="Predictions scored" value={totalSamples.toString()} glyph="◈" />
-          <Stat label="Dimensions tracked" value={last30.length.toString()} glyph="⬡" />
+          <Stat
+            label="Direction accuracy"
+            value={dirAcc == null ? "—" : `${dirAcc.toFixed(1)}%`}
+            delta={dirEdgeLabel}
+            deltaPositive={dirEdgePositive}
+            glyph="◎"
+          />
+          <Stat
+            label="Range hit rate"
+            value={rngAcc == null ? "—" : `${rngAcc.toFixed(1)}%`}
+            delta={`${rngN} scored`}
+            glyph="◈"
+          />
+          <Stat label="Sessions scored" value={dirN.toString()} glyph="⬡" />
           <Stat label="Window" value="30 days" glyph="◉" />
         </div>
       </Section>
