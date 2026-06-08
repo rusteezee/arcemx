@@ -14,6 +14,7 @@ from fetchers.reddit import fetch_hot
 from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm import analyze
 from analyzer.feedback import build_feedback as _load_feedback
+from analyzer.market_context import build_market_context
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +74,13 @@ def build_payload() -> dict:
     print("Index snapshot...")
     idx_snap = latest_snapshot(["^NSEI", "^BSESN", "^NSEBANK", "^DJI", "^IXIC", "^GSPC"])
 
+    print("Market context (index technicals + global cues)...")
+    try:
+        market_context = build_market_context()
+    except Exception as e:
+        print(f"market_context fail: {e}")
+        market_context = {}
+
     print("User holdings + wishlist...")
     holdings, wishlist, prior_call = [], [], None
     if url and key:
@@ -101,6 +109,7 @@ def build_payload() -> dict:
     return {
         "timestamp": datetime.utcnow().isoformat(),
         "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],
+        "market_context": market_context,
         "technical_bullish_top": ranked["bullish"],
         "technical_bearish_top": ranked["bearish"],
         "news_recent": news_compact[:60],
