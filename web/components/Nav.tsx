@@ -18,7 +18,7 @@ const items = [
 ];
 
 function timeAgo(iso: string | null): string {
-  if (!iso) return "never";
+  if (!iso) return "Never";
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60000);
   if (m < 1) return "Just now";
