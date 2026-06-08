@@ -44,6 +44,10 @@ The payload includes a market_context block. USE IT as your primary evidence bas
   India VIX, USDINR, crude, US 10Y, DXY, gold). GIFT Nifty is unavailable; US futures
   plus Asian indices are the overnight risk proxy for NIFTY's open. Weigh risk-on vs
   risk-off from these before committing to a direction.
+- market_context.calendar flags expiry and month-end context. On expiry day or the
+  day before, expect option pinning near big strikes and higher intraday range, so
+  widen the band slightly and be cautious on a strong directional call. Note
+  month-end window dressing when relevant.
 
 Use news_digest as your PRIMARY news signal, not the raw news_recent tail.
 - news_digest.top_stories are deduped and ranked by materiality (how many

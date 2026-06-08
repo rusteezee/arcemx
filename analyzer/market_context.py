@@ -15,6 +15,9 @@ a coin flip and produced loose, unanchored ranges. This module adds:
 
 All data is free via yfinance.
 """
+import calendar as _cal
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -134,6 +137,35 @@ def _cue_snapshot(symbol: str) -> dict | None:
         return None
 
 
+def _session_calendar() -> dict:
+    """Deterministic expiry / month-end context in IST. NSE Nifty weekly
+    options expire Thursday; monthly is the last Thursday. Expiry days tend
+    to see pinning and elevated intraday volatility; month-end can bring
+    window dressing. Flagged as inferred so a schedule change is obvious."""
+    today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).date()
+    wd = today.weekday()  # Mon=0 .. Sun=6; Thursday=3
+    days_to_thu = (3 - wd) % 7
+    next_thu = today + timedelta(days=days_to_thu)
+    last_day = _cal.monthrange(next_thu.year, next_thu.month)[1]
+    d = next_thu.replace(day=last_day)
+    while d.weekday() != 3:
+        d -= timedelta(days=1)
+    eom = _cal.monthrange(today.year, today.month)[1]
+    return {
+        "weekday": today.strftime("%A"),
+        "days_to_weekly_expiry": days_to_thu,
+        "is_expiry_today": wd == 3,
+        "is_expiry_tomorrow": days_to_thu == 1,
+        "is_monthly_expiry_week": next_thu == d,
+        "days_to_month_end": eom - today.day,
+        "note": (
+            "Expiry inferred as Thursday (NSE weekly options); monthly = last "
+            "Thursday. Expiry days often see option pinning and higher intraday "
+            "volatility; month-end can bring window dressing."
+        ),
+    }
+
+
 def build_market_context() -> dict:
     indices = {}
     for name, sym in INDEX_SYMBOLS.items():
@@ -151,6 +183,7 @@ def build_market_context() -> dict:
     return {
         "indices": indices,
         "global_cues": cues,
+        "calendar": _session_calendar(),
         "note": (
             "GIFT Nifty is unavailable, so US index futures (sp500/nasdaq/dow) "
             "plus Nikkei and Hang Seng are the overnight risk proxy for NIFTY's "
