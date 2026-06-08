@@ -210,6 +210,66 @@ def grade_wishlist_signal(signal: str, ret_pct: float) -> float:
     return 0.0
 
 
+def _parse_num(s) -> float | None:
+    """First numeric value from a string like '₹8,500' or '360-400'."""
+    if s is None:
+        return None
+    nums = re.findall(r"\d+(?:\.\d+)?", str(s).replace(",", ""))
+    return float(nums[0]) if nums else None
+
+
+def _ohlc_walk(ticker: str, base_ts: datetime, sessions: int) -> list[tuple[float, float, float]]:
+    """(high, low, close) for up to `sessions` trading days on/after base_ts."""
+    try:
+        end = base_ts + timedelta(days=max(sessions * 2, 12))
+        df = yf.download(ticker, start=base_ts.strftime("%Y-%m-%d"),
+                         end=end.strftime("%Y-%m-%d"), interval="1d",
+                         progress=False, auto_adjust=True)
+        if df.empty:
+            return []
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        rows = []
+        for _, r in df.head(sessions).iterrows():
+            rows.append((float(r["High"]), float(r["Low"]), float(r["Close"])))
+        return rows
+    except Exception:
+        return []
+
+
+def grade_pick_tp_sl(ticker: str, base_ts: datetime, entry, target, stop,
+                     sessions: int = 10) -> float | None:
+    """Did the pick hit its target before its stop_loss? Long if target>entry.
+    100 target-first, 0 stop-first, 50 ambiguous same-day, else partial by how
+    far the close travelled toward target."""
+    t = _parse_num(target)
+    s = _parse_num(stop)
+    e = _parse_num(entry) or _close_on_or_after(ticker, base_ts)
+    if t is None or s is None or e is None:
+        return None
+    rows = _ohlc_walk(ticker, base_ts, sessions)
+    if not rows:
+        return None
+    long = t >= e
+    for high, low, _close in rows:
+        if long:
+            hit_t, hit_s = high >= t, low <= s
+        else:
+            hit_t, hit_s = low <= t, high >= s
+        if hit_t and hit_s:
+            return 50.0
+        if hit_t:
+            return 100.0
+        if hit_s:
+            return 0.0
+    last_close = rows[-1][2]
+    denom = (t - e) if long else (e - t)
+    if denom == 0:
+        return 50.0
+    progress = ((last_close - e) if long else (e - last_close)) / denom
+    return float(max(0.0, min(100.0, 50 + progress * 40)))
+
+
 def grade_pick(ticker: str, base_ts: datetime, horizon: int) -> tuple[float | None, float | None]:
     """Return (pick_pct, nifty_pct) over horizon trading days."""
     nifty_now = _close_on_or_after("^NSEI", base_ts)
@@ -338,6 +398,29 @@ def grade_all(lookback_days: int = 90):
                                   {"results": ticker_results},
                                   score, avg_alpha,
                                   notes=f"avg alpha vs NIFTY: {avg_alpha:+.2f}%")
+
+            # ----- Short pick target/SL hit (did it hit target before stop) -----
+            if age >= 11:
+                picks = raw.get("short_term_picks", []) or []
+                tp_scores = []
+                tp_results = []
+                for p in picks[:5]:
+                    tk = p.get("ticker")
+                    if not tk:
+                        continue
+                    sc = grade_pick_tp_sl(tk, run_at, p.get("entry"),
+                                          p.get("target"), p.get("stop_loss"), 10)
+                    if sc is None:
+                        continue
+                    tp_scores.append(sc)
+                    tp_results.append({"ticker": tk, "score": sc,
+                                        "target": p.get("target"), "stop_loss": p.get("stop_loss")})
+                if tp_scores:
+                    avg_tp = sum(tp_scores) / len(tp_scores)
+                    _upsert_score(sb, aid, "pick_tp_sl", 10,
+                                  {"picks": [r["ticker"] for r in tp_results]},
+                                  {"results": tp_results}, avg_tp, 0,
+                                  notes=f"target-before-stop hit score across {len(tp_scores)} picks")
 
             # ----- Long picks (180d) -----
             if age >= 181:

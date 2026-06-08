@@ -16,6 +16,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   vol_regime_5d: "Volatility Regime (5d)",
   sensex_direction_1d: "Sensex Next Day Direction",
   sensex_range_1d: "Sensex Next Day Range",
+  pick_tp_sl: "Pick Target/SL Hit (10d)",
   short_pick_7d: "Short Picks (7d)",
   short_pick_14d: "Short Picks (14d)",
   short_pick_30d: "Short Picks (30d)",
