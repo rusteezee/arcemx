@@ -15,6 +15,7 @@ from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm import analyze
 from analyzer.feedback import build_feedback as _load_feedback
 from analyzer.market_context import build_market_context
+from analyzer.news_digest import build_news_digest
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,11 +60,15 @@ def build_payload() -> dict:
         merged.append(n)
     # Sort by published_at desc
     merged.sort(key=lambda n: n.get("published_at") or "", reverse=True)
+    # Structured, deduped, materiality-ranked digest is the primary news signal.
+    news_digest = build_news_digest(merged, top_n=20)
+    # Keep a small raw tail so the model can still see exact headlines if needed.
     news_compact = [
         {"src": n["source"], "title": n["title"], "pub": n.get("published_at")}
-        for n in merged[:120]
+        for n in merged[:30]
     ]
-    print(f"News in payload: {len(news_compact)} items")
+    print(f"News digest: {news_digest.get('n_stories')} stories from "
+          f"{news_digest.get('n_raw')} raw; net_sentiment {news_digest.get('net_sentiment')}")
 
     print("Fetching trends...")
     trends = fetch_trends()
@@ -112,7 +117,8 @@ def build_payload() -> dict:
         "market_context": market_context,
         "technical_bullish_top": ranked["bullish"],
         "technical_bearish_top": ranked["bearish"],
-        "news_recent": news_compact[:60],
+        "news_digest": news_digest,
+        "news_recent": news_compact,
         "google_trends": trends,
         "reddit_hot": reddit_posts[:20],
         "user_holdings": holdings,
