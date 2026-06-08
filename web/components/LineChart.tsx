@@ -261,18 +261,68 @@ export function LineChart({
             padding={{ top: 14, bottom: 14 }}
           />
           <Tooltip
-            contentStyle={{
-              background: "var(--card)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              fontSize: 12,
-              fontFamily: "var(--font-geist-mono)",
-            }}
-            labelStyle={{ color: "var(--muted)", fontSize: 11 }}
-            labelFormatter={(label) => tooltipLabelFormatter(label as number)}
-            formatter={(val, name) => {
-              const label = name === "invested" ? investedLabel : valueLabel;
-              return [formatValue(val), label];
+            cursor={{ stroke: "var(--border)" }}
+            content={({ active, payload, label }: any) => {
+              if (!active || !payload || !payload.length) return null;
+              const point = payload[0]?.payload ?? {};
+              const cur: number | undefined = point.value;
+              const inv: number | undefined = point.invested;
+              const hasInv = typeof inv === "number";
+              const pnl = hasInv && typeof cur === "number" ? cur - (inv as number) : null;
+              const pct =
+                hasInv && (inv as number) > 0 && pnl !== null
+                  ? (pnl / (inv as number)) * 100
+                  : null;
+              const positive = (pnl ?? 0) >= 0;
+              const pnlColor = positive ? "var(--gain)" : "var(--loss)";
+              return (
+                <div
+                  style={{
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontFamily: "var(--font-geist-mono)",
+                    color: "var(--foreground)",
+                    minWidth: 180,
+                  }}
+                >
+                  <div style={{ color: "var(--muted)", fontSize: 11, marginBottom: 6 }}>
+                    {tooltipLabelFormatter(label as number)}
+                  </div>
+                  {hasInv && (
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <span style={{ color: "var(--muted)" }}>{investedLabel}</span>
+                      <span>{formatValue(inv)}</span>
+                    </div>
+                  )}
+                  {typeof cur === "number" && (
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <span style={{ color: "var(--muted)" }}>{valueLabel}</span>
+                      <span style={{ fontWeight: 600 }}>{formatValue(cur)}</span>
+                    </div>
+                  )}
+                  {pct !== null && (
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        marginTop: 4,
+                        paddingTop: 4,
+                        borderTop: "1px solid var(--border)",
+                      }}
+                    >
+                      <span style={{ color: "var(--muted)" }}>P&amp;L</span>
+                      <span style={{ color: pnlColor, fontWeight: 600 }}>
+                        {positive ? "+" : ""}
+                        {pct.toFixed(2)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
             }}
           />
           <Area
