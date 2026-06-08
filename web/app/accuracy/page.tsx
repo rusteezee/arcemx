@@ -24,6 +24,11 @@ const WINDOWS = [7, 30, 90];
 // of scored sessions before the trend chart is worth showing.
 const TREND_MIN_POINTS = 7;
 
+// Below this many scored samples, a binary hit rate has a wide confidence
+// interval (~+/-20 pts at n=23), so the numbers are directional, not
+// conclusions. Show a caveat until enough history accumulates.
+const CONFIDENCE_MIN_SAMPLES = 100;
+
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
@@ -93,6 +98,10 @@ export default function AccuracyPage() {
       ? "no data"
       : `${dirEdge >= 0 ? "+" : ""}${dirEdge.toFixed(1)} pts vs 50% coin flip`;
 
+  // Largest single-dimension sample drives the confidence caveat.
+  const maxSamples = summary.reduce((m, s) => Math.max(m, s.sample_size || 0), 0);
+  const lowConfidence = maxSamples < CONFIDENCE_MIN_SAMPLES;
+
   return (
     <>
       <div className="mb-12">
@@ -104,6 +113,28 @@ export default function AccuracyPage() {
           Every past prediction is scored against actual outcomes. The system reads these scores before every new call, calibrating itself over time.
         </p>
       </div>
+
+      {lowConfidence && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="mb-8 flex items-start gap-3 rounded-2xl border px-4 py-3"
+          style={{
+            borderColor: "color-mix(in srgb, var(--warn) 35%, transparent)",
+            background: "color-mix(in srgb, var(--warn) 8%, transparent)",
+          }}
+        >
+          <span className="mt-0.5 text-[var(--warn)] shrink-0">◆</span>
+          <p className="text-sm text-[var(--muted)] leading-relaxed">
+            <span className="text-foreground font-medium">Low confidence.</span>{" "}
+            Only {maxSamples} sessions scored so far. At this sample size a hit
+            rate carries roughly ±20 points of uncertainty, so treat these as
+            directional signals, not conclusions. Reliability grows past{" "}
+            {CONFIDENCE_MIN_SAMPLES} scored sessions.
+          </p>
+        </motion.div>
+      )}
 
       <Section num="001 / 003" title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
