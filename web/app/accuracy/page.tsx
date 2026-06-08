@@ -13,6 +13,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   range_1d: "NIFTY Next Day Range",
   direction_5d: "NIFTY 5-Day Trend",
   direction_20d: "NIFTY 20-Day Trend",
+  vol_regime_5d: "Volatility Regime (5d)",
   sensex_direction_1d: "Sensex Next Day Direction",
   sensex_range_1d: "Sensex Next Day Range",
   short_pick_7d: "Short Picks (7d)",

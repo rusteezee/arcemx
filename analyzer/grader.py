@@ -154,6 +154,49 @@ def grade_verdict(verdict: str, ret_pct: float) -> float:
     return 0.0
 
 
+def _vol_regime_ratio(base_ts: datetime, horizon: int = 5) -> float | None:
+    """Ratio of realized avg daily range over the next `horizon` sessions to
+    the prior ~10 sessions. >1 = volatility expanded, <1 = contracted."""
+    try:
+        start = base_ts - timedelta(days=30)
+        end = base_ts + timedelta(days=max(horizon * 2, 12))
+        df = yf.download("^NSEI", start=start.strftime("%Y-%m-%d"),
+                         end=end.strftime("%Y-%m-%d"), interval="1d",
+                         progress=False, auto_adjust=True)
+        if df.empty or len(df) < 12:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        rng = ((df["High"] - df["Low"]) / df["Close"] * 100).reset_index(drop=True)
+        # Index of the first bar on/after base_ts.
+        base_str = base_ts.strftime("%Y-%m-%d")
+        idx_list = [i for i, ts in enumerate(df.index) if ts.strftime("%Y-%m-%d") >= base_str]
+        if not idx_list:
+            return None
+        b = idx_list[0]
+        prior = rng.iloc[max(0, b - 10):b]
+        nxt = rng.iloc[b:b + horizon]
+        if len(prior) < 3 or len(nxt) < horizon:
+            return None
+        pm, nm = prior.mean(), nxt.mean()
+        if pm <= 0:
+            return None
+        return float(nm / pm)
+    except Exception:
+        return None
+
+
+def grade_vol_regime(call: str, ratio: float) -> float:
+    c = (call or "").lower()
+    if c == "expansion":
+        return 100.0 if ratio > 1.2 else (50.0 if ratio > 1.0 else 0.0)
+    if c == "contraction":
+        return 100.0 if ratio < 0.8 else (50.0 if ratio < 1.0 else 0.0)
+    if c in ("normal", "stable", "neutral"):
+        return 100.0 if 0.8 <= ratio <= 1.2 else (40.0 if 0.7 <= ratio <= 1.4 else 0.0)
+    return 0.0
+
+
 def grade_wishlist_signal(signal: str, ret_pct: float) -> float:
     """Score a wishlist signal. buy_now wants an up move; wait/skip are right
     when the stock did NOT run away from the user."""
@@ -256,6 +299,17 @@ def grade_all(lookback_days: int = 90):
                     msc, mdl = grade_direction(pdir, base, later)
                     _upsert_score(sb, aid, f"direction_{h}d", h,
                                   {"direction": pdir}, {"pct": mdl}, msc, mdl)
+
+            # ----- Volatility regime (next ~5 sessions) -----
+            if age >= 6:
+                vcall = (raw.get("volatility_regime") or {}).get("call", "")
+                if vcall:
+                    ratio = _vol_regime_ratio(run_at, 5)
+                    if ratio is not None:
+                        vsc = grade_vol_regime(vcall, ratio)
+                        _upsert_score(sb, aid, "vol_regime_5d", 5,
+                                      {"call": vcall}, {"realized_ratio": round(ratio, 3)},
+                                      vsc, round(ratio - 1, 3))
 
             # ----- Short-term picks (7d, 14d, 30d) -----
             for h in (7, 14, 30):
