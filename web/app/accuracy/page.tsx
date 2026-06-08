@@ -16,13 +16,15 @@ const DIMENSION_LABELS: Record<string, string> = {
   vol_regime_5d: "Volatility Regime (5d)",
   sensex_direction_1d: "Sensex Next Day Direction",
   sensex_range_1d: "Sensex Next Day Range",
-  pick_tp_sl: "Pick Target/SL Hit (10d)",
+  pick_tp_sl: "Short Pick Target/SL Hit (10d)",
   short_pick_7d: "Short Picks (7d)",
   short_pick_14d: "Short Picks (14d)",
   short_pick_30d: "Short Picks (30d)",
   long_pick_180d: "Long Picks (180d)",
+  long_pick_tp_sl: "Long Pick Target/SL Hit (60d)",
   avoid_7d: "Avoid List (7d)",
   verdict_7d: "Portfolio Verdicts (7d)",
+  verdict_tp_sl: "Holding Target/SL Hit (20d)",
   wishlist_7d: "Wishlist Signals (7d)",
 };
 

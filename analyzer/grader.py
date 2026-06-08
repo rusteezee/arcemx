@@ -1,16 +1,21 @@
 """Score past predictions against actual market outcomes.
 
-Runs daily 9 PM IST via cron. For each analysis row, computes scores per
-dimension when the horizon has elapsed.
+Runs daily 5 PM IST (17:00, 90 min after close) via cron. For each analysis
+row, computes scores per dimension once that horizon has elapsed.
 
-Dimensions scored:
-- direction_1d : NIFTY direction next session vs prediction
-- direction_5d : 5-trading-day direction
-- range_1d     : did NIFTY close in predicted range
-- short_pick_7d, short_pick_14d, short_pick_30d : avg pick return vs NIFTY
-- long_pick_180d : avg long pick return vs NIFTY (way later)
-- avoid_7d     : did avoid-list underperform NIFTY
-- verdict_7d   : portfolio verdict correctness (hold steady, add → up, exit → down)
+Dimensions scored (see grade_all for the full set):
+- direction_1d / 5d / 20d : NIFTY direction, horizon-scaled noise band
+- range_1d                : interval score (tightness-penalised) for NIFTY band
+- sensex_direction_1d / sensex_range_1d : same for Sensex
+- vol_regime_5d           : volatility expansion/contraction/normal call
+- short_pick_7d/14d/30d   : avg pick alpha vs NIFTY
+- pick_tp_sl              : short pick hit target before stop (OHLC walk)
+- long_pick_180d          : avg long pick alpha vs NIFTY
+- long_pick_tp_sl         : long pick target-before-stop (interim ~60 sessions)
+- avoid_7d                : did avoid-list underperform NIFTY
+- verdict_7d              : portfolio verdict direction correctness
+- verdict_tp_sl           : holding target-before-stop (~20 sessions)
+- wishlist_7d             : wishlist signal correctness
 """
 import os
 import re
@@ -74,24 +79,35 @@ def _parse_range(rng: str) -> tuple[float, float] | None:
     return None
 
 
-def grade_direction(predicted_dir: str, last_close: float, next_close: float) -> tuple[float, float]:
-    """Strict direction score 0-100 + raw delta %.
+# Horizon-scaled "flat" band in %: moves inside it are noise, not a trend. A
+# flat 1-day session and a flat 20-day stretch are different sizes, so the
+# band must scale or multi-day calls become trivially easy (any drift clears a
+# 0.4% bar over 20 sessions) while sideways becomes impossible to hit.
+DIRECTION_FLAT = {1: 0.4, 5: 1.2, 20: 2.5}
 
-    Brutal by design: a directional call (up/down) is either right or wrong,
-    no half credit for a near-flat day. Only an explicit sideways call earns
-    partial credit, since calling sideways IS a claim of low movement.
+
+def grade_direction(predicted_dir: str, last_close: float, next_close: float,
+                    flat: float = 0.4) -> tuple[float, float]:
+    """Strict, horizon-aware direction score 0-100 + raw delta %.
+
+    `flat` is the noise band for this horizon. Brutal by design: a directional
+    call (up/down) is right ONLY if the move clears the flat band in that
+    direction. A move that stayed inside the noise band earns the up/down call
+    nothing, even if the sign was technically correct, because it was not a
+    real move. Only an explicit sideways call earns partial credit, since
+    calling sideways IS a claim that the move stays small.
     """
     if last_close is None or next_close is None or last_close == 0:
         return 0, 0
     pct = (next_close - last_close) / last_close * 100
     p = (predicted_dir or "").lower()
     if p == "up":
-        score = 100 if pct > 0.1 else 0
+        score = 100 if pct > flat else 0
     elif p == "down":
-        score = 100 if pct < -0.1 else 0
+        score = 100 if pct < -flat else 0
     elif p in ("sideways", "flat", "neutral"):
-        if abs(pct) <= 0.4: score = 100
-        elif abs(pct) <= 0.8: score = 50
+        if abs(pct) <= flat: score = 100
+        elif abs(pct) <= 2 * flat: score = 50
         else: score = 0
     else:
         score = 0
@@ -356,7 +372,8 @@ def grade_all(lookback_days: int = 90):
                 later = _close_n_sessions_later("^NSEI", run_at, h)
                 pdir = (raw.get(key) or {}).get("direction", "")
                 if pdir and base and later:
-                    msc, mdl = grade_direction(pdir, base, later)
+                    msc, mdl = grade_direction(pdir, base, later,
+                                               flat=DIRECTION_FLAT.get(h, 0.4))
                     _upsert_score(sb, aid, f"direction_{h}d", h,
                                   {"direction": pdir}, {"pct": mdl}, msc, mdl)
 
@@ -446,6 +463,33 @@ def grade_all(lookback_days: int = 90):
                                   {"results": results}, score, avg,
                                   notes=f"avg alpha vs NIFTY 180d: {avg:+.2f}%")
 
+            # ----- Long pick target/SL hit (interim ~60-session OHLC walk) -----
+            # Long targets are months out, so 180d alpha alone leaves the
+            # target/stop calls ungraded for half a year. Grade the journey:
+            # did the target or the thesis-break stop come first over ~60
+            # sessions? Neither yet -> partial credit by progress toward target.
+            if age >= 61:
+                lpicks = raw.get("long_term_picks", []) or []
+                lt_scores, lt_results = [], []
+                for p in lpicks[:5]:
+                    tk = p.get("ticker")
+                    if not tk:
+                        continue
+                    sc = grade_pick_tp_sl(tk, run_at, p.get("entry_zone"),
+                                          p.get("target"), p.get("stop_loss"), 60)
+                    if sc is None:
+                        continue
+                    lt_scores.append(sc)
+                    lt_results.append({"ticker": tk, "score": sc,
+                                        "target": p.get("target"),
+                                        "stop_loss": p.get("stop_loss")})
+                if lt_scores:
+                    avg_lt = sum(lt_scores) / len(lt_scores)
+                    _upsert_score(sb, aid, "long_pick_tp_sl", 60,
+                                  {"picks": [r["ticker"] for r in lt_results]},
+                                  {"results": lt_results}, avg_lt, 0,
+                                  notes=f"long target-before-stop over 60 sessions, {len(lt_scores)} picks")
+
             # ----- Avoid list (7d) -----
             if age >= 8:
                 avoids = raw.get("stocks_to_avoid", []) or []
@@ -496,6 +540,34 @@ def grade_all(lookback_days: int = 90):
                                   {"results": vresults}, avg_v, 0,
                                   notes=f"avg verdict score across {len(vscores)} holdings")
 
+            # ----- Holding verdict target/SL hit (~20-session OHLC walk) -----
+            # The verdict's target/stop are real, scoreable levels too. Did the
+            # holding reach its take-profit target before its thesis-break stop
+            # over ~20 sessions? entry defaults to the close on the prediction
+            # day (current_price is not stored on the verdict).
+            if age >= 21:
+                verdicts = raw.get("portfolio_verdicts", []) or []
+                vt_scores, vt_results = [], []
+                for vd in verdicts:
+                    tk = vd.get("ticker")
+                    if not tk:
+                        continue
+                    sc = grade_pick_tp_sl(tk, run_at, None,
+                                          vd.get("target"), vd.get("stop_loss"), 20)
+                    if sc is None:
+                        continue
+                    vt_scores.append(sc)
+                    vt_results.append({"ticker": tk, "score": sc,
+                                        "verdict": vd.get("verdict"),
+                                        "target": vd.get("target"),
+                                        "stop_loss": vd.get("stop_loss")})
+                if vt_scores:
+                    avg_vt = sum(vt_scores) / len(vt_scores)
+                    _upsert_score(sb, aid, "verdict_tp_sl", 20,
+                                  {"verdicts": [r["ticker"] for r in vt_results]},
+                                  {"results": vt_results}, avg_vt, 0,
+                                  notes=f"holding target-before-stop over 20 sessions, {len(vt_scores)} holdings")
+
             # ----- Wishlist signals (7d) -----
             if age >= 8:
                 wsignals = raw.get("wishlist_signals", []) or []
@@ -529,24 +601,63 @@ def grade_all(lookback_days: int = 90):
 
 
 def compute_summaries(windows=(7, 30, 90)):
-    """Compute accuracy summaries per dimension per window."""
+    """Compute accuracy summaries per dimension per window.
+
+    Windowed by the prediction's run_at (when the call was MADE), NOT by
+    scored_at: grade_all re-scores the full lookback on every run, so scored_at
+    bunches all of history at "today" and would make the 7d / 30d / 90d windows
+    return identical sets. We therefore join each score to its analysis run_at.
+
+    Samples are also collapsed to one per prediction-DAY per dimension: several
+    analyses can run on the same date (daily cron + manual syncs) and would
+    otherwise count as several near-identical samples, inflating n and letting
+    a single day dominate. sample_size below is distinct prediction-days.
+    """
     sb = _sb()
+    scores = sb.table("prediction_scores").select(
+        "dimension,score,delta,predicted,analysis_id"
+    ).limit(5000).execute().data or []
+
+    # analysis_id -> run_at (chunked to keep the in_() filter small).
+    ids = list({r["analysis_id"] for r in scores if r.get("analysis_id") is not None})
+    run_at_by_id: dict[int, datetime] = {}
+    for i in range(0, len(ids), 200):
+        ar = sb.table("analysis").select("id,run_at").in_(
+            "id", ids[i:i + 200]).execute().data or []
+        for a in ar:
+            try:
+                run_at_by_id[a["id"]] = datetime.fromisoformat(
+                    a["run_at"].replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+    now = datetime.now(timezone.utc)
     for window in windows:
-        since = (datetime.now(timezone.utc) - timedelta(days=window)).isoformat()
-        res = sb.table("prediction_scores").select(
-            "dimension,score,delta,predicted"
-        ).gte("scored_at", since).execute()
-        rows = res.data or []
-        by_dim: dict[str, list[dict]] = {}
-        for r in rows:
-            by_dim.setdefault(r["dimension"], []).append(r)
-        for dim, items in by_dim.items():
-            scores = [it["score"] for it in items if it.get("score") is not None]
-            deltas = [it["delta"] for it in items if it.get("delta") is not None]
-            if not scores:
+        cutoff = now - timedelta(days=window)
+        # dim -> prediction-date -> list of score rows on that date
+        by_dim_date: dict[str, dict[str, list[dict]]] = {}
+        for r in scores:
+            ra = run_at_by_id.get(r.get("analysis_id"))
+            if ra is None or ra < cutoff:
                 continue
-            avg_score = sum(scores) / len(scores)
-            avg_delta = sum(deltas) / len(deltas) if deltas else 0
+            d = ra.strftime("%Y-%m-%d")
+            by_dim_date.setdefault(r["dimension"], {}).setdefault(d, []).append(r)
+
+        for dim, by_date in by_dim_date.items():
+            day_scores, day_deltas, all_items = [], [], []
+            for _d, items in by_date.items():
+                s = [it["score"] for it in items if it.get("score") is not None]
+                dl = [it["delta"] for it in items if it.get("delta") is not None]
+                if not s:
+                    continue
+                day_scores.append(sum(s) / len(s))  # one sample per day
+                if dl:
+                    day_deltas.append(sum(dl) / len(dl))
+                all_items.extend(items)
+            if not day_scores:
+                continue
+            avg_score = sum(day_scores) / len(day_scores)
+            avg_delta = sum(day_deltas) / len(day_deltas) if day_deltas else 0
             bias = {}
             if dim.startswith("direction"):
                 # bull-tilt = avg delta positive when calling up
@@ -556,7 +667,7 @@ def compute_summaries(windows=(7, 30, 90)):
                 # band is tight. Record the average band width as a % of its
                 # midpoint so a 97% hit rate on a +/-5% band reads honestly.
                 widths = []
-                for it in items:
+                for it in all_items:
                     pred = it.get("predicted") or {}
                     rng = pred.get("range")
                     if isinstance(rng, (list, tuple)) and len(rng) >= 2:
@@ -571,7 +682,7 @@ def compute_summaries(windows=(7, 30, 90)):
                 "dimension": dim,
                 "accuracy_pct": round(avg_score, 2),
                 "avg_delta": round(avg_delta, 3),
-                "sample_size": len(scores),
+                "sample_size": len(day_scores),
                 "bias": bias,
             }).execute()
     print("Summaries computed.")
