@@ -33,9 +33,17 @@ const TREND_MIN_POINTS = 7;
 // conclusions. Show a caveat until enough history accumulates.
 const CONFIDENCE_MIN_SAMPLES = 100;
 
+interface Calibration {
+  stated: number;
+  realized: number;
+  gap: number;
+  n: number;
+}
+
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
+  const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -73,14 +81,37 @@ export default function AccuracyPage() {
         new Set((scoreRows || []).map((r: any) => r.analysis_id).filter((x: any) => x != null))
       );
       const runAtById = new Map<number, string>();
+      const confById = new Map<number, number>();
       if (ids.length) {
         const { data: aRows } = await sb
           .from("analysis")
-          .select("id,run_at")
+          .select("id,run_at,raw_json")
           .in("id", ids);
         for (const a of (aRows || []) as any[]) {
           if (a?.id != null && a?.run_at) runAtById.set(a.id, a.run_at);
+          const c = a?.raw_json?.confidence;
+          if (a?.id != null && typeof c === "number") confById.set(a.id, c);
         }
+      }
+
+      // Confidence calibration: does the model's stated confidence match the
+      // direction accuracy it actually delivers? Pair each scored direction
+      // call with the confidence stated when it was made.
+      const calPairs = (scoreRows || []).filter(
+        (r: any) => typeof r.score === "number" && confById.has(r.analysis_id)
+      );
+      if (calPairs.length >= 5) {
+        const stated =
+          calPairs.reduce((a: number, r: any) => a + confById.get(r.analysis_id)!, 0) /
+          calPairs.length;
+        const realized =
+          calPairs.reduce((a: number, r: any) => a + r.score, 0) / calPairs.length;
+        setCalibration({
+          stated: Math.round(stated * 10) / 10,
+          realized: Math.round(realized * 10) / 10,
+          gap: Math.round((stated - realized) * 10) / 10,
+          n: calPairs.length,
+        });
       }
 
       // Collapse to one score per prediction date (average if a day has more
@@ -187,7 +218,7 @@ export default function AccuracyPage() {
         </motion.div>
       )}
 
-      <Section num="001 / 003" title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 004" : "001 / 003"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -207,7 +238,34 @@ export default function AccuracyPage() {
         </div>
       </Section>
 
-      <Section num="002 / 003" title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
+      {calibration && (
+        <Section
+          num="002 / 004"
+          title="Confidence Calibration"
+          glyph="◉"
+          description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
+        >
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+            <Stat label="Stated confidence" value={`${calibration.stated.toFixed(1)}%`} glyph="◎" />
+            <Stat label="Realized accuracy" value={`${calibration.realized.toFixed(1)}%`} glyph="◈" />
+            <Stat
+              label={calibration.gap > 0 ? "Overconfident by" : calibration.gap < 0 ? "Underconfident by" : "Calibration gap"}
+              value={`${Math.abs(calibration.gap).toFixed(1)} pts`}
+              delta={
+                Math.abs(calibration.gap) <= 8
+                  ? "well calibrated"
+                  : calibration.gap > 0
+                  ? "stated > delivered"
+                  : "stated < delivered"
+              }
+              deltaPositive={Math.abs(calibration.gap) <= 8 ? true : calibration.gap > 0 ? false : undefined}
+              glyph="⬡"
+            />
+          </div>
+        </Section>
+      )}
+
+      <Section num={calibration ? "003 / 004" : "002 / 003"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -264,7 +322,7 @@ export default function AccuracyPage() {
         </motion.div>
       </Section>
 
-      <Section num="003 / 003" title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
+      <Section num={calibration ? "004 / 004" : "003 / 003"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
