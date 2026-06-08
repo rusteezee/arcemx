@@ -51,17 +51,56 @@ export default function AccuracyPage() {
       });
       setSummary(latest);
 
-      // Score trend over time (direction_1d)
-      const { data: trendData } = await sb
+      // Score trend over time. Plot each prediction by the date it was MADE
+      // (analysis.run_at), not the date it was graded (scored_at). The grader
+      // stamps every score with the single moment it ran, so ordering by
+      // scored_at collapses the whole history onto one X coordinate and the
+      // chart degenerates into a vertical line. Join scores to their analysis
+      // run_at with two queries instead of a PostgREST embed, since these
+      // tables were created out of band and a FK relationship is not
+      // guaranteed to exist for the embed to resolve.
+      const { data: scoreRows } = await sb
         .from("prediction_scores")
-        .select("scored_at,dimension,score")
+        .select("score,analysis_id")
         .eq("dimension", "direction_1d")
-        .order("scored_at", { ascending: true })
-        .limit(120);
-      const points = (trendData || []).map((r: any) => ({
-        date: r.scored_at.slice(0, 10),
-        value: r.score,
-      }));
+        .limit(400);
+
+      const ids = Array.from(
+        new Set((scoreRows || []).map((r: any) => r.analysis_id).filter((x: any) => x != null))
+      );
+      const runAtById = new Map<number, string>();
+      if (ids.length) {
+        const { data: aRows } = await sb
+          .from("analysis")
+          .select("id,run_at")
+          .in("id", ids);
+        for (const a of (aRows || []) as any[]) {
+          if (a?.id != null && a?.run_at) runAtById.set(a.id, a.run_at);
+        }
+      }
+
+      // Collapse to one score per prediction date (average if a day has more
+      // than one), then walk forward applying a trailing rolling mean so the
+      // line reads as "accuracy over time" instead of a 0/50/100 sawtooth.
+      const byDate = new Map<string, number[]>();
+      for (const r of (scoreRows || []) as any[]) {
+        const runAt = runAtById.get(r.analysis_id);
+        if (!runAt || typeof r.score !== "number") continue;
+        const d = String(runAt).slice(0, 10);
+        const arr = byDate.get(d) ?? [];
+        arr.push(r.score);
+        byDate.set(d, arr);
+      }
+      const daily = Array.from(byDate.entries())
+        .map(([date, arr]) => ({ date, score: arr.reduce((a, b) => a + b, 0) / arr.length }))
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+      const K = 10; // trailing window of predictions
+      const points = daily.map((d, i) => {
+        const slice = daily.slice(Math.max(0, i - K + 1), i + 1);
+        const mean = slice.reduce((a, b) => a + b.score, 0) / slice.length;
+        return { date: d.date, value: Math.round(mean * 10) / 10 };
+      });
       setTrend(points);
       setLoading(false);
     })();
@@ -221,7 +260,7 @@ export default function AccuracyPage() {
         </motion.div>
       </Section>
 
-      <Section num="003 / 003" title="Score Trend" glyph="⬡" description="Direction accuracy over time. Self-learning visible.">
+      <Section num="003 / 003" title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -233,9 +272,9 @@ export default function AccuracyPage() {
               data={trend}
               height={320}
               color="var(--foreground)"
-              valueLabel="Direction Score"
+              valueLabel="Rolling Accuracy"
               yTickFormatter={(v) => `${Math.round(v)}%`}
-              valueFormatter={(v) => `${Math.round(v)}%`}
+              valueFormatter={(v) => `${v.toFixed(1)}%`}
             />
           ) : (
             <div
