@@ -102,6 +102,14 @@ export default function AccuracyPage() {
   const maxSamples = summary.reduce((m, s) => Math.max(m, s.sample_size || 0), 0);
   const lowConfidence = maxSamples < CONFIDENCE_MIN_SAMPLES;
 
+  // A high range hit rate only means skill if the band is tight. Surface
+  // the average predicted band width so 97% on a wide band reads honestly.
+  const rngBandWidth: number | null = rngRow?.bias?.avg_band_width_pct ?? null;
+  const rngBandLabel =
+    rngBandWidth != null
+      ? `±${(rngBandWidth / 2).toFixed(2)}% band · ${rngN} scored`
+      : `${rngN} scored`;
+
   return (
     <>
       <div className="mb-12">
@@ -148,7 +156,7 @@ export default function AccuracyPage() {
           <Stat
             label="Range hit rate"
             value={rngAcc == null ? "—" : `${rngAcc.toFixed(1)}%`}
-            delta={`${rngN} scored`}
+            delta={rngBandLabel}
             glyph="◈"
           />
           <Stat label="Sessions scored" value={dirN.toString()} glyph="⬡" />

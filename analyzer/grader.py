@@ -263,7 +263,7 @@ def compute_summaries(windows=(7, 30, 90)):
     for window in windows:
         since = (datetime.now(timezone.utc) - timedelta(days=window)).isoformat()
         res = sb.table("prediction_scores").select(
-            "dimension,score,delta"
+            "dimension,score,delta,predicted"
         ).gte("scored_at", since).execute()
         rows = res.data or []
         by_dim: dict[str, list[dict]] = {}
@@ -280,6 +280,21 @@ def compute_summaries(windows=(7, 30, 90)):
             if dim.startswith("direction"):
                 # bull-tilt = avg delta positive when calling up
                 bias = {"avg_delta_pct": round(avg_delta, 3)}
+            elif dim.startswith("range"):
+                # A high range hit rate is only meaningful if the predicted
+                # band is tight. Record the average band width as a % of its
+                # midpoint so a 97% hit rate on a +/-5% band reads honestly.
+                widths = []
+                for it in items:
+                    pred = it.get("predicted") or {}
+                    rng = pred.get("range")
+                    if isinstance(rng, (list, tuple)) and len(rng) >= 2:
+                        lo, hi = float(rng[0]), float(rng[1])
+                        mid = (lo + hi) / 2
+                        if mid > 0:
+                            widths.append((hi - lo) / mid * 100)
+                if widths:
+                    bias = {"avg_band_width_pct": round(sum(widths) / len(widths), 3)}
             sb.table("accuracy_summary").insert({
                 "window_days": window,
                 "dimension": dim,
