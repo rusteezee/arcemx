@@ -20,6 +20,10 @@ const DIMENSION_LABELS: Record<string, string> = {
 
 const WINDOWS = [7, 30, 90];
 
+// A single dot renders as a meaningless vertical line. Require a handful
+// of scored sessions before the trend chart is worth showing.
+const TREND_MIN_POINTS = 7;
+
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
@@ -159,7 +163,29 @@ export default function AccuracyPage() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.16 }}
           className="card p-6"
         >
-          <LineChart data={trend} height={320} color="var(--foreground)" />
+          {trend.length >= TREND_MIN_POINTS ? (
+            <LineChart
+              data={trend}
+              height={320}
+              color="var(--foreground)"
+              valueLabel="Direction Score"
+              yTickFormatter={(v) => `${Math.round(v)}%`}
+              valueFormatter={(v) => `${Math.round(v)}%`}
+            />
+          ) : (
+            <div
+              style={{ height: 320 }}
+              className="flex flex-col items-center justify-center text-center gap-2"
+            >
+              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+              <p className="text-sm text-[var(--muted)]">
+                Collecting data. The trend appears once at least {TREND_MIN_POINTS} sessions are scored.
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {trend.length} scored so far.
+              </p>
+            </div>
+          )}
         </motion.div>
       </Section>
     </>

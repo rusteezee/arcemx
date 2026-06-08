@@ -37,6 +37,10 @@ interface LineChartProps {
   investedLabel?: string;
   // Stroke for the secondary series. Defaults to muted gray.
   investedColor?: string;
+  // Formats a data value for the tooltip. Defaults to ₹ + Indian commas.
+  // Pass a percent formatter for non-money charts (e.g. accuracy scores)
+  // so the tooltip doesn't prefix a rupee symbol onto a percentage.
+  valueFormatter?: (v: number) => string;
 }
 
 // Build N uniformly-spaced numeric ticks across [min, max].
@@ -130,7 +134,9 @@ export function LineChart({
   valueLabel = "Value",
   investedLabel = "Invested",
   investedColor = "var(--muted)",
+  valueFormatter,
 }: LineChartProps) {
+  const fmtVal = valueFormatter ?? formatValue;
   if (!data || data.length === 0) {
     return (
       <div
@@ -297,13 +303,13 @@ export function LineChart({
                   {hasInv && (
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                       <span style={{ color: "var(--muted)" }}>{investedLabel}</span>
-                      <span>{formatValue(inv)}</span>
+                      <span>{fmtVal(inv as number)}</span>
                     </div>
                   )}
                   {typeof cur === "number" && (
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                       <span style={{ color: "var(--muted)" }}>{valueLabel}</span>
-                      <span style={{ fontWeight: 600 }}>{formatValue(cur)}</span>
+                      <span style={{ fontWeight: 600 }}>{fmtVal(cur)}</span>
                     </div>
                   )}
                   {pct !== null && pnl !== null && (
@@ -393,7 +399,7 @@ export function LineChart({
             fontSize: 12,
           }}
           labelFormatter={(label) => formatTick(label as number)}
-          formatter={(val) => [formatValue(val), "value"]}
+          formatter={(val) => [fmtVal(val as number), valueLabel]}
         />
         <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} />
       </RLineChart>
