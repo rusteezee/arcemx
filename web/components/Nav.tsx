@@ -192,7 +192,7 @@ export function Nav() {
           <div className="flex items-center gap-1.5 md:gap-2.5 md:justify-self-end ml-auto md:ml-0">
             {/* Market state dot */}
             <div
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-[5px] rounded-full border border-border w-[78px] justify-center"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-[5px] rounded-full border border-border w-[100px] justify-center whitespace-nowrap"
               title={`Market ${marketStateLabel(mkt)}`}
             >
               <span className="relative flex h-2 w-2 shrink-0">
@@ -206,7 +206,7 @@ export function Nav() {
                   )}
                 />
               </span>
-              <span className="text-[0.72rem] font-medium tracking-wide text-[var(--muted)] truncate">
+              <span className="text-[0.72rem] font-medium tracking-wide text-[var(--muted)] whitespace-nowrap">
                 {marketStateLabel(mkt)}
               </span>
             </div>
