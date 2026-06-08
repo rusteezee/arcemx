@@ -106,10 +106,7 @@ function formatTick(ts: number): string {
 
 function formatValue(v: unknown): string {
   if (typeof v !== "number" || !isFinite(v)) return String(v);
-  return `₹${v.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
 // Default Y-axis tick formatter when a chart doesn't pass its own:
@@ -278,39 +275,30 @@ export function LineChart({
                   : null;
               const positive = (pnl ?? 0) >= 0;
               const pnlColor = positive ? "var(--gain)" : "var(--loss)";
-              const rowStyle: React.CSSProperties = {
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "baseline",
-                gap: 16,
-                whiteSpace: "nowrap",
-                fontVariantNumeric: "tabular-nums",
-              };
               return (
                 <div
                   style={{
                     background: "var(--card)",
                     border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: "10px 14px",
-                    fontSize: 11,
-                    lineHeight: 1.55,
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontSize: 12,
                     fontFamily: "var(--font-geist-mono)",
                     color: "var(--foreground)",
-                    minWidth: 260,
+                    minWidth: 180,
                   }}
                 >
-                  <div style={{ color: "var(--muted)", fontSize: 10.5, marginBottom: 6 }}>
+                  <div style={{ color: "var(--muted)", fontSize: 11, marginBottom: 6 }}>
                     {tooltipLabelFormatter(label as number)}
                   </div>
                   {hasInv && (
-                    <div style={rowStyle}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                       <span style={{ color: "var(--muted)" }}>{investedLabel}</span>
                       <span>{formatValue(inv)}</span>
                     </div>
                   )}
                   {typeof cur === "number" && (
-                    <div style={rowStyle}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                       <span style={{ color: "var(--muted)" }}>{valueLabel}</span>
                       <span style={{ fontWeight: 600 }}>{formatValue(cur)}</span>
                     </div>
@@ -318,19 +306,21 @@ export function LineChart({
                   {pct !== null && pnl !== null && (
                     <div
                       style={{
-                        ...rowStyle,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
                         marginTop: 4,
                         paddingTop: 4,
                         borderTop: "1px solid var(--border)",
                       }}
                     >
-                      <span style={{ color: "var(--muted)" }}>P&amp;L</span>
+                      <span style={{ color: pnlColor }}>
+                        P&amp;L ({positive ? "+" : ""}
+                        {pct.toFixed(2)}%)
+                      </span>
                       <span style={{ color: pnlColor, fontWeight: 600 }}>
                         {positive ? "+" : "-"}
                         {formatValue(Math.abs(pnl))}
-                        {" "}
-                        ({positive ? "+" : ""}
-                        {pct.toFixed(2)}%)
                       </span>
                     </div>
                   )}
