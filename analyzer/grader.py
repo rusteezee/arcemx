@@ -111,6 +111,46 @@ def grade_range(rng_tuple: tuple[float, float] | None, actual_close: float) -> t
     return float(score), float(miss)
 
 
+def _ret_pct(ticker: str, base_ts: datetime, n: int) -> float | None:
+    """Return % move of ticker over n trading sessions from base_ts."""
+    a = _close_on_or_after(ticker, base_ts)
+    b = _close_n_sessions_later(ticker, base_ts, n)
+    if a is None or b is None or a == 0:
+        return None
+    return (b - a) / a * 100
+
+
+def grade_verdict(verdict: str, ret_pct: float) -> float:
+    """Score a portfolio verdict against the holding's realized move.
+
+    add  -> expected up; hold -> expected to not crater; trim -> expected to
+    cool off; exit -> expected down. Scored 0-100.
+    """
+    v = (verdict or "").lower()
+    if v == "add":
+        return 100.0 if ret_pct > 0.5 else (50.0 if ret_pct > -1 else 0.0)
+    if v == "hold":
+        return 100.0 if ret_pct > -2 else (40.0 if ret_pct > -4 else 0.0)
+    if v == "trim":
+        return 100.0 if ret_pct < 1 else (40.0 if ret_pct < 3 else 0.0)
+    if v == "exit":
+        return 100.0 if ret_pct < 0 else (40.0 if ret_pct < 1.5 else 0.0)
+    return 0.0
+
+
+def grade_wishlist_signal(signal: str, ret_pct: float) -> float:
+    """Score a wishlist signal. buy_now wants an up move; wait/skip are right
+    when the stock did NOT run away from the user."""
+    s = (signal or "").lower()
+    if s == "buy_now":
+        return 100.0 if ret_pct > 0.5 else (50.0 if ret_pct > -1 else 0.0)
+    if s == "wait":
+        return 100.0 if ret_pct <= 1 else (40.0 if ret_pct < 3 else 0.0)
+    if s == "skip":
+        return 100.0 if ret_pct < 1 else (40.0 if ret_pct < 3 else 0.0)
+    return 0.0
+
+
 def grade_pick(ticker: str, base_ts: datetime, horizon: int) -> tuple[float | None, float | None]:
     """Return (pick_pct, nifty_pct) over horizon trading days."""
     nifty_now = _close_on_or_after("^NSEI", base_ts)
@@ -172,6 +212,22 @@ def grade_all(lookback_days: int = 90):
                     _upsert_score(sb, aid, "range_1d", 1,
                                   {"range": list(pred_rng)},
                                   {"close": next_close}, rscore, rdelta)
+
+                # ----- Sensex direction + range (1d) -----
+                s_last = _close_on_or_after("^BSESN", run_at - timedelta(days=1))
+                s_next = _close_on_or_after("^BSESN", run_at + timedelta(days=1))
+                s_dir = (raw.get("sensex_outlook") or {}).get("direction", "")
+                s_rng = _parse_range((raw.get("sensex_outlook") or {}).get("range", ""))
+                if s_dir and s_last and s_next:
+                    sscore, sdelta = grade_direction(s_dir, s_last, s_next)
+                    _upsert_score(sb, aid, "sensex_direction_1d", 1,
+                                  {"direction": s_dir}, {"pct": sdelta},
+                                  sscore, sdelta)
+                if s_rng and s_next:
+                    srscore, srdelta = grade_range(s_rng, s_next)
+                    _upsert_score(sb, aid, "sensex_range_1d", 1,
+                                  {"range": list(s_rng)},
+                                  {"close": s_next}, srscore, srdelta)
 
             # ----- Short-term picks (7d, 14d, 30d) -----
             for h in (7, 14, 30):
@@ -249,6 +305,56 @@ def grade_all(lookback_days: int = 90):
                                   {"avoid": [p.get("ticker") for p in avoids[:5]]},
                                   {"results": results}, score, -avg,
                                   notes=f"avoid underperformance vs NIFTY: {-avg:+.2f}%")
+
+            # ----- Portfolio verdicts (7d) -----
+            if age >= 8:
+                verdicts = raw.get("portfolio_verdicts", []) or []
+                vscores = []
+                vresults = []
+                for vd in verdicts:
+                    tk = vd.get("ticker")
+                    verdict = vd.get("verdict")
+                    if not tk or not verdict:
+                        continue
+                    ret = _ret_pct(tk, run_at, 7)
+                    if ret is None:
+                        continue
+                    sc = grade_verdict(verdict, ret)
+                    vscores.append(sc)
+                    vresults.append({"ticker": tk, "verdict": verdict,
+                                     "ret_pct": round(ret, 2), "score": sc})
+                if vscores:
+                    avg_v = sum(vscores) / len(vscores)
+                    _upsert_score(sb, aid, "verdict_7d", 7,
+                                  {"verdicts": [{"ticker": v["ticker"],
+                                                 "verdict": v["verdict"]} for v in vresults]},
+                                  {"results": vresults}, avg_v, 0,
+                                  notes=f"avg verdict score across {len(vscores)} holdings")
+
+            # ----- Wishlist signals (7d) -----
+            if age >= 8:
+                wsignals = raw.get("wishlist_signals", []) or []
+                wscores = []
+                wresults = []
+                for ws in wsignals:
+                    tk = ws.get("ticker")
+                    sig = ws.get("signal")
+                    if not tk or not sig:
+                        continue
+                    ret = _ret_pct(tk, run_at, 7)
+                    if ret is None:
+                        continue
+                    sc = grade_wishlist_signal(sig, ret)
+                    wscores.append(sc)
+                    wresults.append({"ticker": tk, "signal": sig,
+                                     "ret_pct": round(ret, 2), "score": sc})
+                if wscores:
+                    avg_w = sum(wscores) / len(wscores)
+                    _upsert_score(sb, aid, "wishlist_7d", 7,
+                                  {"signals": [{"ticker": w["ticker"],
+                                                "signal": w["signal"]} for w in wresults]},
+                                  {"results": wresults}, avg_w, 0,
+                                  notes=f"avg wishlist signal score across {len(wscores)} names")
 
             print(f"  graded analysis {aid} ({age}d old)")
         except Exception as e:

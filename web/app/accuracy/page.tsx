@@ -9,13 +9,17 @@ import { LineChart } from "@/components/LineChart";
 import { sb } from "@/lib/supabase";
 
 const DIMENSION_LABELS: Record<string, string> = {
-  direction_1d: "Next Day Direction",
-  range_1d: "Next Day Range",
+  direction_1d: "NIFTY Next Day Direction",
+  range_1d: "NIFTY Next Day Range",
+  sensex_direction_1d: "Sensex Next Day Direction",
+  sensex_range_1d: "Sensex Next Day Range",
   short_pick_7d: "Short Picks (7d)",
   short_pick_14d: "Short Picks (14d)",
   short_pick_30d: "Short Picks (30d)",
   long_pick_180d: "Long Picks (180d)",
   avoid_7d: "Avoid List (7d)",
+  verdict_7d: "Portfolio Verdicts (7d)",
+  wishlist_7d: "Wishlist Signals (7d)",
 };
 
 const WINDOWS = [7, 30, 90];
