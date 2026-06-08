@@ -36,6 +36,7 @@ interface TxRow {
   ticker: string;
   side: "BUY" | "SELL";
   qty: number;
+  price: number;
   execution_date: string;
 }
 
@@ -47,7 +48,7 @@ interface PriceRow {
 
 export default function PortfolioPage() {
   const [rows, setRows] = useState<PortfolioRow[]>([]);
-  const [timeline, setTimeline] = useState<Array<{ date: string; value: number }>>([]);
+  const [timeline, setTimeline] = useState<Array<{ date: string; value: number; invested: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [timelineRange, setTimelineRange] = useState("6M");
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -96,7 +97,7 @@ export default function PortfolioPage() {
       setTimelineLoading(true);
       const txRes = await sb
         .from("transactions")
-        .select("ticker,side,qty,execution_date")
+        .select("ticker,side,qty,price,execution_date")
         .eq("user_id", DEFAULT_UID)
         .order("execution_date", { ascending: true });
       const txData = (txRes.data || []) as TxRow[];
@@ -184,20 +185,41 @@ export default function PortfolioPage() {
     }
 
     const qty: Record<string, number> = {};
+    // Weighted-average cost basis tracked per ticker. BUY adds the full
+    // qty*price to the pool; SELL removes a proportional slice based on
+    // the current average so realized gains/losses don't pollute the
+    // "invested in currently-held positions" line.
+    const cost: Record<string, number> = {};
     // Carry forward the most recent close per ticker so weekends /
     // holidays (no row in `prices` that day) still use the last
     // available price instead of dropping the position to zero.
     const lastPrice: Record<string, number> = {};
     let txIdx = 0;
-    const series: Array<{ date: string; value: number }> = [];
+    const series: Array<{ date: string; value: number; invested: number }> = [];
+    const EPSILON = 1e-6;
 
     for (const d of sortedDates) {
       // Apply every transaction up to and including end-of-day d before
       // valuing the portfolio at d's close.
       while (txIdx < txs.length && txs[txIdx].execution_date.slice(0, 10) <= d) {
         const t = txs[txIdx];
-        const change = Number(t.qty) * (t.side === "BUY" ? 1 : -1);
-        qty[t.ticker] = (qty[t.ticker] || 0) + change;
+        const tQty = Number(t.qty);
+        const tPrice = Number(t.price);
+        if (t.side === "BUY") {
+          qty[t.ticker] = (qty[t.ticker] || 0) + tQty;
+          cost[t.ticker] = (cost[t.ticker] || 0) + tQty * tPrice;
+        } else {
+          const heldBefore = qty[t.ticker] || 0;
+          const avg = heldBefore > EPSILON ? (cost[t.ticker] || 0) / heldBefore : tPrice;
+          qty[t.ticker] = heldBefore - tQty;
+          cost[t.ticker] = (cost[t.ticker] || 0) - tQty * avg;
+          // Clamp to zero on full exit so float drift doesn't leak a
+          // tiny residual cost basis into the next BUY cycle.
+          if (Math.abs(qty[t.ticker]) < EPSILON) {
+            qty[t.ticker] = 0;
+            cost[t.ticker] = 0;
+          }
+        }
         txIdx++;
       }
       const dayPrices = pricesByDate.get(d)!;
@@ -206,10 +228,13 @@ export default function PortfolioPage() {
       if (d < effectiveStartIso) continue;
 
       let total = 0;
+      let invested = 0;
       for (const tkr in qty) {
         const q = qty[tkr];
+        if (!q) continue;
         const p = lastPrice[tkr];
-        if (q && p) total += q * p;
+        if (p) total += q * p;
+        invested += cost[tkr] || 0;
       }
       // Push every day in the window, including ones where total is
       // zero. The user had ~14 months between fully exiting their
@@ -217,7 +242,7 @@ export default function PortfolioPage() {
       // part of the truth of the portfolio's value over time. Skipping
       // it made 3M / 6M / 1Y look identical because they all rendered
       // only the post-re-entry portion.
-      series.push({ date: d, value: total });
+      series.push({ date: d, value: total, invested });
     }
 
     setTimeline(series);
@@ -353,6 +378,9 @@ export default function PortfolioPage() {
               data={timeline}
               height={320}
               color="var(--foreground)"
+              valueLabel="Current Value"
+              investedLabel="Invested"
+              investedColor="var(--muted)"
             />
           </div>
         ) : timeline.length === 1 ? (

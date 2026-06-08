@@ -15,6 +15,11 @@ import {
 interface Point {
   date: string;
   value: number;
+  // Optional second series (e.g. invested cost basis) plotted alongside
+  // the primary value line. When present, the chart renders a second
+  // line, expands the Y domain to cover both, and updates the tooltip
+  // and legend to show both values.
+  invested?: number;
 }
 
 interface LineChartProps {
@@ -23,6 +28,15 @@ interface LineChartProps {
   color?: string;
   fill?: boolean;
   yTickFormatter?: (val: number) => string;
+  // Display label for the primary `value` series in tooltip + legend.
+  // Defaults to "Value".
+  valueLabel?: string;
+  // Display label for the secondary `invested` series. Defaults to
+  // "Invested". Only used when at least one data point carries an
+  // `invested` field.
+  investedLabel?: string;
+  // Stroke for the secondary series. Defaults to muted gray.
+  investedColor?: string;
 }
 
 // Build N uniformly-spaced numeric ticks across [min, max].
@@ -110,6 +124,9 @@ export function LineChart({
   color = "var(--foreground)",
   fill = true,
   yTickFormatter,
+  valueLabel = "Value",
+  investedLabel = "Invested",
+  investedColor = "var(--muted)",
 }: LineChartProps) {
   if (!data || data.length === 0) {
     return (
@@ -130,12 +147,18 @@ export function LineChart({
   // ("YYYY-MM-DD"); intraday candles are full ISO with a "T" separator.
   const isIntraday = data.some((d) => typeof d.date === "string" && d.date.includes("T"));
 
+  const hasInvested = data.some((d) => typeof d.invested === "number");
+
   // Convert date strings (either "YYYY-MM-DD" or full ISO) to numeric
   // timestamps so the X axis can be treated as a continuous numeric scale.
   // That lets us request exactly N evenly-spaced ticks across the full time
   // range, regardless of how many actual data points exist.
   const numericData = data
-    .map((d) => ({ ts: parseDate(d.date), value: d.value }))
+    .map((d) => ({
+      ts: parseDate(d.date),
+      value: d.value,
+      invested: typeof d.invested === "number" ? d.invested : undefined,
+    }))
     .filter((d) => !Number.isNaN(d.ts));
 
   const tsMin = numericData[0].ts;
@@ -148,7 +171,11 @@ export function LineChart({
   // against the actual data range, which produced uneven gaps and an
   // overlapping top label (e.g. 85,707 crammed against 77,811). Using
   // our own buildLinearTicks gives 5 perfectly uniform Y gridlines.
-  const yValues = numericData.map((d) => d.value);
+  const yValues: number[] = [];
+  for (const d of numericData) {
+    yValues.push(d.value);
+    if (typeof d.invested === "number") yValues.push(d.invested);
+  }
   const yMinRaw = Math.min(...yValues);
   const yMaxRaw = Math.max(...yValues);
   const yTicks = buildLinearTicks(yMinRaw, yMaxRaw, Y_TICK_COUNT);
@@ -186,6 +213,23 @@ export function LineChart({
     return (
       <div className="overflow-x-auto">
         <div style={{ minWidth: 1100 }}>
+      {hasInvested && (
+        <div className="flex items-center gap-4 mb-3 text-xs text-[var(--muted)]">
+          <span className="inline-flex items-center gap-2">
+            <span className="inline-block h-[2px] w-5 rounded" style={{ background: color }} />
+            {valueLabel}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span
+              className="inline-block h-[2px] w-5 rounded"
+              style={{
+                background: `repeating-linear-gradient(to right, ${investedColor} 0 4px, transparent 4px 8px)`,
+              }}
+            />
+            {investedLabel}
+          </span>
+        </div>
+      )}
       <ResponsiveContainer width="100%" height={height}>
         <AreaChart data={numericData} margin={{ top: 12, right: 16, left: 4, bottom: 16 }}>
           <defs>
@@ -226,7 +270,10 @@ export function LineChart({
             }}
             labelStyle={{ color: "var(--muted)", fontSize: 11 }}
             labelFormatter={(label) => tooltipLabelFormatter(label as number)}
-            formatter={(val) => [formatValue(val), "value"]}
+            formatter={(val, name) => {
+              const label = name === "invested" ? investedLabel : valueLabel;
+              return [formatValue(val), label];
+            }}
           />
           <Area
             type="monotone"
@@ -236,7 +283,21 @@ export function LineChart({
             fill="url(#gFill)"
             dot={false}
             activeDot={{ r: 4, strokeWidth: 0, fill: color }}
+            isAnimationActive={false}
           />
+          {hasInvested && (
+            <Area
+              type="monotone"
+              dataKey="invested"
+              stroke={investedColor}
+              strokeWidth={1.6}
+              strokeDasharray="4 4"
+              fill="transparent"
+              dot={false}
+              activeDot={{ r: 4, strokeWidth: 0, fill: investedColor }}
+              isAnimationActive={false}
+            />
+          )}
         </AreaChart>
       </ResponsiveContainer>
         </div>
