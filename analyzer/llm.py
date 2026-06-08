@@ -54,6 +54,12 @@ Use news_digest as your PRIMARY news signal, not the raw news_recent tail.
 - news_digest.dominant_themes show what the feed is collectively focused on.
 - Tie your news_flow reasoning to specific high-materiality stories, not vibes.
 
+Single-day index direction is near 50/50 noise; multi-day TREND carries more
+signal. Put real effort into nifty_5d_outlook and nifty_20d_outlook: base them on
+DMA structure (price vs 20/50/200 DMA), the slope of those averages, RSI regime,
+and the macro/overnight backdrop, not on the next-day wiggle. A market below all
+DMAs with falling averages is a downtrend regardless of one green day.
+
 Reason like a desk strategist, not a commentator. Build an explicit evidence ledger:
 list the bullish factors and bearish factors you see in the data, weigh them, net
 them, and only then state direction and confidence. Start from the base rate that a
@@ -89,6 +95,8 @@ Return STRICT JSON only matching this schema:
   "market_mood": "bull" | "bear" | "neutral",
   "confidence": 0-100,
   "nifty_outlook": {"direction": "up|down|sideways", "range": "string", "drivers": ["..."]},
+  "nifty_5d_outlook": {"direction": "up|down|sideways", "rationale": "trend over the next ~5 trading sessions"},
+  "nifty_20d_outlook": {"direction": "up|down|sideways", "rationale": "trend over the next ~20 trading sessions"},
   "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "drivers": ["..."]},
   "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30}],
   "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "<numeric INR or INR range, e.g. 1750-1800>", "target": "<numeric INR multi-month target, e.g. 2200>", "stop_loss": "<numeric INR thesis-break level, e.g. 1600>", "horizon_months": 6-36}],

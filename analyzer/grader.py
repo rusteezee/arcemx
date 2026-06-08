@@ -245,6 +245,18 @@ def grade_all(lookback_days: int = 90):
                                   {"range": list(s_rng)},
                                   {"close": s_next}, srscore, srdelta)
 
+            # ----- NIFTY multi-day direction (5d, 20d): trend, more signal -----
+            for h, key in ((5, "nifty_5d_outlook"), (20, "nifty_20d_outlook")):
+                if age < h + 1:
+                    continue
+                base = _close_on_or_after("^NSEI", run_at)
+                later = _close_n_sessions_later("^NSEI", run_at, h)
+                pdir = (raw.get(key) or {}).get("direction", "")
+                if pdir and base and later:
+                    msc, mdl = grade_direction(pdir, base, later)
+                    _upsert_score(sb, aid, f"direction_{h}d", h,
+                                  {"direction": pdir}, {"pct": mdl}, msc, mdl)
+
             # ----- Short-term picks (7d, 14d, 30d) -----
             for h in (7, 14, 30):
                 if age < h + 1:
