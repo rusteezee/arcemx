@@ -26,6 +26,11 @@ INDEX_SYMBOLS = {
     "NIFTY": "^NSEI",
     "SENSEX": "^BSESN",
     "BANKNIFTY": "^NSEBANK",
+    # NIFTY Midcap 150 lets the model call the large-cap vs mid/small-cap
+    # rotation axis (cap_pair_outlook). Independent signal from sector cuts:
+    # midcap outperform = risk-on / retail-led, NIFTY outperform = defensive /
+    # FII rotation.
+    "MIDCAP150": "NIFTYMIDCAP150.NS",
 }
 
 # NSE sector indices on yfinance. Used both to build sector_context for the

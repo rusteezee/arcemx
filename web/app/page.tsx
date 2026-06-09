@@ -148,8 +148,8 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="003 / 007" title="Sectors and Index Pair" glyph="◉" description="Per-sector next-day direction with 2+ number reasoning, plus the NIFTY vs BankNifty relative call.">
-        <SectorsIndexPair sectors={raw.sector_outlooks || []} pair={raw.index_pair_outlook} />
+      <Section num="003 / 007" title="Sectors and Index Pairs" glyph="◉" description="Per-sector next-day direction with 2+ number reasoning, plus the NIFTY vs BankNifty and NIFTY vs Midcap 150 relative calls.">
+        <SectorsIndexPair sectors={raw.sector_outlooks || []} pair={raw.index_pair_outlook} capPair={raw.cap_pair_outlook} />
       </Section>
 
       <Section num="004 / 007" title="Picks" glyph="◉">
@@ -280,28 +280,35 @@ function DirPill({ direction }: { direction?: string }) {
   );
 }
 
-function SectorsIndexPair({ sectors, pair }: { sectors: any[]; pair?: any }) {
-  if (!sectors.length && !pair) {
+function SectorsIndexPair({ sectors, pair, capPair }: { sectors: any[]; pair?: any; capPair?: any }) {
+  if (!sectors.length && !pair && !capPair) {
     return <EmptyState title="No sector data" hint="Populates from tomorrow's cron." />;
   }
+  const pairs: Array<{ label: string; data: any }> = [];
+  if (pair) pairs.push({ label: "NIFTY vs BankNifty", data: pair });
+  if (capPair) pairs.push({ label: "NIFTY vs Midcap 150", data: capPair });
   return (
     <div className="space-y-4">
-      {pair && (
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
-            <div>
-              <div className="section-num mb-1.5">NIFTY vs BankNifty</div>
-              <div className="text-xl font-semibold capitalize">
-                {pair.outperformer || "·"} outperforms
+      {pairs.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {pairs.map((p, i) => (
+            <div key={i} className="card p-5">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
+                <div>
+                  <div className="section-num mb-1.5">{p.label}</div>
+                  <div className="text-xl font-semibold capitalize">
+                    {p.data.outperformer || "·"} outperforms
+                  </div>
+                </div>
+                {p.data.spread_pct !== undefined && (
+                  <span className="pill num">spread {p.data.spread_pct}%</span>
+                )}
               </div>
+              {p.data.rationale && (
+                <p className="text-sm text-[var(--muted)] leading-relaxed mt-2">{p.data.rationale}</p>
+              )}
             </div>
-            {pair.spread_pct !== undefined && (
-              <span className="pill num">spread {pair.spread_pct}%</span>
-            )}
-          </div>
-          {pair.rationale && (
-            <p className="text-sm text-[var(--muted)] leading-relaxed mt-2">{pair.rationale}</p>
-          )}
+          ))}
         </div>
       )}
       {sectors.length > 0 && (

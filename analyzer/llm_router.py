@@ -151,6 +151,19 @@ phases historically. Cite >=2 numbers (e.g. "BankNifty RSI 58 vs NIFTY 49, MACD
 bullish on Bank only, FII derivatives net long banks +1,800 cr"). Use "EVEN" only
 when the spread is genuinely <0.15% in absolute terms.
 
+cap_pair_outlook: which of NIFTY (large-cap) vs MIDCAP150 outperforms tomorrow,
+and by how many percentage points. This is the risk-on / risk-off rotation axis,
+orthogonal to sector cuts:
+- Midcap150 outperform = risk-on, retail/DII leadership, broad participation.
+  Typical setup: FII cash flat or modest, DII heavy buying, VIX low, midcap RSI
+  > large-cap RSI by >3 points, breadth strong.
+- NIFTY outperform = defensive / FII rotation. Typical setup: heavy FII cash
+  outflow, USDINR weakening, DXY strong, VIX rising, midcap underperformance.
+- Cite >=2 numbers (e.g. "MIDCAP150 RSI 61 vs NIFTY 52, FII cash -2800 cr =
+  large-cap pressure, DII +4200 cr supports midcap"). Use "EVEN" only when the
+  spread is genuinely <0.2% in absolute terms (midcap pair is noisier than
+  index pair, hence wider deadband).
+
 The payload now carries a flows block from yesterday's NSE provisional release
 (fields: fii_cash_cr, dii_cash_cr, fii_idx_fut_net_contracts, fii_stk_fut_net_contracts,
 fii_idx_call_net_contracts, fii_idx_put_net_contracts, pcr, fao_sentiment). USE THIS
@@ -287,6 +300,7 @@ Return STRICT JSON only matching this schema:
   "sector_outlooks": [{"sector": "BANK|IT|AUTO|PHARMA|FMCG|ENERGY|METAL|REALTY|MEDIA|FINSERV", "direction": "up|down|sideways", "range": "<tight index-point band anchored to that sector's expected_daily_move_pct, e.g. 52500-53100>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers from market_context.sectors and macro>"}],
   "fii_flow_outlook": {"direction": "inflow|outflow|flat", "expected_cash_net_cr": "<signed INR crore estimate for tomorrow's FII cash net, e.g. +1200 or -4500>", "rationale": "<one-line citation of >=2 numbers from flows + macro: flows.fii_idx_fut_net, USDINR delta, DXY, US10Y, prior-day fii_cash_cr trend>"},
   "index_pair_outlook": {"outperformer": "NIFTY|BANKNIFTY|EVEN", "spread_pct": "<expected NIFTY-BANKNIFTY %-point spread, e.g. +0.4 or -0.6>", "rationale": "<one-line citation of >=2 numbers>"},
+  "cap_pair_outlook": {"outperformer": "NIFTY|MIDCAP150|EVEN", "spread_pct": "<expected NIFTY-MIDCAP150 %-point spread, e.g. +0.4 or -0.6>", "rationale": "<one-line citation of >=2 numbers from market_context.indices + flows>"},
   "global_factors": ["..."],
   "key_news_drivers": ["..."],
   "search_trend_signals": ["..."],

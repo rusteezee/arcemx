@@ -33,6 +33,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   sector_dir_1d: "Sectors Direction (1d)",
   sector_range_1d: "Sectors Range (1d)",
   index_pair_1d: "NIFTY vs BankNifty (1d)",
+  cap_pair_1d: "NIFTY vs Midcap 150 (1d)",
   fii_flow_1d: "FII Cash Flow Direction (1d)",
   short_pick_A_7d: "Short Picks · Tier A (7d)",
   short_pick_B_7d: "Short Picks · Tier B (7d)",

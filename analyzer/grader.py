@@ -850,6 +850,36 @@ def grade_all(lookback_days: int = 90):
                                       score, round(spread, 3),
                                       notes=f"BankNifty-NIFTY spread {spread:+.2f}% vs call {pred}")
 
+            # ----- Cap pair (NIFTY vs MIDCAP150 large- vs mid-cap rotation) -----
+            # Midcap pair runs noisier than the bank pair (broader basket,
+            # heavier retail/DII flow). Deadband widened to 0.20 absolute %
+            # to match.
+            if age >= 1:
+                cp = raw.get("cap_pair_outlook") or {}
+                pred = (cp.get("outperformer") or "").strip().upper()
+                if pred in ("NIFTY", "MIDCAP150", "EVEN"):
+                    n_l = _close_on_or_after("^NSEI", run_at - timedelta(days=1))
+                    n_n = _close_on_or_after("^NSEI", run_at + timedelta(days=1))
+                    m_l = _close_on_or_after("NIFTYMIDCAP150.NS", run_at - timedelta(days=1))
+                    m_n = _close_on_or_after("NIFTYMIDCAP150.NS", run_at + timedelta(days=1))
+                    if all(x and x > 0 for x in (n_l, n_n, m_l, m_n)):
+                        n_pct = (n_n - n_l) / n_l * 100
+                        m_pct = (m_n - m_l) / m_l * 100
+                        spread = m_pct - n_pct  # +ve = MIDCAP150 outperformed
+                        if pred == "MIDCAP150":
+                            score = 100.0 if spread > 0.20 else (50.0 if abs(spread) < 0.20 else 0.0)
+                        elif pred == "NIFTY":
+                            score = 100.0 if spread < -0.20 else (50.0 if abs(spread) < 0.20 else 0.0)
+                        else:  # EVEN
+                            score = 100.0 if abs(spread) < 0.20 else 0.0
+                        _upsert_score(sb, aid, "cap_pair_1d", 1,
+                                      {"outperformer": pred},
+                                      {"actual_spread_pct": round(spread, 3),
+                                        "nifty_pct": round(n_pct, 2),
+                                        "midcap150_pct": round(m_pct, 2)},
+                                      score, round(spread, 3),
+                                      notes=f"MIDCAP150-NIFTY spread {spread:+.2f}% vs call {pred}")
+
             # ----- Per-holding + per-wishlist 1-day direction + range -----
             # Schema fields holding_outlooks_1d / wishlist_outlooks_1d give a
             # per-stock next-day call (separate from the 7d verdict / signal).
