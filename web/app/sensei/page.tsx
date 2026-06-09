@@ -23,6 +23,53 @@ interface SenseiRow {
   insight_quality_avg: number | null;
 }
 
+// Human labels for grader dimension identifiers. The model emits raw
+// dim names like "direction_1d" in what_worked / what_missed; we never
+// render those bare. Anything not in the map falls back to a title-cased
+// fragment so a future dim still renders readably without a code change.
+const DIM_LABEL: Record<string, string> = {
+  market_mood_1d: "Market Mood (1d)",
+  direction_1d: "NIFTY Direction (1d)",
+  range_1d: "NIFTY Range (1d)",
+  direction_5d: "NIFTY Trend (5d)",
+  direction_20d: "NIFTY Trend (20d)",
+  vol_regime_5d: "Volatility Regime (5d)",
+  sensex_direction_1d: "Sensex Direction (1d)",
+  sensex_range_1d: "Sensex Range (1d)",
+  pick_tp_sl: "Short Pick Target / Stop (10d)",
+  short_pick_7d: "Short Picks (7d)",
+  short_pick_14d: "Short Picks (14d)",
+  short_pick_30d: "Short Picks (30d)",
+  long_pick_180d: "Long Picks (180d)",
+  long_pick_tp_sl: "Long Pick Target / Stop (60d)",
+  avoid_7d: "Avoid List (7d)",
+  verdict_7d: "Portfolio Verdicts (7d)",
+  verdict_tp_sl: "Holding Target / Stop (20d)",
+  wishlist_7d: "Wishlist Signals (7d)",
+  holding_outlook_dir_1d: "Holdings Direction (1d)",
+  holding_outlook_range_1d: "Holdings Range (1d)",
+  wishlist_outlook_dir_1d: "Wishlist Direction (1d)",
+  wishlist_outlook_range_1d: "Wishlist Range (1d)",
+  sector_dir_1d: "Sectors Direction (1d)",
+  sector_range_1d: "Sectors Range (1d)",
+  index_pair_1d: "NIFTY vs BankNifty (1d)",
+  cap_pair_1d: "NIFTY vs Midcap 150 (1d)",
+  fii_flow_1d: "FII Cash Flow Direction (1d)",
+  short_pick_A_7d: "Short Picks · Tier A (7d)",
+  short_pick_B_7d: "Short Picks · Tier B (7d)",
+  short_pick_C_7d: "Short Picks · Tier C (7d)",
+  insight_quality: "Reasoning Quality",
+};
+
+function humaniseDim(d: any): string {
+  if (typeof d !== "string" || !d) return "·";
+  if (DIM_LABEL[d]) return DIM_LABEL[d];
+  // Best-effort fallback: replace underscores, title-case each word.
+  return d
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "·";
   const d = new Date(iso);
@@ -126,13 +173,13 @@ export default function SenseiPage() {
 
       <Section
         num="001 / 006"
-        title="Today's Reading"
+        title="Sensei's Read"
         glyph="◈"
-        description="One-line calibration note on stated confidence vs realized accuracy."
+        description="One-line verdict on whether stated confidence matched delivered accuracy. Strict, no softening."
       >
         <div className="card p-5">
           <p className="text-base leading-relaxed">
-            {row.calibration_note || "No calibration note returned."}
+            {row.calibration_note || "No verdict returned for today's session."}
           </p>
         </div>
       </Section>
@@ -141,7 +188,7 @@ export default function SenseiPage() {
         num="002 / 006"
         title="What Worked"
         glyph="◉"
-        description="Calls that scored well. Read the evidence column for the numbers."
+        description="Calls that hit. Evidence column shows the numbers behind each win. Treat as a checklist of what to repeat tomorrow."
       >
         {row.what_worked && row.what_worked.length > 0 ? (
           <div className="card overflow-hidden">
@@ -166,8 +213,8 @@ export default function SenseiPage() {
                     <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {w.call}
                     </td>
-                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                      {w.dimension || "·"}
+                    <td className="align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {humaniseDim(w.dimension)}
                     </td>
                     <td className="num align-top">{w.score_pct ?? "·"}</td>
                     <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }} title={w.evidence}>
@@ -187,7 +234,7 @@ export default function SenseiPage() {
         num="003 / 006"
         title="What Missed"
         glyph="◉"
-        description="Calls that scored poorly. Root-cause column tags why."
+        description="Calls that broke. Root Cause column says why. Read every row before the next session opens."
       >
         {row.what_missed && row.what_missed.length > 0 ? (
           <div className="card overflow-hidden">
@@ -214,8 +261,8 @@ export default function SenseiPage() {
                     <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {m.call}
                     </td>
-                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                      {m.dimension || "·"}
+                    <td className="align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {humaniseDim(m.dimension)}
                     </td>
                     <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {m.actual ?? "·"}
@@ -272,7 +319,7 @@ export default function SenseiPage() {
         num="005 / 006"
         title="Key Insights"
         glyph="◉"
-        description="Actionable reads of today's data. Each cites at least two numbers."
+        description="Sensei's strict reads of today's data. Every bullet cites at least two concrete numbers. No vibe takes."
       >
         {row.key_insights && row.key_insights.length > 0 ? (
           <div className="card p-5">
@@ -289,9 +336,9 @@ export default function SenseiPage() {
 
       <Section
         num="006 / 006"
-        title="Tomorrow Watch"
+        title="Tomorrow's Watchlist"
         glyph="⬡"
-        description="Specific levels and events to track at next open. Read these before the morning."
+        description="Specific levels and events to track at next open. These are the things Sensei wants you to flag before tomorrow's session begins."
       >
         {row.tomorrow_watch && row.tomorrow_watch.length > 0 ? (
           <div className="card p-5">
