@@ -6,7 +6,27 @@ import { Stat } from "@/components/Stat";
 import { MoodPill } from "@/components/MoodPill";
 import { EmptyState } from "@/components/EmptyState";
 import { sb } from "@/lib/supabase";
-import { formatINR, formatNumber } from "@/lib/utils";
+import { fetchQuote } from "@/lib/quotes";
+import { formatINR, formatNumber, formatPct } from "@/lib/utils";
+
+// Live leaderboard universe. Matches the analyzer payload's
+// market_context indices + 10 NSE sectors so today's actual board
+// mirrors what the model is reasoning over for tomorrow.
+const LEADERBOARD_SYMBOLS: { sym: string; name: string }[] = [
+  { sym: "^NSEI",              name: "NIFTY" },
+  { sym: "^BSESN",             name: "Sensex" },
+  { sym: "^NSEBANK",           name: "BankNifty" },
+  { sym: "NIFTYMIDCAP150.NS",  name: "Midcap 150" },
+  { sym: "^CNXIT",             name: "IT" },
+  { sym: "^CNXAUTO",           name: "Auto" },
+  { sym: "^CNXPHARMA",         name: "Pharma" },
+  { sym: "^CNXFMCG",           name: "FMCG" },
+  { sym: "^CNXENERGY",         name: "Energy" },
+  { sym: "^CNXMETAL",          name: "Metal" },
+  { sym: "^CNXREALTY",         name: "Realty" },
+  { sym: "^CNXMEDIA",          name: "Media" },
+  { sym: "NIFTY_FIN_SERVICE.NS", name: "FinServ" },
+];
 
 export default function TodayPage() {
   const [analysis, setAnalysis] = useState<any>(null);
@@ -148,8 +168,15 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="003 / 007" title="Sectors and Index Pairs" glyph="◉" description="Per-sector next-day direction with 2+ number reasoning, plus the NIFTY vs BankNifty and NIFTY vs Midcap 150 relative calls.">
-        <SectorsIndexPair sectors={raw.sector_outlooks || []} pair={raw.index_pair_outlook} capPair={raw.cap_pair_outlook} />
+      <Section num="003 / 007" title="Today's Playground" glyph="◉" description="Three views in one. Top: live leaderboard sorted by today's actual move across NIFTY, Sensex, BankNifty, Midcap 150 and the 10 NSE sectors. Middle: the model's forecast ranking for tomorrow (direction sign x confidence). Bottom: relative pair calls.">
+        <Playground
+          sectors={raw.sector_outlooks || []}
+          nifty={raw.nifty_outlook}
+          sensex={raw.sensex_outlook}
+          confidence={raw.confidence}
+          pair={raw.index_pair_outlook}
+          capPair={raw.cap_pair_outlook}
+        />
       </Section>
 
       <Section num="004 / 007" title="Picks" glyph="◉">
@@ -281,49 +308,200 @@ function DirPill({ direction }: { direction?: string }) {
   );
 }
 
-function SectorsIndexPair({ sectors, pair, capPair }: { sectors: any[]; pair?: any; capPair?: any }) {
-  if (!sectors.length && !pair && !capPair) {
-    return <EmptyState title="No sector data" hint="Populates from tomorrow's cron." />;
+interface PlaygroundItem {
+  name: string;
+  direction: string;
+  confidence: number;
+  range?: string;
+  driver?: string;
+  score: number;     // signed: up=+conf, down=-conf, sideways=0
+}
+
+function compositeScore(direction: string | undefined, confidence: number | undefined): number {
+  const d = (direction || "").toLowerCase();
+  const c = typeof confidence === "number" ? confidence : 50;
+  if (d === "up") return c;
+  if (d === "down") return -c;
+  return 0;
+}
+
+function buildPlaygroundList(
+  sectors: any[],
+  nifty: any,
+  sensex: any,
+  topConf: number | undefined,
+): PlaygroundItem[] {
+  const items: PlaygroundItem[] = [];
+  if (nifty) {
+    items.push({
+      name: "NIFTY",
+      direction: nifty.direction || "sideways",
+      confidence: typeof topConf === "number" ? topConf : 50,
+      range: nifty.range,
+      driver: Array.isArray(nifty.drivers) ? nifty.drivers.join("; ") : undefined,
+      score: compositeScore(nifty.direction, topConf),
+    });
   }
-  const pairs: Array<{ label: string; data: any }> = [];
-  if (pair) pairs.push({ label: "NIFTY vs BankNifty", data: pair });
-  if (capPair) pairs.push({ label: "NIFTY vs Midcap 150", data: capPair });
+  if (sensex) {
+    items.push({
+      name: "Sensex",
+      direction: sensex.direction || "sideways",
+      confidence: typeof topConf === "number" ? topConf : 50,
+      range: sensex.range,
+      driver: Array.isArray(sensex.drivers) ? sensex.drivers.join("; ") : undefined,
+      score: compositeScore(sensex.direction, topConf),
+    });
+  }
+  for (const s of sectors) {
+    items.push({
+      name: s.sector,
+      direction: s.direction || "sideways",
+      confidence: typeof s.confidence === "number" ? s.confidence : 50,
+      range: s.range,
+      driver: s.key_driver,
+      score: compositeScore(s.direction, s.confidence),
+    });
+  }
+  // Stable sort: composite desc, then by name to keep equal ties readable.
+  items.sort((a, b) => (b.score - a.score) || a.name.localeCompare(b.name));
+  return items;
+}
+
+interface LiveRow {
+  name: string;
+  pct: number;
+  last: number;
+}
+
+function Playground({
+  sectors,
+  nifty,
+  sensex,
+  confidence,
+  pair,
+  capPair,
+}: {
+  sectors: any[];
+  nifty?: any;
+  sensex?: any;
+  confidence?: number;
+  pair?: any;
+  capPair?: any;
+}) {
+  const [live, setLive] = useState<LiveRow[]>([]);
+  const [liveLoading, setLiveLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        LEADERBOARD_SYMBOLS.map(async ({ sym, name }) => {
+          const q = await fetchQuote(sym);
+          if (!q || q.pct == null || !Number.isFinite(q.pct)) return null;
+          return { name, pct: q.pct, last: q.last } as LiveRow;
+        })
+      );
+      if (cancelled) return;
+      const rows = results
+        .filter((r): r is LiveRow => r !== null)
+        .sort((a, b) => b.pct - a.pct);
+      setLive(rows);
+      setLiveLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!sectors.length && !nifty && !sensex && !pair && !capPair) {
+    return <EmptyState title="No leaderboard data" hint="Populates from tomorrow's cron." />;
+  }
+  const items = buildPlaygroundList(sectors, nifty, sensex, confidence);
+  const max = Math.max(1, ...items.map((it) => Math.abs(it.score)));
+  const liveMax = Math.max(0.1, ...live.map((r) => Math.abs(r.pct)));
   return (
     <div className="space-y-4">
-      {pairs.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {pairs.map((p, i) => (
-            <div key={i} className="card p-5">
-              <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
-                <div>
-                  <div className="section-num mb-1.5">{p.label}</div>
-                  <div className="text-xl font-semibold capitalize">
-                    {p.data.outperformer || "·"} outperforms
-                  </div>
-                </div>
-                {p.data.spread_pct !== undefined && (
-                  <span className="pill num">spread {p.data.spread_pct}%</span>
-                )}
-              </div>
-              {p.data.rationale && (
-                <p className="text-sm text-[var(--muted)] leading-relaxed mt-2">{p.data.rationale}</p>
-              )}
-            </div>
-          ))}
+      {/* Live leaderboard. Today's actual chg_pct ranking, top to bottom.
+          Sits above the forecast ranking so the reader anchors on what
+          actually happened before reading what the model expects next. */}
+      <div className="card overflow-hidden">
+        <div className="p-5 pb-2">
+          <div className="section-num mb-1">Today (Live)</div>
+          <p className="text-sm text-[var(--muted)] leading-relaxed">
+            Actual percent change today across the same universe the model
+            forecasts on. Fetched live from yfinance each page load.
+          </p>
         </div>
-      )}
-      {sectors.length > 0 && (
-        <div className="card overflow-hidden">
-          {/*
-            Same fixed-layout + colgroup widths used by the per-stock
-            Holdings/Wishlist tables (14% / 12% / 14% / 10% / remainder),
-            so columns sit at the same x-coordinate across all three
-            tables on the page even though they are separate <table>
-            elements stacked in different sections.
-          */}
+        {liveLoading ? (
+          <div className="px-5 pb-5 flex items-center gap-2 text-sm text-[var(--muted)]">
+            <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+            Fetching live quotes
+          </div>
+        ) : live.length === 0 ? (
+          <div className="px-5 pb-5 text-sm text-[var(--muted)]">
+            No live quotes available. Yfinance may be rate-limiting.
+          </div>
+        ) : (
           <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
             <colgroup>
-              <col style={{ width: "14%" }} />
+              <col style={{ width: "6%" }} />
+              <col style={{ width: "22%" }} />
+              <col style={{ width: "16%" }} />
+              <col />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Instrument</th>
+                <th>Today</th>
+                <th>Relative</th>
+              </tr>
+            </thead>
+            <tbody>
+              {live.map((r, i) => {
+                const accent = r.pct > 0 ? "var(--gain)" : r.pct < 0 ? "var(--loss)" : "var(--muted)";
+                const barPct = Math.min(100, (Math.abs(r.pct) / liveMax) * 100);
+                return (
+                  <tr key={r.name} className="align-middle">
+                    <td className="num text-[var(--muted)] font-medium">{i + 1}</td>
+                    <td className="font-medium whitespace-nowrap">{r.name}</td>
+                    <td className="num whitespace-nowrap" style={{ color: accent }}>
+                      {formatPct(r.pct)}
+                    </td>
+                    <td>
+                      <span
+                        aria-hidden
+                        className="inline-block rounded-full"
+                        style={{
+                          width: `${barPct * 0.8}%`,
+                          maxWidth: "100%",
+                          height: 5,
+                          background: accent,
+                          opacity: 0.55,
+                        }}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Forecast ranking. The model's directional + confidence call for
+          tomorrow, sorted same direction-sign x confidence convention. */}
+      {items.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="p-5 pb-2">
+            <div className="section-num mb-1">Tomorrow (Forecast)</div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              Model's ranked board for the next session. Direction sign times
+              confidence, with the key driver behind every row.
+            </p>
+          </div>
+          <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+            <colgroup>
+              <col style={{ width: "5%" }} />
+              <col style={{ width: "15%" }} />
               <col style={{ width: "12%" }} />
               <col style={{ width: "14%" }} />
               <col style={{ width: "10%" }} />
@@ -331,7 +509,8 @@ function SectorsIndexPair({ sectors, pair, capPair }: { sectors: any[]; pair?: a
             </colgroup>
             <thead>
               <tr>
-                <th>Sector</th>
+                <th>#</th>
+                <th>Instrument</th>
                 <th>Direction</th>
                 <th>Range</th>
                 <th>Confidence</th>
@@ -339,23 +518,93 @@ function SectorsIndexPair({ sectors, pair, capPair }: { sectors: any[]; pair?: a
               </tr>
             </thead>
             <tbody>
-              {sectors.map((s: any, i: number) => (
-                <tr key={i} className="align-middle">
-                  <td className="font-medium whitespace-nowrap">{s.sector}</td>
-                  <td className="whitespace-nowrap"><DirPill direction={s.direction} /></td>
-                  <td className="num whitespace-nowrap">{s.range ? formatINR(s.range) : "·"}</td>
-                  <td className="num whitespace-nowrap">{s.confidence ?? "·"}</td>
-                  <td
-                    className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                    title={s.key_driver}
-                  >
-                    {s.key_driver}
-                  </td>
-                </tr>
-              ))}
+              {items.map((it, i) => {
+                const accent =
+                  it.score > 0
+                    ? "var(--gain)"
+                    : it.score < 0
+                    ? "var(--loss)"
+                    : "var(--muted)";
+                const barPct = Math.min(100, (Math.abs(it.score) / max) * 100);
+                return (
+                  <tr key={`${it.name}-${i}`} className="align-middle">
+                    <td className="num text-[var(--muted)] font-medium">{i + 1}</td>
+                    <td className="font-medium whitespace-nowrap">{it.name}</td>
+                    <td className="whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <DirPill direction={it.direction} />
+                        <span
+                          aria-hidden
+                          className="inline-block rounded-full"
+                          style={{
+                            width: `${barPct * 0.6}px`,
+                            maxWidth: 60,
+                            height: 4,
+                            background: accent,
+                            opacity: 0.55,
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td className="num whitespace-nowrap">
+                      {it.range ? formatNumber(it.range) : "·"}
+                    </td>
+                    <td className="num whitespace-nowrap">{it.confidence ?? "·"}</td>
+                    <td
+                      className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
+                      title={it.driver}
+                    >
+                      {it.driver || "·"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+      )}
+
+      {(pair || capPair) && (
+        <div>
+          <div className="mb-2 mt-2">
+            <div className="section-num mb-1">Pair Calls (Forecast)</div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              The model's relative-pair predictions for tomorrow. Read as
+              context behind the ranked boards above.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {pair && <PairBadge label="NIFTY vs BankNifty" data={pair} />}
+            {capPair && <PairBadge label="NIFTY vs Midcap 150" data={capPair} />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PairBadge({ label, data }: { label: string; data: any }) {
+  // Compact relative-pair card. Sits at the foot of the Playground so the
+  // ranked board owns the headline; the pairs read as supporting context.
+  const outperformer = (data.outperformer || "").toUpperCase();
+  const spread = data.spread_pct;
+  return (
+    <div className="card p-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="section-num mb-1">{label}</div>
+          <div className="text-sm font-semibold">
+            {outperformer ? `${outperformer} leads` : "Even"}
+          </div>
+        </div>
+        {spread !== undefined && (
+          <span className="pill num">spread {spread}%</span>
+        )}
+      </div>
+      {data.rationale && (
+        <p className="text-xs text-[var(--muted)] leading-relaxed mt-2 line-clamp-2" title={data.rationale}>
+          {data.rationale}
+        </p>
       )}
     </div>
   );
