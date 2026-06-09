@@ -116,6 +116,19 @@ If a dimension has no graded result yet (5d/7d/20d/30d/60d/180d horizons), do NO
 fabricate. Either skip the item or include it under what_missed with root_cause
 "data_thin" and explain (e.g. "long_pick TVS thesis still in-flight, age 0/60").
 
+If grader_results is empty or near-empty (e.g. only insight_quality scored because
+horizons have not elapsed yet), return EMPTY ARRAYS for what_worked and what_missed.
+Do NOT fill those arrays with "0 graded rows" descriptive filler — that pollutes
+tomorrow's prompt with prose where it expects numeric anchors. The calibration_note
+should explicitly state that today is data-thin and that the retrospective will be
+richer once the next grader pass lands. An empty what_worked / what_missed array is
+the HONEST output on a data-thin day, not a failure mode.
+
+When what_missed entries are returned, the "actual" field MUST be a SHORT numeric or
+tight phrase (e.g. "+1.2%" or "23446 (above 23346)"), not a multi-clause sentence.
+The "gap" field MUST be a signed numeric (e.g. "+0.8%" or "+250 pts"). Long prose
+goes in calibration_note or root_cause, never in actual / gap.
+
 If conviction tiers had zero picks at a level today, set n_picks=0 and comment
 "no A picks today" or similar. Do not fabricate hits.
 """

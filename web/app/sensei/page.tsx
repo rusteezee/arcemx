@@ -148,11 +148,15 @@ export default function SenseiPage() {
               </thead>
               <tbody>
                 {row.what_worked.map((w: any, i: number) => (
-                  <tr key={i}>
-                    <td className="font-medium">{w.call}</td>
-                    <td className="num">{w.dimension || "·"}</td>
-                    <td className="num">{w.score_pct ?? "·"}</td>
-                    <td className="text-[var(--muted)] text-sm" title={w.evidence}>
+                  <tr key={i} className="align-top">
+                    <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {w.call}
+                    </td>
+                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {w.dimension || "·"}
+                    </td>
+                    <td className="num align-top">{w.score_pct ?? "·"}</td>
+                    <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }} title={w.evidence}>
                       {w.evidence}
                     </td>
                   </tr>
@@ -175,11 +179,11 @@ export default function SenseiPage() {
           <div className="card overflow-hidden">
             <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
               <colgroup>
-                <col style={{ width: "28%" }} />
-                <col style={{ width: "16%" }} />
-                <col style={{ width: "18%" }} />
-                <col style={{ width: "16%" }} />
-                <col />
+                <col style={{ width: "26%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "24%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "24%" }} />
               </colgroup>
               <thead>
                 <tr>
@@ -192,12 +196,20 @@ export default function SenseiPage() {
               </thead>
               <tbody>
                 {row.what_missed.map((m: any, i: number) => (
-                  <tr key={i}>
-                    <td className="font-medium">{m.call}</td>
-                    <td className="num">{m.dimension || "·"}</td>
-                    <td className="num">{m.actual ?? "·"}</td>
-                    <td className="num">{m.gap ?? "·"}</td>
-                    <td className="text-[var(--muted)] text-sm whitespace-nowrap">
+                  <tr key={i} className="align-top">
+                    <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {m.call}
+                    </td>
+                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {m.dimension || "·"}
+                    </td>
+                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {m.actual ?? "·"}
+                    </td>
+                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {m.gap ?? "·"}
+                    </td>
+                    <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {m.root_cause || "·"}
                     </td>
                   </tr>
