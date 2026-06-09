@@ -108,7 +108,42 @@ def build_payload() -> dict:
         h = sb.table("portfolio").select("ticker,qty,avg_buy_price").execute()
         holdings = h.data or []
         w = sb.table("wishlist").select("ticker").execute()
-        wishlist = [x["ticker"] for x in (w.data or [])]
+        wishlist_raw = [x["ticker"] for x in (w.data or [])]
+
+        # Filter out tickers that look like US ADRs / non-NSE listings before
+        # they reach the prompt. Symbols stored as bare 1-5 letters with no
+        # dot suffix and no .NS / .BO indicator (e.g. SFTBY, HMC, PINS) yield
+        # no yfinance data when force-suffixed with .NS, so the per-stock
+        # technicals enrichment fails silently and the model still emits a
+        # row with no ATR/SR anchor (which the no-bluff rule forbids). The
+        # cleanest hard guard is upstream: drop them here so the model never
+        # sees a ticker we cannot ground in payload data. Indian listings
+        # are always either suffixed (".NS"/".BO") or live in our NSE
+        # universe; anything else gets routed to the dashboard wishlist
+        # display only, not into the LLM call.
+        _NSE_SUFFIXES = (".NS", ".BO")
+
+        def _is_indian_listing(t: str) -> bool:
+            t = (t or "").strip().upper()
+            if not t:
+                return False
+            if t.endswith(_NSE_SUFFIXES):
+                return True
+            # Bare-name candidates: accept only if a probe with .NS suffix
+            # is genuinely a valid NSE listing in our universe CSV. The
+            # universe file is the source of truth for "is this an NSE
+            # ticker?" so we don't burn a yfinance call per request.
+            try:
+                from fetchers.prices import load_universe
+                uni = set(load_universe())
+            except Exception:
+                uni = set()
+            return f"{t}.NS" in uni or t in uni
+
+        wishlist = [t for t in wishlist_raw if _is_indian_listing(t)]
+        skipped = [t for t in wishlist_raw if t not in wishlist]
+        if skipped:
+            print(f"Wishlist non-NSE skipped (no yfinance .NS data): {skipped}")
 
         # Per-stock technicals for holdings + wishlist specifically. Most of
         # the user's holdings are smallcap/midcap and NOT in the NIFTY50

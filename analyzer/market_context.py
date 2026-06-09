@@ -46,7 +46,9 @@ SECTOR_SYMBOLS = {
     "METAL": "^CNXMETAL",
     "REALTY": "^CNXREALTY",
     "MEDIA": "^CNXMEDIA",
-    "FINSERV": "^CNXFINANCE",
+    # ^CNXFINANCE 404s on yfinance (the legacy slug). NIFTY_FIN_SERVICE.NS
+    # is the working alias for Nifty Financial Services on Yahoo Finance.
+    "FINSERV": "NIFTY_FIN_SERVICE.NS",
 }
 
 # label -> (symbol, short note on why it matters for NIFTY's next session)
