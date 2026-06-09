@@ -229,12 +229,23 @@ export default function SenseiPage() {
         description="Did A / B / C labels track actual performance? Inflated tiers will surface here."
       >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {(["tier_A", "tier_B", "tier_C"] as const).map((k) => {
-            const t = (conv && conv[k]) || {};
-            const label = k.replace("tier_", "Tier ");
+          {([
+            { key: "tier_A", label: "A", pill: "pill-gain", accent: "var(--gain)" },
+            { key: "tier_B", label: "B", pill: "", accent: "var(--border)" },
+            { key: "tier_C", label: "C", pill: "pill-warn", accent: "var(--warn)" },
+          ] as const).map(({ key, label, pill, accent }) => {
+            const t = (conv && (conv as any)[key]) || {};
             return (
-              <div key={k} className="card p-5">
-                <div className="section-num mb-1">{label}</div>
+              <div
+                key={key}
+                className="card p-5"
+                style={{ borderTop: `2px solid ${accent}` }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className={`pill ${pill}`} style={{ minWidth: 50, justifyContent: "center" }}>
+                    Tier {label}
+                  </span>
+                </div>
                 <div className="text-2xl font-semibold mb-2">
                   {(t.n_hits ?? "·")} / {(t.n_picks ?? "·")}
                 </div>

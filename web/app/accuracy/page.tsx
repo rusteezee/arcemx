@@ -550,23 +550,38 @@ export default function AccuracyPage() {
       >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {([
-            { tier: "A", dim: "short_pick_A_7d" as const, gloss: "Highest conviction. All three pillars aligned (technicals + news + sector). Capped at 0-2 per day." },
-            { tier: "B", dim: "short_pick_B_7d" as const, gloss: "Solid setup. Two of three pillars aligned. Bulk of picks." },
-            { tier: "C", dim: "short_pick_C_7d" as const, gloss: "Speculative / asymmetric. One pillar strong, signal incomplete. Sparingly." },
-          ]).map(({ tier, dim, gloss }) => {
+            { tier: "A", dim: "short_pick_A_7d" as const, gloss: "Highest conviction. All three pillars aligned (technicals + news + sector). Capped at 0-2 per day.", pill: "pill-gain" },
+            { tier: "B", dim: "short_pick_B_7d" as const, gloss: "Solid setup. Two of three pillars aligned. Bulk of picks.", pill: "" },
+            { tier: "C", dim: "short_pick_C_7d" as const, gloss: "Speculative / asymmetric. One pillar strong, signal incomplete. Sparingly.", pill: "pill-warn" },
+          ]).map(({ tier, dim, gloss, pill }) => {
             const row = summary.find((s) => s.window_days === 30 && s.dimension === dim);
             const acc = row?.accuracy_pct ?? null;
             const n = row?.sample_size ?? 0;
+            // Card accent border + tier badge color use the conviction-tier
+            // palette (A=gain, B=neutral, C=warn) so the tier identity is
+            // legible at a glance. The big accuracy number stays
+            // performance-colored (acc>=65 gain, >=50 warn, <50 loss) so a
+            // green A-tier with a red number visibly flags "we labeled
+            // these high conviction but they did not deliver".
             const accColor =
               acc == null ? "var(--muted)" : acc >= 65 ? "var(--gain)" : acc >= 50 ? "var(--warn)" : "var(--loss)";
+            const accent =
+              tier === "A" ? "var(--gain)" : tier === "C" ? "var(--warn)" : "var(--border)";
             return (
-              <div key={tier} className="card p-5">
-                <div className="flex items-baseline justify-between mb-2">
-                  <div className="section-num">Tier {tier} · 7d alpha</div>
+              <div
+                key={tier}
+                className="card p-5"
+                style={{ borderTop: `2px solid ${accent}` }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className={`pill ${pill}`} style={{ minWidth: 50, justifyContent: "center" }}>
+                    Tier {tier}
+                  </span>
                   <span className="num text-xs text-[var(--muted)]">
                     {n} scored
                   </span>
                 </div>
+                <div className="section-num mb-1">7d alpha</div>
                 <div className="text-3xl font-semibold" style={{ color: accColor }}>
                   {acc == null ? "—" : `${acc.toFixed(1)}%`}
                 </div>
