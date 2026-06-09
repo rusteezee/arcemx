@@ -59,7 +59,14 @@ export function formatINR(input: any, withSymbol = true): string {
     return `${symbol}${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
   };
 
-  return str.replace(/-?\d+(?:\.\d+)?/g, (match) => formatNum(match));
+  // Match digit groups only, NOT a leading minus. Otherwise a range
+  // string like "325-335" splits as "325" + "-335" (the hyphen swallowed
+  // as a negative sign) and we double-prefix to "Rs.325Rs.-335". With
+  // the minus excluded, "325-335" matches "325" and "335" cleanly and
+  // the hyphen stays as a separator -> "Rs.325-Rs.335". A genuinely
+  // negative number "-100" still renders as "-Rs.100" which is the
+  // right convention anyway.
+  return str.replace(/\d+(?:\.\d+)?/g, (match) => formatNum(match));
 }
 
 export function formatNumber(input: any): string {
