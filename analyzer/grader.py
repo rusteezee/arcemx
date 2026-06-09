@@ -306,6 +306,81 @@ def grade_pick(ticker: str, base_ts: datetime, horizon: int) -> tuple[float | No
     return pick_pct, nifty_pct
 
 
+# Tokens that prove the model anchored a claim to a payload field. Counted
+# per reasoning_breakdown key by case-insensitive substring match. Order
+# does not matter; same term counted once per key, not per occurrence.
+_PAYLOAD_FIELD_TOKENS = (
+    "rsi", "macd", "atr", "sma", "dma", "ema", "bollinger",
+    "support", "resistance", "vix", "india vix", "usdinr", "usd/inr",
+    "crude", "brent", "wti", "dxy", "us10y", "10-year", "10y",
+    "nikkei", "hangseng", "hang seng", "sp500", "s&p", "nasdaq", "dow",
+    "fii", "dii", "expiry", "month-end", "month end",
+    "net_sentiment", "materiality", "news_digest",
+    "above sma", "below sma", "above dma", "below dma",
+    "above 20", "above 50", "above 200", "below 20", "below 50", "below 200",
+)
+
+# Hedge phrases banned by the SYSTEM_PROMPT language-discipline block.
+# Each occurrence in a key subtracts from that key's score. Strict.
+_BANNED_HEDGES = (
+    "could see", "may move", "potentially", "likely to",
+    "expected to", "appears to", "looks like", "seems to", "tends to",
+    "should", "might", "around ", "approximately",
+    "given the current setup", "in the near term", "going forward",
+    "amid global cues", "in light of", "broadly", "generally", "overall",
+)
+
+_NUM_RE = re.compile(r"-?\d+(?:[\.,]\d+)?%?")
+
+
+def _audit_key(text: str) -> tuple[float, dict]:
+    """Score one reasoning_breakdown key 0-100.
+
+    Composite of three signals:
+    - numeric density: every concrete number cited is evidence the claim is
+      anchored to the data, not vibes.
+    - payload field citations: proves the model actually used the structured
+      input we send instead of regurgitating priors.
+    - banned hedges: each hedge phrase removes credit. The SYSTEM_PROMPT
+      bans them; the auditor enforces the ban.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return 0.0, {"empty": True}
+    low = text.lower()
+    nums = _NUM_RE.findall(text)
+    n_nums = len(nums)
+    cited = {t for t in _PAYLOAD_FIELD_TOKENS if t in low}
+    n_cited = len(cited)
+    hedges = [h for h in _BANNED_HEDGES if h in low]
+    n_hedge = len(hedges)
+    # 50 base, +6 per number (cap 30), +5 per cited field (cap 25),
+    # -8 per hedge. Clamp 0-100. A clean key with 4 numbers + 3 cited
+    # fields + 0 hedges scores ~90; a vague 0-number key with 2 hedges
+    # scores ~34.
+    score = 50 + min(30, 6 * n_nums) + min(25, 5 * n_cited) - 8 * n_hedge
+    return max(0.0, min(100.0, float(score))), {
+        "n_numbers": n_nums,
+        "n_fields_cited": n_cited,
+        "fields": sorted(cited),
+        "n_hedges": n_hedge,
+        "hedges": hedges,
+    }
+
+
+def audit_reasoning_breakdown(rb: dict) -> tuple[float, dict]:
+    """Aggregate audit across the 5 required keys. Avg of present keys.
+    Returns (avg_score, per_key_detail)."""
+    keys = ("technicals", "macro", "news_flow", "sentiment", "prior_call_check")
+    per_key = {}
+    scores = []
+    for k in keys:
+        sc, det = _audit_key((rb or {}).get(k, ""))
+        per_key[k] = {"score": round(sc, 1), **det}
+        scores.append(sc)
+    avg = sum(scores) / len(scores) if scores else 0.0
+    return round(avg, 2), per_key
+
+
 def _upsert_score(sb, analysis_id: int, dimension: str, horizon_days: int,
                   predicted, actual, score: float, delta: float, notes: str = ""):
     sb.table("prediction_scores").upsert({
@@ -337,6 +412,19 @@ def grade_all(lookback_days: int = 90):
             run_at = datetime.fromisoformat(row["run_at"].replace("Z", "+00:00"))
             age = (now - run_at).days
             raw = row.get("raw_json") or {}
+
+            # ----- Insight quality audit (horizon 0, scored immediately) -----
+            # Pure text-quality signal: did the model cite numbers + payload
+            # fields and avoid banned hedges in its reasoning_breakdown?
+            # Catches the failure mode where every directional dim is hit-
+            # or-miss noise but the prose around it stays honestly-shaped.
+            rb = raw.get("reasoning_breakdown") or {}
+            iq_score, iq_detail = audit_reasoning_breakdown(rb)
+            _upsert_score(sb, aid, "insight_quality", 0,
+                          {"keys": list(rb.keys())},
+                          {"per_key": iq_detail},
+                          iq_score, 0,
+                          notes=f"avg text quality across reasoning_breakdown keys")
 
             # ----- Direction + Range (1d horizon) -----
             if age >= 1:

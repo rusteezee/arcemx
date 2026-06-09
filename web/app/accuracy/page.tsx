@@ -35,6 +35,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   short_pick_A_7d: "Short Picks · Tier A (7d)",
   short_pick_B_7d: "Short Picks · Tier B (7d)",
   short_pick_C_7d: "Short Picks · Tier C (7d)",
+  insight_quality: "Reasoning Quality",
 };
 
 const WINDOWS = [7, 30, 90];
