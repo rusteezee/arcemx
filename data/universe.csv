@@ -1,53 +1,89 @@
-ticker,name,cap
-^NSEI,NIFTY 50 Index,index
-^BSESN,SENSEX Index,index
-^NSEBANK,Bank Nifty,index
-RELIANCE.NS,Reliance Industries,large
-TCS.NS,Tata Consultancy Services,large
-HDFCBANK.NS,HDFC Bank,large
-INFY.NS,Infosys,large
-ICICIBANK.NS,ICICI Bank,large
-HINDUNILVR.NS,Hindustan Unilever,large
-ITC.NS,ITC,large
-SBIN.NS,State Bank of India,large
-BHARTIARTL.NS,Bharti Airtel,large
-KOTAKBANK.NS,Kotak Mahindra Bank,large
-LT.NS,Larsen & Toubro,large
-AXISBANK.NS,Axis Bank,large
-ASIANPAINT.NS,Asian Paints,large
-MARUTI.NS,Maruti Suzuki,large
-HCLTECH.NS,HCL Tech,large
-SUNPHARMA.NS,Sun Pharma,large
-TITAN.NS,Titan,large
-BAJFINANCE.NS,Bajaj Finance,large
-WIPRO.NS,Wipro,large
-ULTRACEMCO.NS,UltraTech Cement,large
-NESTLEIND.NS,Nestle India,large
-ADANIENT.NS,Adani Enterprises,large
-NTPC.NS,NTPC,large
-POWERGRID.NS,Power Grid,large
-M&M.NS,Mahindra & Mahindra,large
-TATASTEEL.NS,Tata Steel,large
-JSWSTEEL.NS,JSW Steel,large
-ONGC.NS,ONGC,large
-COALINDIA.NS,Coal India,large
-HINDALCO.NS,Hindalco,large
-ADANIPORTS.NS,Adani Ports,large
-GRASIM.NS,Grasim,large
-BAJAJFINSV.NS,Bajaj Finserv,large
-BPCL.NS,BPCL,large
-BRITANNIA.NS,Britannia,large
-CIPLA.NS,Cipla,large
-DIVISLAB.NS,Divis Lab,large
-DRREDDY.NS,Dr Reddy's,large
-EICHERMOT.NS,Eicher Motors,large
-HEROMOTOCO.NS,Hero MotoCorp,large
-INDUSINDBK.NS,IndusInd Bank,large
-SBILIFE.NS,SBI Life,large
-SHRIRAMFIN.NS,Shriram Finance,large
-TATACONSUM.NS,Tata Consumer,large
-TECHM.NS,Tech Mahindra,large
-TRENT.NS,Trent,large
-APOLLOHOSP.NS,Apollo Hospitals,large
-BAJAJ-AUTO.NS,Bajaj Auto,large
-HDFCLIFE.NS,HDFC Life,large
+ticker,name,cap,sector
+^NSEI,NIFTY 50 Index,index,INDEX
+^BSESN,SENSEX Index,index,INDEX
+^NSEBANK,Bank Nifty,index,INDEX
+RELIANCE.NS,Reliance Industries,large,ENERGY
+TCS.NS,Tata Consultancy Services,large,IT
+HDFCBANK.NS,HDFC Bank,large,BANK
+INFY.NS,Infosys,large,IT
+ICICIBANK.NS,ICICI Bank,large,BANK
+HINDUNILVR.NS,Hindustan Unilever,large,FMCG
+ITC.NS,ITC,large,FMCG
+SBIN.NS,State Bank of India,large,BANK
+BHARTIARTL.NS,Bharti Airtel,large,TELECOM
+KOTAKBANK.NS,Kotak Mahindra Bank,large,BANK
+LT.NS,Larsen & Toubro,large,INFRA
+AXISBANK.NS,Axis Bank,large,BANK
+ASIANPAINT.NS,Asian Paints,large,CONSUMER
+MARUTI.NS,Maruti Suzuki,large,AUTO
+HCLTECH.NS,HCL Tech,large,IT
+SUNPHARMA.NS,Sun Pharma,large,PHARMA
+TITAN.NS,Titan,large,CONSUMER
+BAJFINANCE.NS,Bajaj Finance,large,FINSERV
+WIPRO.NS,Wipro,large,IT
+ULTRACEMCO.NS,UltraTech Cement,large,INFRA
+NESTLEIND.NS,Nestle India,large,FMCG
+ADANIENT.NS,Adani Enterprises,large,INFRA
+NTPC.NS,NTPC,large,ENERGY
+POWERGRID.NS,Power Grid,large,ENERGY
+M&M.NS,Mahindra & Mahindra,large,AUTO
+TATASTEEL.NS,Tata Steel,large,METAL
+JSWSTEEL.NS,JSW Steel,large,METAL
+ONGC.NS,ONGC,large,ENERGY
+COALINDIA.NS,Coal India,large,ENERGY
+HINDALCO.NS,Hindalco,large,METAL
+ADANIPORTS.NS,Adani Ports,large,INFRA
+GRASIM.NS,Grasim,large,INFRA
+BAJAJFINSV.NS,Bajaj Finserv,large,FINSERV
+BPCL.NS,BPCL,large,ENERGY
+BRITANNIA.NS,Britannia,large,FMCG
+CIPLA.NS,Cipla,large,PHARMA
+DIVISLAB.NS,Divis Lab,large,PHARMA
+DRREDDY.NS,Dr Reddy's,large,PHARMA
+EICHERMOT.NS,Eicher Motors,large,AUTO
+HEROMOTOCO.NS,Hero MotoCorp,large,AUTO
+INDUSINDBK.NS,IndusInd Bank,large,BANK
+SBILIFE.NS,SBI Life,large,FINSERV
+SHRIRAMFIN.NS,Shriram Finance,large,FINSERV
+TATACONSUM.NS,Tata Consumer,large,FMCG
+TECHM.NS,Tech Mahindra,large,IT
+TRENT.NS,Trent,large,CONSUMER
+APOLLOHOSP.NS,Apollo Hospitals,large,PHARMA
+BAJAJ-AUTO.NS,Bajaj Auto,large,AUTO
+HDFCLIFE.NS,HDFC Life,large,FINSERV
+TATAPOWER.NS,Tata Power,mid,ENERGY
+ANGELONE.NS,Angel One,mid,FINSERV
+ETERNAL.NS,Eternal,mid,CONSUMER
+VEDL.NS,Vedanta,mid,METAL
+ADANIGREEN.NS,Adani Green Energy,mid,ENERGY
+GROWW.NS,Groww,mid,FINSERV
+ADANIPOWER.NS,Adani Power,mid,ENERGY
+AMBUJACEM.NS,Ambuja Cements,mid,INFRA
+IRCTC.NS,IRCTC,mid,CONSUMER
+POLYCAB.NS,Polycab India,mid,CONSUMER
+COFORGE.NS,Coforge,mid,IT
+HAVELLS.NS,Havells India,mid,CONSUMER
+MPHASIS.NS,Mphasis,mid,IT
+PERSISTENT.NS,Persistent Systems,mid,IT
+LUPIN.NS,Lupin,mid,PHARMA
+BANKBARODA.NS,Bank of Baroda,mid,BANK
+GODREJCP.NS,Godrej Consumer,mid,FMCG
+DABUR.NS,Dabur India,mid,FMCG
+TVSMOTOR.NS,TVS Motor,mid,AUTO
+SUZLON.NS,Suzlon Energy,small,ENERGY
+WAAREERTL.NS,Waaree Renewable Technologies,small,ENERGY
+ATHERENERG.NS,Ather Energy,small,AUTO
+KIRLOSKARI.NS,Kirloskar Industries,small,INFRA
+FINOLEXIND.NS,Finolex Industries,small,INFRA
+KPRMILL.NS,KPR Mill,small,CONSUMER
+SUNDARMFIN.NS,Sundaram Finance,small,FINSERV
+VSTIND.NS,VST Industries,small,FMCG
+NATCOPHARM.NS,Natco Pharma,small,PHARMA
+JBCHEPHARM.NS,J B Chemicals & Pharma,small,PHARMA
+CROMPTON.NS,Crompton Greaves Consumer,small,CONSUMER
+DEEPAKNTR.NS,Deepak Nitrite,small,CHEMICALS
+SRF.NS,SRF,small,CHEMICALS
+ASTRAL.NS,Astral,small,INFRA
+SUPREMEIND.NS,Supreme Industries,small,INFRA
+APARINDS.NS,Apar Industries,small,ENERGY
+NHPC.NS,NHPC,small,ENERGY

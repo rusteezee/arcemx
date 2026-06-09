@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Section } from "@/components/Section";
 import { EmptyState } from "@/components/EmptyState";
+import { Calculator } from "@/components/Calculator";
 import { sb } from "@/lib/supabase";
 
 interface SenseiRow {
@@ -116,6 +117,15 @@ export default function SenseiPage() {
           title="No Sensei retrospective yet."
           hint="Sensei runs at 8:00 PM IST Mon-Fri after market close and the grader pass. First row lands after today's session is reviewed."
         />
+
+        <Section
+          num="001 / 001"
+          title="Sensei's Calculator"
+          glyph="✦"
+          description="Even without today's retrospective, the deterministic allocation prefilter is available. Tell Sensei the amount, horizon, risk appetite, and the universe filter."
+        >
+          <Calculator />
+        </Section>
       </motion.main>
     );
   }
@@ -156,7 +166,7 @@ export default function SenseiPage() {
       </header>
 
       <Section
-        num="001 / 006"
+        num="001 / 007"
         title="Sensei's Read"
         glyph="◈"
         description="One-line verdict on whether stated confidence matched delivered accuracy. Strict, no softening."
@@ -169,7 +179,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="002 / 006"
+        num="002 / 007"
         title="What Worked"
         glyph="◉"
         description="Calls that hit. Evidence column shows the numbers behind each win. Treat as a checklist of what to repeat tomorrow."
@@ -215,7 +225,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="003 / 006"
+        num="003 / 007"
         title="What Missed"
         glyph="◉"
         description="Calls that broke. Root Cause column says why. Read every row before the next session opens."
@@ -268,7 +278,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="004 / 006"
+        num="004 / 007"
         title="Conviction Tier Review"
         glyph="◉"
         description="Did A / B / C labels track actual performance? Inflated tiers will surface here."
@@ -300,7 +310,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="005 / 006"
+        num="005 / 007"
         title="Key Insights"
         glyph="◉"
         description="Sensei's strict reads of today's data. Every bullet cites at least two concrete numbers. No vibe takes."
@@ -319,7 +329,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="006 / 006"
+        num="006 / 007"
         title="Tomorrow's Watchlist"
         glyph="⬡"
         description="Specific levels and events to track at next open. These are the things Sensei wants you to flag before tomorrow's session begins."
@@ -335,6 +345,15 @@ export default function SenseiPage() {
         ) : (
           <EmptyState title="No watch items returned." hint="" />
         )}
+      </Section>
+
+      <Section
+        num="007 / 007"
+        title="Sensei's Calculator"
+        glyph="✦"
+        description="Tell Sensei how much you want to deploy, for how long, and how much risk you can stomach. A deterministic prefilter ranks the universe by momentum + RSI + realized vol and proposes an allocation. Phase 8b will layer LLM-written rationale on top."
+      >
+        <Calculator />
       </Section>
 
     </motion.main>
