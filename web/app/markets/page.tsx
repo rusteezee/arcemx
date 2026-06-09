@@ -8,7 +8,8 @@ import { MultiLineChart, type Series } from "@/components/MultiLineChart";
 import { Heatmap } from "@/components/Heatmap";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
 import { fetchQuote, fetchHistory } from "@/lib/quotes";
-import { formatPct, stripTicker } from "@/lib/utils";
+import { formatPct, isIndian, stripTicker } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
 const NIFTY50 = [
   "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
@@ -193,7 +194,10 @@ export default function MarketsPage() {
         ...(wl.data?.map((r: any) => r.ticker) || []),
         ...(pf.data?.map((r: any) => r.ticker) || []),
       ];
-      const all = Array.from(new Set([...NIFTY50, ...extra]));
+      // Heatmap is India-first. Drop any US ADR / non-Indian ticker
+      // that crept into the wishlist or portfolio so the grid renders
+      // a coherent NSE-only view.
+      const all = Array.from(new Set([...NIFTY50, ...extra])).filter(isIndian);
       const rows: Array<{ ticker: string; pct: number; weight: number }> = [];
       await Promise.all(
         all.map(async (t) => {
@@ -353,21 +357,36 @@ export default function MarketsPage() {
               </span>
             </div>
           </div>
-          {chartError ? (
-            <div
-              style={{ height: 380 }}
-              className="flex items-center justify-center text-center text-sm text-[var(--muted)] px-6"
-            >
-              {chartError}
-            </div>
-          ) : (
-            <LineChart
-              key={`${sel}-${period}`}
-              data={chart}
-              height={380}
-              color="var(--foreground)"
-            />
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            {chartError ? (
+              <motion.div
+                key="err"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                style={{ height: 380 }}
+                className="flex items-center justify-center text-center text-sm text-[var(--muted)] px-6"
+              >
+                {chartError}
+              </motion.div>
+            ) : chartLoading ? (
+              <ChartSkeleton key="skel" height={380} />
+            ) : (
+              <motion.div
+                key={`${sel}-${period}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <LineChart
+                  data={chart}
+                  height={380}
+                  color="var(--foreground)"
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </Section>
 
@@ -388,7 +407,7 @@ export default function MarketsPage() {
               Normalize %
             </button>
             <div className="flex gap-1.5 flex-wrap">
-              {PERIODS.filter((p) => p.range !== "max").map((p) => (
+              {PERIODS.map((p) => (
                 <button
                   key={p.range}
                   onClick={() => setCmpPeriod(p.range)}
@@ -440,13 +459,25 @@ export default function MarketsPage() {
               )}
             </span>
           </div>
-          <MultiLineChart
-            key={`${cmpPeriod}-${cmpNormalize}`}
-            series={cmpSeries}
-            visibleKeys={cmpVisible}
-            normalize={cmpNormalize}
-            height={400}
-          />
+          <AnimatePresence mode="wait" initial={false}>
+            {cmpLoading ? (
+              <ChartSkeleton key="cmp-skel" height={400} />
+            ) : (
+              <motion.div
+                key={`${cmpPeriod}-${cmpNormalize}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <MultiLineChart
+                  series={cmpSeries}
+                  visibleKeys={cmpVisible}
+                  normalize={cmpNormalize}
+                  height={400}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </Section>
 
@@ -459,5 +490,44 @@ export default function MarketsPage() {
         <Heatmap items={heat} />
       </Section>
     </>
+  );
+}
+
+// Soft shimmer skeleton used while a chart fetches. Replaces the bare
+// "Loading" text with a low-key animated placeholder that matches the
+// shape of the chart, so the layout doesn't pop when data lands.
+function ChartSkeleton({ height }: { height: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+      style={{ height }}
+      className="relative w-full overflow-hidden rounded-xl"
+    >
+      <div className="absolute inset-0 bg-[var(--muted-bg)] opacity-40" />
+      <motion.div
+        aria-hidden
+        className="absolute inset-y-0"
+        style={{
+          width: "32%",
+          background:
+            "linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--foreground) 7%, transparent) 50%, transparent 100%)",
+        }}
+        initial={{ x: "-40%" }}
+        animate={{ x: "140%" }}
+        transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <div className="absolute inset-0 flex items-end gap-2 px-6 pb-6 opacity-30">
+        {Array.from({ length: 24 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex-1 rounded-t-sm bg-[var(--foreground)]"
+            style={{ height: `${20 + ((i * 53) % 70)}%` }}
+          />
+        ))}
+      </div>
+    </motion.div>
   );
 }
