@@ -111,21 +111,27 @@ def build_payload() -> dict:
         except Exception as e:
             print(f"Prior call fetch fail: {e}")
 
+    # Order matters: analyze() truncates the JSON payload at ~120k chars,
+    # so the highest-leverage signal must come FIRST. self_feedback (the
+    # self-learning track record) and market_context (the index ATR/SR
+    # anchor) are non-negotiable; if they get cut, the entire reasoning
+    # discipline collapses. news_recent is the cheapest tail to lose
+    # since news_digest already carries the signal.
     return {
         "timestamp": datetime.utcnow().isoformat(),
-        "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],
+        "self_feedback": _load_feedback(),
         "market_context": market_context,
-        "technical_bullish_top": ranked["bullish"],
-        "technical_bearish_top": ranked["bearish"],
-        "news_digest": news_digest,
-        "news_recent": news_compact,
-        "google_trends": trends,
-        "reddit_hot": reddit_posts[:20],
+        "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],
         "user_holdings": holdings,
         "user_wishlist": wishlist,
         "prior_call": prior_call,
+        "technical_bullish_top": ranked["bullish"],
+        "technical_bearish_top": ranked["bearish"],
+        "news_digest": news_digest,
+        "google_trends": trends,
+        "reddit_hot": reddit_posts[:20],
         "news_lookback_hours": 72,
-        "self_feedback": _load_feedback(),
+        "news_recent": news_compact,
     }
 
 

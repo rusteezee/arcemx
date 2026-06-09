@@ -28,6 +28,22 @@ def bbands(close: pd.Series, length: int = 20, std: float = 2.0):
     return mid + std * s, mid - std * s
 
 
+def atr(df: pd.DataFrame, length: int = 14) -> float | None:
+    """14-day Average True Range. Mirrors analyzer.market_context._atr so
+    per-stock volatility uses the same definition as the index block."""
+    if len(df) < length + 1:
+        return None
+    high, low, close = df["High"], df["Low"], df["Close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    a = tr.rolling(length).mean().iloc[-1]
+    return float(a) if not pd.isna(a) else None
+
+
 def compute_signals(df: pd.DataFrame) -> dict:
     if df.empty or len(df) < 50:
         return {}
@@ -39,14 +55,24 @@ def compute_signals(df: pd.DataFrame) -> dict:
     sma200 = close.rolling(200).mean() if len(close) >= 200 else None
     bb_up, bb_lo = bbands(close, 20, 2.0)
 
-    last = close.iloc[-1]
-    prev = close.iloc[-2]
+    last = float(close.iloc[-1])
+    prev = float(close.iloc[-2])
     chg_1d = (last - prev) / prev * 100
     chg_5d = (last - close.iloc[-6]) / close.iloc[-6] * 100 if len(close) > 6 else None
     chg_30d = (last - close.iloc[-31]) / close.iloc[-31] * 100 if len(close) > 31 else None
 
+    # Per-stock 20d support/resistance + ATR-based expected daily move so
+    # the LLM can anchor target/stop_loss to each stock's own volatility
+    # instead of guessing round-number levels. The index has had this
+    # context since market_context.py; extending it to picks is the
+    # actual lever for "narrow the ranges on stocks you recommend".
+    sup_20d = float(df["Low"].tail(20).min()) if "Low" in df.columns else None
+    res_20d = float(df["High"].tail(20).max()) if "High" in df.columns else None
+    a14 = atr(df, 14)
+    atr_pct = (a14 / last * 100) if a14 and last else None
+
     return {
-        "last": float(last),
+        "last": last,
         "rsi": float(r.iloc[-1]) if not pd.isna(r.iloc[-1]) else None,
         "macd": float(m_line.iloc[-1]) if not pd.isna(m_line.iloc[-1]) else None,
         "macd_signal": float(m_sig.iloc[-1]) if not pd.isna(m_sig.iloc[-1]) else None,
@@ -60,6 +86,12 @@ def compute_signals(df: pd.DataFrame) -> dict:
         "chg_30d": float(chg_30d) if chg_30d is not None else None,
         "vol_avg_20": float(df["Volume"].tail(20).mean()),
         "vol_last": float(df["Volume"].iloc[-1]),
+        "support_20d": sup_20d,
+        "resistance_20d": res_20d,
+        "dist_to_support_pct": round((last - sup_20d) / last * 100, 2) if sup_20d else None,
+        "dist_to_resistance_pct": round((res_20d - last) / last * 100, 2) if res_20d else None,
+        "atr_14": round(a14, 2) if a14 else None,
+        "expected_daily_move_pct": round(atr_pct, 2) if atr_pct else None,
     }
 
 

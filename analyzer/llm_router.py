@@ -109,6 +109,20 @@ The payload includes a market_context block. USE IT as your primary evidence bas
   widen the band slightly and be cautious on a strong directional call. Note
   month-end window dressing when relevant.
 
+Per-stock technicals in technical_bullish_top / technical_bearish_top now include
+atr_14, expected_daily_move_pct, support_20d, resistance_20d, dist_to_support_pct,
+dist_to_resistance_pct. ANCHOR every pick's target and stop_loss to these levels,
+not to round numbers:
+- A reasonable short-term target sits near resistance_20d, or 1.5-2.5x the stock's
+  expected_daily_move_pct above entry for a long pick.
+- A reasonable stop_loss sits just below support_20d, or ~1x expected_daily_move_pct
+  below entry; a stop closer than 1x daily-ATR gets stopped out by normal noise,
+  a stop wider than ~3x ATR makes the trade asymmetric. Prefer the support-anchored
+  stop when there is a defined level within range.
+- For short trades, flip the sides (target near support, stop near resistance).
+- Cite the level you anchored to in the thesis (e.g. "target 1850 = resistance_20d,
+  stop 1720 = below support_20d at 1730, ~1.4x ATR risk").
+
 Use news_digest as your PRIMARY news signal, not the raw news_recent tail.
 - news_digest.top_stories are deduped and ranked by materiality (how many
   credible sources carry the story x credibility x recency x India relevance).
