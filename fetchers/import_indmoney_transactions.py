@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 # Load Supabase credentials from .env the same way every other fetcher
-# in this repo does — keeps the local CLI experience consistent so the
+# in this repo does. keeps the local CLI experience consistent so the
 # user doesn't have to export env vars before running the importer.
 load_dotenv()
 
@@ -56,7 +56,7 @@ def _normalise_ticker(scrip_symbol: str) -> str:
     INDmoney rows can be filled from BSE orders too (Exchange == "BSE"),
     but the underlying instrument is the same and Yahoo's NSE feed is
     the most reliable for daily closes. SME / unlisted symbols Yahoo
-    doesn't carry will silently fail price backfill later — the
+    doesn't carry will silently fail price backfill later. the
     importer still stores them so the qty ledger is complete.
     """
     return f"{scrip_symbol.strip().upper()}.NS"
@@ -155,7 +155,7 @@ def import_files(paths: list[str], user_id: str = "default") -> dict:
         try:
             df = _read_equity_rows(path)
         except Exception as e:
-            print(f"[skip] {path}: read failed — {e!r}")
+            print(f"[skip] {path}: read failed. {e!r}")
             continue
 
         records: list[dict] = []

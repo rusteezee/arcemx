@@ -11,7 +11,7 @@
   --loss: #b91c1c;
   --warn: #a16207;
   /* --mid sits between gain (green) and warn (amber). Used for Conviction
-     Tier B and any other "neutral-positive" badge — lime-600 / lime-400
+     Tier B and any other "neutral-positive" badge. lime-600 / lime-400
      keeps the same lightness as the gain/warn pair in each theme. */
   --mid: #65a30d;
   --card: #ffffff;

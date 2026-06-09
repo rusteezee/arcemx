@@ -29,12 +29,12 @@ async function fetchYahoo(ticker: string, range: string, interval: string) {
   const span = RANGE_SECONDS[range] ?? RANGE_SECONDS["6mo"];
   // For "max" we ask Yahoo for the absolute earliest data it has by
   // pinning period1 to the Unix epoch. Yahoo returns whatever it stores
-  // for that ticker (e.g. RELIANCE.NS from ~1996, ^NSEI from ~Sep 2007 —
+  // for that ticker (e.g. RELIANCE.NS from ~1996, ^NSEI from ~Sep 2007 -
   // the index simply doesn't exist before that on Yahoo's side).
   const period1 = range === "max" ? 0 : now - span;
   const period2 = now;
 
-  // Use period1/period2 explicitly — Yahoo sometimes throttles range=...
+  // Use period1/period2 explicitly. Yahoo sometimes throttles range=...
   // requests but honours explicit timestamps reliably.
   const url =
     `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +

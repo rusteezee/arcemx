@@ -80,7 +80,7 @@ async def main():
             await session.initialize()
 
             print("=" * 70)
-            print("PART 1 — ALL AVAILABLE MCP TOOLS")
+            print("PART 1. ALL AVAILABLE MCP TOOLS")
             print("=" * 70)
             try:
                 tools_resp = await session.list_tools()
@@ -101,7 +101,7 @@ async def main():
                 print(f"list_tools failed: {e!r}")
 
             print("\n\n" + "=" * 70)
-            print("PART 2 — PROBING CANDIDATE TRANSACTION TOOLS")
+            print("PART 2. PROBING CANDIDATE TRANSACTION TOOLS")
             print("=" * 70)
             for name in CANDIDATE_TOOLS:
                 for args_label, args in (

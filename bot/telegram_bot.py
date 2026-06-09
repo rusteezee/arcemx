@@ -51,7 +51,7 @@ def _emergency_port_bind():
 _STUB_SRV = _emergency_port_bind()
 
 
-# Heavy imports start here — these take tens of seconds on cold start
+# Heavy imports start here. these take tens of seconds on cold start
 # but the port is already listening from the emergency bind above.
 import io
 import json
@@ -114,16 +114,16 @@ def _safe_last_price(ticker: str):
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Arc'emX! bot ready.\n\n"
-        "/today — daily market call\n"
-        "/nifty /sensex — index snapshot\n"
-        "/stock TICKER — single stock view\n"
-        "/portfolio — your holdings + P&L\n"
-        "/wishlist — your watchlist\n"
+        "/today. daily market call\n"
+        "/nifty /sensex. index snapshot\n"
+        "/stock TICKER. single stock view\n"
+        "/portfolio. your holdings + P&L\n"
+        "/wishlist. your watchlist\n"
         "/buy TICKER PRICE QTY\n"
         "/sell TICKER\n"
         "/add_wish TICKER /rm_wish TICKER\n"
-        "/import — send CSV after (INDmoney export works)\n"
-        "/sync — pull holdings + watchlist from INDmoney MCP\n\n"
+        "/import. send CSV after (INDmoney export works)\n"
+        "/sync. pull holdings + watchlist from INDmoney MCP\n\n"
         f"Your chat ID: `{update.effective_chat.id}`",
         parse_mode="Markdown",
     )
@@ -148,14 +148,14 @@ async def today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg += f"*Sensex:* {raw.get('sensex_outlook', {}).get('direction', '?')} | {raw.get('sensex_outlook', {}).get('range', '')}\n\n"
     msg += "*Short-term picks:*\n"
     for p in short:
-        msg += f"• `{p.get('ticker')}` — {p.get('thesis', '')[:80]} (T:{p.get('target')}, SL:{p.get('stop_loss')})\n"
+        msg += f"• `{p.get('ticker')}`. {p.get('thesis', '')[:80]} (T:{p.get('target')}, SL:{p.get('stop_loss')})\n"
     msg += "\n*Long-term picks:*\n"
     for p in longt:
-        msg += f"• `{p.get('ticker')}` — {p.get('thesis', '')[:80]}\n"
+        msg += f"• `{p.get('ticker')}`. {p.get('thesis', '')[:80]}\n"
     if avoid:
         msg += "\n*Avoid:*\n"
         for p in avoid:
-            msg += f"• `{p.get('ticker')}` — {p.get('reason', '')[:80]}\n"
+            msg += f"• `{p.get('ticker')}`. {p.get('reason', '')[:80]}\n"
     msg += "\n_Reasoning:_ " + (raw.get("reasoning", "")[:500])
     msg += DISCLAIMER
     await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
@@ -213,7 +213,7 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for h in res.data:
         last = _safe_last_price(h["ticker"])
         if last is None:
-            msg += f"`{h['ticker']}` — fetch fail\n"
+            msg += f"`{h['ticker']}`. fetch fail\n"
             continue
         inv = h["avg_buy_price"] * h["qty"]
         cur = last * h["qty"]
@@ -265,7 +265,7 @@ async def wishlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for w in res.data:
         last = _safe_last_price(w["ticker"])
         if last is None:
-            msg += f"• `{w['ticker']}` — n/a\n"
+            msg += f"• `{w['ticker']}`. n/a\n"
         else:
             msg += f"• `{w['ticker']}` {_currency(w['ticker'])}{last:.2f}\n"
     msg += DISCLAIMER
@@ -435,7 +435,7 @@ async def _start_health_server(port: int):
                 try:
                     result = await sync_to_supabase(user_id=uid)
                     # Kick off Gemini analysis in background. Don't block the
-                    # HTTP response on it — the dashboard polls the analysis
+                    # HTTP response on it. the dashboard polls the analysis
                     # table separately so a slow Gemini call will not time out
                     # the client.
                     refresh_analysis = bool(payload.get("refresh_analysis", True))

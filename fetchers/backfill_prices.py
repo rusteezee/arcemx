@@ -5,7 +5,7 @@ the `transactions` table (plus optionally `portfolio` and `wishlist`)
 going back to the earliest execution date for that ticker, and
 upserts everything into `prices`. After this runs the Portfolio Value
 Timeline has enough history to multiply each historical day's close
-by the qty held on that day for every position the user ever owned —
+by the qty held on that day for every position the user ever owned -
 including ones long since sold.
 
 Usage:
@@ -71,7 +71,7 @@ def _fetch_one(ticker: str, start: datetime, end: datetime) -> pd.DataFrame:
             threads=False,
         )
     except Exception as e:
-        print(f"  [fail] {ticker}: yfinance error — {e!r}")
+        print(f"  [fail] {ticker}: yfinance error. {e!r}")
         return pd.DataFrame()
     if df is None or df.empty:
         return pd.DataFrame()
@@ -115,7 +115,7 @@ def backfill(tickers: Iterable[str] | None = None, since: datetime | None = None
     earliest = _earliest_dates_by_ticker(sb)
     selected: list[str] = sorted(set(tickers)) if tickers else sorted(earliest.keys())
     if not selected:
-        print("Nothing to backfill — `transactions` is empty and no --tickers passed.")
+        print("Nothing to backfill. `transactions` is empty and no --tickers passed.")
         return {"tickers": 0, "rows": 0}
 
     end = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -132,7 +132,7 @@ def backfill(tickers: Iterable[str] | None = None, since: datetime | None = None
         print(f"  -> {t}: {start.date()} to {end.date()}")
         df = _fetch_one(t, start, end)
         if df.empty:
-            print(f"    (Yahoo returned no rows — possibly SME / delisted / wrong suffix)")
+            print(f"    (Yahoo returned no rows. possibly SME / delisted / wrong suffix)")
             summary[t] = 0
             continue
         n = _push(sb, df)

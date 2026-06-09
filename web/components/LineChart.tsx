@@ -59,7 +59,7 @@ function parseDate(s: string): number {
   return new Date(s + "T00:00:00Z").getTime();
 }
 
-// 24-hour IST formatter — we read the parts and convert to 12-hour
+// 24-hour IST formatter. we read the parts and convert to 12-hour
 // AM/PM uppercase ourselves to guarantee the brand format regardless of
 // locale defaults ("am"/"pm" lowercase vs "AM"/"PM" uppercase).
 const IST_HOUR24_FMT = new Intl.DateTimeFormat("en-GB", {

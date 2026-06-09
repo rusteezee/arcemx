@@ -107,9 +107,9 @@ GitHub Actions only runs the cron push, but the bot needs to be live to respond 
 - Start: `python -m bot.telegram_bot`
 - Add same env vars in Render dashboard
 
-**Option 2: Local PC** — just run `python -m bot.telegram_bot` whenever you want it on.
+**Option 2: Local PC**. just run `python -m bot.telegram_bot` whenever you want it on.
 
-**Option 3: Fly.io free tier** — better uptime than Render free.
+**Option 3: Fly.io free tier**. better uptime than Render free.
 
 #### D) Deploy dashboard
 
@@ -130,7 +130,7 @@ Streamlit free tier does NOT support custom domains. Options:
 
 ### Recommended: MCP auto-sync (OAuth)
 
-INDmoney offers a remote MCP server at `https://mcp.indmoney.com/mcp`. We connect to it via OAuth — same flow Claude.ai uses.
+INDmoney offers a remote MCP server at `https://mcp.indmoney.com/mcp`. We connect to it via OAuth. same flow Claude.ai uses.
 
 **One-time auth (on your PC):**
 ```powershell
@@ -145,7 +145,7 @@ Browser opens → log in to INDmoney → "Allow" → done. Tokens saved to `.ind
 ```
 Pulls all holdings + watchlist into Supabase. Bot's `/portfolio` + `/wishlist` now show INDmoney data.
 
-**Auto sync:** APScheduler in `bot/telegram_bot.py` runs sync daily at 8:00 AM IST (before 8:30 AM analysis cron). Only works while bot process is alive — so this requires the bot running on Render (Step C in deploy).
+**Auto sync:** APScheduler in `bot/telegram_bot.py` runs sync daily at 8:00 AM IST (before 8:30 AM analysis cron). Only works while bot process is alive. so this requires the bot running on Render (Step C in deploy).
 
 **Auth re-do**: if `/sync` fails with auth error → re-run `python -m fetchers.indmoney_auth` on the host where bot runs.
 
@@ -164,7 +164,7 @@ Pulls all holdings + watchlist into Supabase. Bot's `/portfolio` + `/wishlist` n
 
 ### MCP on Render deploy
 
-Render filesystem is ephemeral on free tier — token file disappears on restart. Two options:
+Render filesystem is ephemeral on free tier. token file disappears on restart. Two options:
 
 **Option 1 (simplest)**: Use Render paid tier ($7/mo) with persistent disk. Or use Fly.io free with volume.
 
@@ -190,10 +190,10 @@ Start with Option 3. Move to Option 2 once habits form.
 
 ## How the analysis works
 
-1. **Technical screener** (`analyzer/technical.py`) — pulls 1yr OHLCV for full universe, computes RSI/MACD/MAs/Bollinger, scores each stock, picks top 15 bullish + 15 bearish. This avoids dumping 500 stocks into Gemini (token cost + rate limit).
-2. **News + trends + reddit** — collected fresh.
-3. **Gemini call** — single big prompt with technical shortlist + news headlines + trend scores + Reddit hot. Returns structured JSON.
-4. **Save → push** — Supabase row + Telegram message.
+1. **Technical screener** (`analyzer/technical.py`). pulls 1yr OHLCV for full universe, computes RSI/MACD/MAs/Bollinger, scores each stock, picks top 15 bullish + 15 bearish. This avoids dumping 500 stocks into Gemini (token cost + rate limit).
+2. **News + trends + reddit**. collected fresh.
+3. **Gemini call**. single big prompt with technical shortlist + news headlines + trend scores + Reddit hot. Returns structured JSON.
+4. **Save → push**. Supabase row + Telegram message.
 
 ## Limits / gotchas
 
@@ -202,32 +202,32 @@ Start with Option 3. Move to Option 2 once habits form.
 - **GitHub Actions**: 2000 min/month free. Hourly news + daily analysis ≈ 100 min/month. Fine.
 - **Streamlit free**: 1 GB RAM, sleeps after inactivity, wakes on visit.
 - **Supabase free**: 500 MB DB, 50k rows/month writes. Plenty.
-- **Markets closed days**: yfinance returns last close. Indian holidays handled by skipping weekday-only Mon-Fri cron — extend to skip NSE holidays manually if needed.
-- **WhatsApp**: skipped — Meta charges after free trial. Telegram is the cheap path.
+- **Markets closed days**: yfinance returns last close. Indian holidays handled by skipping weekday-only Mon-Fri cron. extend to skip NSE holidays manually if needed.
+- **WhatsApp**: skipped. Meta charges after free trial. Telegram is the cheap path.
 
 ## Roadmap
 
-### v1 (current) — India equity
+### v1 (current). India equity
 - NSE/BSE stocks (NIFTY 50 + universe + your portfolio + wishlist)
 - Daily AI market call (mood, picks, verdicts)
 - Telegram bot + Streamlit dashboard
 - INDmoney MCP sync (Indian holdings + watchlist)
 
-### v2 — US + global equity
+### v2. US + global equity
 - US stocks (AAPL, NVDA etc) from INDmoney US portfolio
 - Global indices (S&P, Nasdaq, FTSE, Nikkei) deeper integration
 - Cross-market correlation signals
 - Forex (USD/INR) signal
-- Backtest module — replay past LLM calls vs actuals
+- Backtest module. replay past LLM calls vs actuals
 
-### v3 — multi-asset
-- Mutual funds (via INDmoney MF MCP tools — `get_mf_funds_details`, SIPs)
+### v3. multi-asset
+- Mutual funds (via INDmoney MF MCP tools. `get_mf_funds_details`, SIPs)
 - Bonds + FD comparison
 - Gold/silver (commodities)
 - Crypto (via INDmoney `CRYPTO` asset_type)
 - Net worth across asset classes (use `networth_snapshot` MCP tool)
 
-### v4 — automation + polish
+### v4. automation + polish
 - Per-stock alert thresholds (`/alert TICKER 2500 above`)
 - Sector heatmap on dashboard
 - Replace Streamlit with Next.js (custom domain support)

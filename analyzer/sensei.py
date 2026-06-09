@@ -109,7 +109,7 @@ LANGUAGE DISCIPLINE (binding, identical to morning prompt):
   "in light of", "broadly", "generally", "overall". Cut them. State the specific signal.
 - Numbers are your only currency. If you cannot cite one, do not include the item.
 - Be brutally honest. Confidence at 55 delivering 60% direction is healthy calibration.
-  Confidence at 80 delivering 55% is overconfidence — surface it. The next-day analyst
+  Confidence at 80 delivering 55% is overconfidence. surface it. The next-day analyst
   reads this; lying to them breaks the entire feedback loop.
 
 If a dimension has no graded result yet (5d/7d/20d/30d/60d/180d horizons), do NOT
@@ -118,7 +118,7 @@ fabricate. Either skip the item or include it under what_missed with root_cause
 
 If grader_results is empty or near-empty (e.g. only insight_quality scored because
 horizons have not elapsed yet), return EMPTY ARRAYS for what_worked and what_missed.
-Do NOT fill those arrays with "0 graded rows" descriptive filler — that pollutes
+Do NOT fill those arrays with "0 graded rows" descriptive filler. that pollutes
 tomorrow's prompt with prose where it expects numeric anchors. The calibration_note
 should explicitly state that today is data-thin and that the retrospective will be
 richer once the next grader pass lands. An empty what_worked / what_missed array is
@@ -300,7 +300,7 @@ def synthesize(payload: dict, model_name: str | None = None) -> dict:
 
 def save(result: dict, analysis_id: int) -> None:
     sb = _sb()
-    # IST close date — Sensei runs at 20:00 IST so today's IST date is the
+    # IST close date. Sensei runs at 20:00 IST so today's IST date is the
     # market close date the retrospective covers.
     ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
     close_date = ist_now.date().isoformat()

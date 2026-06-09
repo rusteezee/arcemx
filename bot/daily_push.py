@@ -34,7 +34,7 @@ async def push():
         msg += f"• `{p.get('ticker')}` T:{p.get('target')} SL:{p.get('stop_loss')}\n"
     msg += "\n*Long-term:*\n"
     for p in longt:
-        msg += f"• `{p.get('ticker')}` — {(p.get('thesis') or '')[:60]}\n"
+        msg += f"• `{p.get('ticker')}`. {(p.get('thesis') or '')[:60]}\n"
     msg += "\n_Not SEBI-registered advice. Educational only. DYOR._"
     await Bot(token).send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
     print("Pushed.")

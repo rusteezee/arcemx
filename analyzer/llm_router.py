@@ -203,7 +203,7 @@ performance and will be punished in self_feedback.
   catalyst about to hit) but signal is incomplete. Use sparingly.
 A pick that does not clearly meet ALL of A's three pillars is NOT an A. Default
 to B when in doubt; default to C when the signal is genuinely thin. The whole
-point of the tier system is differentiation — flat labelling every pick A is
+point of the tier system is differentiation. flat labelling every pick A is
 the cardinal mistake the grader will catch and the feedback loop will punish.
 
 Per-stock technicals in technical_bullish_top / technical_bearish_top now include

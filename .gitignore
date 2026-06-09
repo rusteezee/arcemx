@@ -11,7 +11,7 @@ data/cache/
 .indmoney_tokens.json
 .indmoney_tokens.client.json
 
-# Personal financial reports — never commit
+# Personal financial reports. never commit
 Indmoney-*.xlsx
 consolidated_tax_report*.xlsx
 *TaxPnlReport*.xlsx

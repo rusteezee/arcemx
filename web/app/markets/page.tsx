@@ -99,7 +99,7 @@ export default function MarketsPage() {
         if (cleaned.length) setCustomTickers(cleaned);
       }
     } catch {
-      // Bad JSON or storage disabled — ignore, fall back to empty.
+      // Bad JSON or storage disabled. ignore, fall back to empty.
     }
   }, []);
 
@@ -111,7 +111,7 @@ export default function MarketsPage() {
         JSON.stringify(customTickers)
       );
     } catch {
-      // Storage disabled — ignore.
+      // Storage disabled. ignore.
     }
   }, [customTickers]);
 

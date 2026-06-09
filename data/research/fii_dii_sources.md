@@ -1,4 +1,4 @@
-# FII / DII data source research — verdict
+# FII / DII data source research. verdict
 
 _Investigation date: 9 June 2026_
 
@@ -16,7 +16,7 @@ A public, no-auth, MIT-licensed third-party API mirrors NSE's FII/DII daily prov
 | Update freshness | Same-day, ~6:00 / 6:30 / 7:00 PM IST cron (NSE provisional release window) |
 | Format | JSON |
 | License | MIT (free programmatic ingestion, attribution preferred) |
-| Source repo | `github.com/MrChartist/fii-dii-data` — 121 commits, active maintenance |
+| Source repo | `github.com/MrChartist/fii-dii-data`. 121 commits, active maintenance |
 | Continuity risk | Single-maintainer project. Mitigation: cache the response in Supabase so a vanishing endpoint does not kill the daily payload immediately. |
 | Verified from Azure IP | **Untested**, but the host is a regular HTTPS domain (`mrchartist.com`), not NSE. Standard CDN/Vercel-style hosting. No realistic reason an Azure runner would be blocked. Owner should probe with a one-shot workflow if paranoid. |
 
@@ -109,7 +109,7 @@ Same shape, lags the API by the file commit interval (typically minutes). Use on
 | Zerodha Kite Connect | Carries FII/DII per Zerodha docs but data subscription is ~₹500/month per key + requires an active trading account. Out of ₹0 budget. |
 | Upstox / Angel One / Fyers Developer APIs | Same shape as Zerodha: priced or trading-account-gated. Skipped. |
 | AlphaVantage / TwelveData / Marketstack / Polygon | None carry Indian institutional flows. They cover global price/quote/news, not FII/DII. |
-| `dhruvitdiyora/nse-tools`, `hi-imcodeman/stock-nse-india`, `maanavshah/stock-market-india` | Useful NSE wrappers but none host the data, they wrap NSE itself — same Azure-IP block problem when run from our runner. |
+| `dhruvitdiyora/nse-tools`, `hi-imcodeman/stock-nse-india`, `maanavshah/stock-market-india` | Useful NSE wrappers but none host the data, they wrap NSE itself. same Azure-IP block problem when run from our runner. |
 
 ## 5. Open questions / next steps
 
@@ -120,4 +120,4 @@ Same shape, lags the API by the file commit interval (typically minutes). Use on
 
 ## 6. Recommended action
 
-Build `fetchers/fii_dii.py`, wire into the daily cron payload, update SYSTEM_PROMPT to instruct the model on how to use the FII/DII signal in direction + range + sector calls. Estimated time: 20-30 minutes. Token cost: +200 tokens per call. Quality lift: real (institutional flow is a genuine market-moving signal — biggest non-model lever the system was missing).
+Build `fetchers/fii_dii.py`, wire into the daily cron payload, update SYSTEM_PROMPT to instruct the model on how to use the FII/DII signal in direction + range + sector calls. Estimated time: 20-30 minutes. Token cost: +200 tokens per call. Quality lift: real (institutional flow is a genuine market-moving signal. biggest non-model lever the system was missing).

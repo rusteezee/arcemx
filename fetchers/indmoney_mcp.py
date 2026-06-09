@@ -484,7 +484,7 @@ async def sync_to_supabase(user_id: str = "default"):
                 )
                 if holdings:
                     break
-                # Empty array without an error string — also retry once.
+                # Empty array without an error string. also retry once.
                 if attempt < 3:
                     print(f"[attempt {attempt}/3] holdings empty, retrying...")
                     await asyncio.sleep(2 * attempt)
@@ -504,7 +504,7 @@ async def sync_to_supabase(user_id: str = "default"):
                 if not raw_ticker:
                     raw_ticker = await _lookup_ticker(session, name)
                 if not raw_ticker:
-                    print(f"⚠️  No ticker mapping for: {name} (code {code}) — skip")
+                    print(f"⚠️  No ticker mapping for: {name} (code {code}). skip")
                     continue
 
                 ticker = to_yf(raw_ticker)

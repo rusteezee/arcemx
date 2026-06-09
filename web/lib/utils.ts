@@ -19,7 +19,7 @@ export function currencySymbol(ticker: string): string {
 }
 
 export function formatMoney(val: number | null | undefined, ticker = ""): string {
-  if (val == null || isNaN(val)) return "—".replace("—", "");
+  if (val == null || isNaN(val)) return "·".replace("·", "");
   const c = ticker ? currencySymbol(ticker) : "₹";
   const sign = val < 0 ? "-" : "";
   return `${sign}${c}${Math.abs(val).toLocaleString("en-IN", {

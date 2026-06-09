@@ -200,7 +200,7 @@ export default function AccuracyPage() {
       // band width % vs the binary hit score (100 = close inside, 0 = miss).
       // A useful range engine clusters into the top-left quadrant (tight
       // bands that still hit). A wide right column shows the model buying
-      // hit rate with width — surfaces overconfidence/range inflation.
+      // hit rate with width. surfaces overconfidence/range inflation.
       const { data: rngRows } = await sb
         .from("prediction_scores")
         .select("score,predicted,analysis_id")
@@ -294,14 +294,14 @@ export default function AccuracyPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
-            value={dirAcc == null ? "—" : `${dirAcc.toFixed(1)}%`}
+            value={dirAcc == null ? "·" : `${dirAcc.toFixed(1)}%`}
             delta={dirEdgeLabel}
             deltaPositive={dirEdgePositive}
             glyph="◎"
           />
           <Stat
             label="Range hit rate"
-            value={rngAcc == null ? "—" : `${rngAcc.toFixed(1)}%`}
+            value={rngAcc == null ? "·" : `${rngAcc.toFixed(1)}%`}
             delta={rngBandLabel}
             glyph="◈"
           />
@@ -352,7 +352,7 @@ export default function AccuracyPage() {
               <Stat
                 key={dim}
                 label={DIMENSION_LABELS[dim]}
-                value={acc == null ? "—" : `${acc.toFixed(1)}%`}
+                value={acc == null ? "·" : `${acc.toFixed(1)}%`}
                 delta={acc == null ? "awaiting first grade" : `${n} scored · 30d`}
                 glyph="◎"
               />
@@ -493,7 +493,7 @@ export default function AccuracyPage() {
         num={calibration ? "007 / 009" : "006 / 008"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
-        description="X-axis: predicted band width as percent of midpoint. Y-axis: hit (100) or miss (0) for that day. The useful cluster is top-left: tight bands that still hit. A wide right column means the engine bought hit rate with width — that's range inflation, not skill."
+        description="X-axis: predicted band width as percent of midpoint. Y-axis: hit (100) or miss (0) for that day. The useful cluster is top-left: tight bands that still hit. A wide right column means the engine bought hit rate with width. that's range inflation, not skill."
       >
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -561,7 +561,7 @@ export default function AccuracyPage() {
                 </div>
                 <div className="section-num mb-1">7d alpha</div>
                 <div className="text-3xl font-semibold" style={{ color: accColor }}>
-                  {acc == null ? "—" : `${acc.toFixed(1)}%`}
+                  {acc == null ? "·" : `${acc.toFixed(1)}%`}
                 </div>
                 <p className="text-sm text-[var(--muted)] leading-relaxed mt-3">{gloss}</p>
               </div>
@@ -654,7 +654,7 @@ export default function AccuracyPage() {
                   <td className="num font-medium">&lt; 10</td>
                   <td><span className="pill pill-warn">Cold start</span></td>
                   <td className="text-[var(--muted)]">
-                    No signal yet. Hit rates here are noise — direction
+                    No signal yet. Hit rates here are noise. direction
                     accuracy can read 80% one day and 30% the next on the same
                     underlying engine. Watch the trend chart, not the headline.
                   </td>
@@ -703,14 +703,14 @@ export default function AccuracyPage() {
             </table>
           </div>
 
-          {/* 4. Per-dim status — which dims have crossed which thresholds */}
+          {/* 4. Per-dim status. which dims have crossed which thresholds */}
           <div className="card overflow-hidden">
             <div className="p-5 pb-2">
               <div className="section-num mb-1">Per-Dimension Status</div>
               <p className="text-sm text-[var(--muted)] leading-relaxed">
                 Current 30-day sample size per dimension, plus where each
                 sits on the maturity ladder. A dimension with 4 scored
-                sessions cannot be compared to one with 50 — the smaller-n
+                sessions cannot be compared to one with 50. the smaller-n
                 hit rate is a guess, not a measurement.
               </p>
             </div>
@@ -756,7 +756,7 @@ export default function AccuracyPage() {
             </table>
           </div>
 
-          {/* 5. Decision rules — when to act, when to wait */}
+          {/* 5. Decision rules. when to act, when to wait */}
           <div className="card p-5">
             <div className="section-num mb-2">When To Act, When To Wait</div>
             <ul className="list-disc pl-5 space-y-2 text-sm text-[var(--muted)] leading-relaxed">
@@ -764,7 +764,7 @@ export default function AccuracyPage() {
                 <span className="text-foreground font-medium">Cold start / Building (n &lt; 30).</span>{" "}
                 Read the calibration gap, not the headline. If stated confidence
                 matches realized accuracy within ±10 pts, the engine is being
-                honest about its own uncertainty — that is the signal that
+                honest about its own uncertainty. that is the signal that
                 matters most at this size, even when the percentage itself is
                 noisy.
               </li>
@@ -772,7 +772,7 @@ export default function AccuracyPage() {
                 <span className="text-foreground font-medium">Settling (n 30-99).</span>{" "}
                 Begin comparing dimensions against each other (range usually
                 beats direction; direction usually beats picks; multi-day usually
-                beats 1-day). Watch the trend chart for monotonic climb — that
+                beats 1-day). Watch the trend chart for monotonic climb. that
                 is self-feedback working.
               </li>
               <li>
@@ -784,13 +784,13 @@ export default function AccuracyPage() {
               <li>
                 <span className="text-foreground font-medium">Always.</span>{" "}
                 Conviction tier A picks should beat B should beat C. If tiers
-                flatten, the labels carry no signal — that is a prompt problem,
+                flatten, the labels carry no signal. that is a prompt problem,
                 not a data problem.
               </li>
             </ul>
           </div>
 
-          {/* 6. Source of truth — what the grader actually does */}
+          {/* 6. Source of truth. what the grader actually does */}
           <div className="card p-5">
             <div className="section-num mb-2">Where The Scores Come From</div>
             <p className="text-sm text-[var(--muted)] leading-relaxed">

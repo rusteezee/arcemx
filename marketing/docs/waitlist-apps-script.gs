@@ -1,5 +1,5 @@
 /**
- * Arc'emX! Waitlist — Google Apps Script web app.
+ * Arc'emX! Waitlist. Google Apps Script web app.
  *
  * Setup:
  * 1. Create a new Google Sheet. Rename the first sheet to "Waitlist" (optional).
