@@ -306,6 +306,7 @@ function SectorsIndexPair({ sectors, pair }: { sectors: any[]; pair?: any }) {
               <tr>
                 <th>Sector</th>
                 <th>Direction</th>
+                <th>Range</th>
                 <th>Confidence</th>
                 <th>Key Driver</th>
               </tr>
@@ -315,6 +316,7 @@ function SectorsIndexPair({ sectors, pair }: { sectors: any[]; pair?: any }) {
                 <tr key={i}>
                   <td className="font-medium">{s.sector}</td>
                   <td><DirPill direction={s.direction} /></td>
+                  <td className="num">{s.range || "·"}</td>
                   <td className="num">{s.confidence ?? "·"}</td>
                   <td className="text-[var(--muted)] max-w-md text-sm">{s.key_driver}</td>
                 </tr>

@@ -731,6 +731,7 @@ def grade_all(lookback_days: int = 90):
             if age >= 1:
                 souts = raw.get("sector_outlooks", []) or []
                 s_scores, s_results = [], []
+                sr_scores, sr_results = [], []
                 for so in souts:
                     sname = (so.get("sector") or "").strip().upper()
                     yf_sym = _SECTOR_YF.get(sname)
@@ -748,6 +749,17 @@ def grade_all(lookback_days: int = 90):
                                        "direction": so.get("direction"),
                                        "actual_pct": round(delta, 2),
                                        "score": sc})
+                    # Per-sector range: same interval scoring as NIFTY range.
+                    # Tightest band that still contains the close wins.
+                    rng = _parse_range(so.get("range") or "")
+                    if rng:
+                        rsc, rdelta = grade_range(rng, next_close)
+                        sr_scores.append(rsc)
+                        sr_results.append({"sector": sname,
+                                            "range": list(rng),
+                                            "close": next_close,
+                                            "score": rsc,
+                                            "delta": rdelta})
                 if s_scores:
                     avg_s = sum(s_scores) / len(s_scores)
                     _upsert_score(sb, aid, "sector_dir_1d", 1,
@@ -756,6 +768,14 @@ def grade_all(lookback_days: int = 90):
                                                for r in s_results]},
                                   {"results": s_results}, avg_s, 0,
                                   notes=f"avg sector 1d direction across {len(s_scores)} sectors")
+                if sr_scores:
+                    avg_sr = sum(sr_scores) / len(sr_scores)
+                    _upsert_score(sb, aid, "sector_range_1d", 1,
+                                  {"sectors": [{"sector": r["sector"],
+                                                "range": r["range"]}
+                                               for r in sr_results]},
+                                  {"results": sr_results}, avg_sr, 0,
+                                  notes=f"avg sector 1d range across {len(sr_scores)} sectors")
 
             # ----- Index pair (NIFTY vs BankNifty relative outperformer) -----
             if age >= 1:

@@ -31,6 +31,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   wishlist_outlook_dir_1d: "Wishlist Direction (1d)",
   wishlist_outlook_range_1d: "Wishlist Range (1d)",
   sector_dir_1d: "Sectors Direction (1d)",
+  sector_range_1d: "Sectors Range (1d)",
   index_pair_1d: "NIFTY vs BankNifty (1d)",
   short_pick_A_7d: "Short Picks · Tier A (7d)",
   short_pick_B_7d: "Short Picks · Tier B (7d)",

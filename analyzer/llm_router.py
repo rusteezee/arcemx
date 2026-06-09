@@ -139,6 +139,11 @@ present in that block, emit a sector_outlooks entry:
   (e.g. "RSI 62 + MACD bullish + 1.5% above SMA20 + global cue X + FII tilt Y").
 - key_driver: ONE line citing >=2 numbers, including at least one sector technical
   from market_context.sectors and one cross-asset/macro/news number.
+- range: tight index-point band anchored to that sector's expected_daily_move_pct
+  (ATR-based). Width should be near 1x ATR around the prior close: tighter (~0.7x)
+  when VIX is low and the sector is coiling, wider (up to ~1.5x) when VIX is
+  elevated. Do NOT emit a band materially wider than 1.5x sector ATR; loose bands
+  are scored as miss-equivalent. Same scoring rule as the NIFTY range dim.
 
 index_pair_outlook: which of NIFTY vs BANKNIFTY outperforms tomorrow, and by how
 many percentage points. BankNifty led NIFTY by an average ~0.2%/day in trending
@@ -255,7 +260,7 @@ Return STRICT JSON only matching this schema:
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
   "holding_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band, e.g. 320-330>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers: RSI/MACD/DMA/ATR/sector cue>"}],
   "wishlist_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers>"}],
-  "sector_outlooks": [{"sector": "BANK|IT|AUTO|PHARMA|FMCG|ENERGY|METAL|REALTY|MEDIA|FINSERV", "direction": "up|down|sideways", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers from market_context.sectors and macro>"}],
+  "sector_outlooks": [{"sector": "BANK|IT|AUTO|PHARMA|FMCG|ENERGY|METAL|REALTY|MEDIA|FINSERV", "direction": "up|down|sideways", "range": "<tight index-point band anchored to that sector's expected_daily_move_pct, e.g. 52500-53100>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers from market_context.sectors and macro>"}],
   "index_pair_outlook": {"outperformer": "NIFTY|BANKNIFTY|EVEN", "spread_pct": "<expected NIFTY-BANKNIFTY %-point spread, e.g. +0.4 or -0.6>", "rationale": "<one-line citation of >=2 numbers>"},
   "global_factors": ["..."],
   "key_news_drivers": ["..."],
