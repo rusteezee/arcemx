@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Section } from "@/components/Section";
 import { EmptyState } from "@/components/EmptyState";
-import { TriggerButton } from "@/components/TriggerButton";
 import { sb } from "@/lib/supabase";
 
 interface SenseiRow {
@@ -113,14 +112,6 @@ export default function SenseiPage() {
             End-of-day synthesis lands here once Sensei runs against today's morning call and the grader's scores.
           </p>
         </div>
-        <div className="mb-6 flex justify-end">
-          <TriggerButton
-            endpoint="/api/trigger-sensei"
-            label="Run Sensei"
-            queuedLabel="Queued"
-            title="Run Sensei now against the latest morning analysis."
-          />
-        </div>
         <EmptyState
           title="No Sensei retrospective yet."
           hint="Sensei runs at 8:00 PM IST Mon-Fri after market close and the grader pass. First row lands after today's session is reviewed."
@@ -140,23 +131,16 @@ export default function SenseiPage() {
       className="mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-24"
     >
       <header className="mb-10">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <div className="section-num mb-2">000 · Sensei</div>
-            <h1 className="headline mb-3">
-              Yesterday's <span className="italic">Verdict.</span>
-            </h1>
-            <p className="sub-headline mt-2 max-w-2xl">
-              End-of-day synthesis over today's morning call, actual closes, and graded scores.
-              Tomorrow's morning call reads this before forecasting.
-            </p>
-          </div>
-          <TriggerButton
-            endpoint="/api/trigger-sensei"
-            label="Run Sensei"
-            queuedLabel="Queued"
-            title="Run Sensei now against the latest morning analysis. Result lands in 3-12 minutes; refresh the page after."
-          />
+        <div>
+          <div className="section-num mb-2">000 · Sensei</div>
+          <h1 className="headline mb-3">
+            Yesterday's <span className="italic">Verdict.</span>
+          </h1>
+          <p className="sub-headline mt-2 max-w-2xl">
+            End-of-day synthesis over today's morning call, actual closes, and graded scores.
+            Tomorrow's morning call reads this before forecasting. Trigger a fresh run from the
+            nav sync button at the top right.
+          </p>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
           <span>Close date: {row.market_close_date}</span>

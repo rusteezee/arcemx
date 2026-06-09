@@ -17,6 +17,85 @@ const items = [
   { href: "/accuracy", label: "Accuracy" },
 ];
 
+// Route-aware sync icon. Each mode picks its own glyph + idle/loading
+// animation so the same nav pill visibly reframes itself by section.
+//   indmoney: rotating arrow, spin on syncing  (existing default)
+//   sensei:   sensei figure SVG, soft blink on syncing
+//   grader:   crosshair / target SVG, rotate on syncing
+function SyncModeIcon({
+  mode,
+  syncing,
+}: {
+  mode: "indmoney" | "sensei" | "grader";
+  syncing: boolean;
+}) {
+  if (mode === "indmoney") {
+    return (
+      <svg
+        width="14" height="14" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2.2"
+        strokeLinecap="round" strokeLinejoin="round"
+        className={cn(
+          "shrink-0 transition-colors duration-300",
+          syncing && "animate-spin",
+        )}
+      >
+        <path d="M21 12a9 9 0 1 1-3-6.7" />
+        <path d="M21 3v6h-6" />
+      </svg>
+    );
+  }
+  // Custom-SVG modes use CSS mask-image with bg-current so the icon
+  // inherits the parent button's text color. External <img> tags would
+  // not pick up currentColor; mask-image does.
+  if (mode === "sensei") {
+    return (
+      <span
+        aria-hidden
+        className={cn(
+          "shrink-0 inline-block bg-current",
+          // Soft pulse opacity 1 <-> 0.4 while syncing.
+          syncing && "animate-pulse",
+        )}
+        style={{
+          width: 16,
+          height: 16,
+          WebkitMaskImage: "url(/icons/sensei.svg)",
+          maskImage: "url(/icons/sensei.svg)",
+          WebkitMaskRepeat: "no-repeat",
+          maskRepeat: "no-repeat",
+          WebkitMaskSize: "contain",
+          maskSize: "contain",
+          WebkitMaskPosition: "center",
+          maskPosition: "center",
+        }}
+      />
+    );
+  }
+  // grader: target crosshair, rotates while syncing
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "shrink-0 inline-block bg-current",
+        syncing && "animate-spin",
+      )}
+      style={{
+        width: 16,
+        height: 16,
+        WebkitMaskImage: "url(/icons/accuracy.svg)",
+        maskImage: "url(/icons/accuracy.svg)",
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+        maskSize: "contain",
+        WebkitMaskPosition: "center",
+        maskPosition: "center",
+      }}
+    />
+  );
+}
+
 function timeAgo(iso: string | null): string {
   if (!iso) return "Never";
   const diff = Date.now() - new Date(iso).getTime();
@@ -90,6 +169,24 @@ export function Nav() {
     return () => clearInterval(t);
   }, []);
 
+  // Resolve which sync mode the nav button runs based on the current route.
+  // /sensei  -> trigger Sensei retrospective       (icon: sensei figure, soft blink)
+  // /accuracy-> trigger Grader scoring pass         (icon: target crosshair, rotate)
+  // any other-> INDmoney positions sync             (icon: rotating arrow, rotate)
+  //
+  // Keeping the mode resolution in one place means the rest of the button
+  // (loading state, border color on result, animated text swap) is shared.
+  type SyncMode = "indmoney" | "sensei" | "grader";
+  const mode: SyncMode =
+    path === "/sensei" ? "sensei" : path === "/accuracy" ? "grader" : "indmoney";
+
+  const modeConfig: Record<SyncMode, { endpoint: string; idleLabel: (ts: string | null) => string }> = {
+    indmoney: { endpoint: "/api/sync",            idleLabel: (ts) => timeAgo(ts) },
+    sensei:   { endpoint: "/api/trigger-sensei",  idleLabel: () => "Sync Sensei" },
+    grader:   { endpoint: "/api/trigger-grader",  idleLabel: () => "Sync Grader" },
+  };
+  const cfg = modeConfig[mode];
+
   // One sync attempt. Classifies the outcome into three buckets so the
   // caller can decide whether a retry is worthwhile:
   //   ok    -> bot synced successfully
@@ -99,9 +196,9 @@ export function Nav() {
   //   error -> bot was reached but the sync failed (e.g. INDmoney 512 or
   //            an expired token). The bot already retries those itself,
   //            so a client retry will not help; surface it.
-  const attemptSync = async (): Promise<{ ok: boolean; cold: boolean; err?: string }> => {
+  const attemptSync = async (endpoint: string): Promise<{ ok: boolean; cold: boolean; err?: string }> => {
     try {
-      const r = await fetch("/api/sync", {
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -127,18 +224,21 @@ export function Nav() {
     setSyncState("idle");
     setSyncMsg(null);
     try {
-      let res = await attemptSync();
+      let res = await attemptSync(cfg.endpoint);
       // Cold Render bot: show a waking state, give it ~6s to spin up,
       // then retry once silently before surfacing any error.
       if (!res.ok && res.cold) {
         setSyncMsg("Waking");
         await new Promise((r) => setTimeout(r, 6000));
-        res = await attemptSync();
+        res = await attemptSync(cfg.endpoint);
       }
       if (res.ok) {
         setSyncState("ok");
-        setSyncMsg("Synced");
-        fetchLastSync();
+        // The Sensei + Grader triggers return 202 Queued; the INDmoney
+        // sync returns fully synced. Use different success copy so the
+        // nav reflects what the user is actually waiting for.
+        setSyncMsg(mode === "indmoney" ? "Synced" : "Queued");
+        if (mode === "indmoney") fetchLastSync();
       } else if (res.cold) {
         // Still cold after a retry: not a real failure, just a slow wake.
         setSyncState("error");
@@ -156,7 +256,7 @@ export function Nav() {
     }
   };
 
-  const syncText = syncing ? "Syncing" : syncMsg ?? timeAgo(lastSync);
+  const syncText = syncing ? "Syncing" : syncMsg ?? cfg.idleLabel(lastSync);
   const open = isMarketOpen(mkt);
 
   return (
@@ -252,7 +352,11 @@ export function Nav() {
               className={cn(
                 "flex items-center gap-1.5 rounded-full border transition-all duration-300 overflow-hidden",
                 "text-[0.72rem] font-medium",
-                "size-9 justify-center sm:size-auto sm:w-[96px] sm:px-2.5 sm:py-[5px]",
+                "size-9 justify-center sm:size-auto sm:px-2.5 sm:py-[5px]",
+                // Sensei + Grader labels are slightly wider than the
+                // INDmoney "1m ago" / "Synced" text, so reserve a hair
+                // more room on those routes.
+                mode === "indmoney" ? "sm:w-[96px]" : "sm:w-[124px]",
                 syncing ? "opacity-80 border-border" : "hover:bg-[var(--muted-bg)]",
                 "disabled:cursor-not-allowed",
                 syncState === "ok" &&
@@ -261,17 +365,16 @@ export function Nav() {
                   "border-[color-mix(in_srgb,var(--loss)_60%,transparent)] bg-[color-mix(in_srgb,var(--loss)_14%,transparent)] text-[var(--loss)]",
                 syncState === "idle" && !syncing && "border-border"
               )}
-              title={syncMsg || "Sync from INDmoney"}
+              title={
+                syncMsg ||
+                (mode === "sensei"
+                  ? "Run Sensei EOD retrospective"
+                  : mode === "grader"
+                  ? "Run Grader scoring pass"
+                  : "Sync from INDmoney")
+              }
             >
-              <svg
-                width="14" height="14" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2.2"
-                strokeLinecap="round" strokeLinejoin="round"
-                className={cn("shrink-0 transition-colors duration-300", syncing && "animate-spin")}
-              >
-                <path d="M21 12a9 9 0 1 1-3-6.7" />
-                <path d="M21 3v6h-6" />
-              </svg>
+              <SyncModeIcon mode={mode} syncing={syncing} />
               <div className="hidden sm:block relative h-4 flex-1 overflow-hidden">
                 <AnimatePresence mode="popLayout" initial={false}>
                   <motion.span

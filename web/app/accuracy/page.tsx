@@ -6,7 +6,6 @@ import { Section } from "@/components/Section";
 import { Stat } from "@/components/Stat";
 import { EmptyState } from "@/components/EmptyState";
 import { LineChart } from "@/components/LineChart";
-import { TriggerButton } from "@/components/TriggerButton";
 import { sb } from "@/lib/supabase";
 
 const DIMENSION_LABELS: Record<string, string> = {
@@ -273,22 +272,16 @@ export default function AccuracyPage() {
 
   return (
     <>
-      <div className="mb-12 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="section-num mb-2">000 · Accuracy</div>
-          <h1 className="headline mb-3">
-            How well I have <span className="italic">Predicted.</span>
-          </h1>
-          <p className="sub-headline max-w-2xl">
-            Every past prediction is scored against actual outcomes. The system reads these scores before every new call, calibrating itself over time.
-          </p>
-        </div>
-        <TriggerButton
-          endpoint="/api/trigger-grader"
-          label="Run Grader"
-          queuedLabel="Queued"
-          title="Score every analysis row whose horizon has elapsed and refresh the accuracy summary."
-        />
+      <div className="mb-12">
+        <div className="section-num mb-2">000 · Accuracy</div>
+        <h1 className="headline mb-3">
+          How well I have <span className="italic">Predicted.</span>
+        </h1>
+        <p className="sub-headline max-w-2xl">
+          Every past prediction is scored against actual outcomes. The system reads these scores
+          before every new call, calibrating itself over time. Trigger a fresh grading pass from
+          the nav sync button at the top right.
+        </p>
       </div>
 
       <Section num={calibration ? "001 / 009" : "001 / 008"} title="Overall Last 30 Days" glyph="✦">
