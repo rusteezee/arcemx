@@ -230,11 +230,8 @@ export default function TodayPage() {
         )}
       </Section>
 
-      <Section num="006 / 007" title="Per-Stock 1-Day Calls" glyph="◎" description="Per-holding and per-wishlist next-day direction + ATR-anchored range. The key_driver cites 2+ specific numbers (RSI, MACD, DMA distance, support/resistance).">
-        <StockOutlooks
-          holdings={raw.holding_outlooks_1d || []}
-          wishlist={raw.wishlist_outlooks_1d || []}
-        />
+      <Section num="006 / 007" title="Per-Holding 1-Day Calls" glyph="◎" description="Per-holding next-day direction + ATR-anchored range. The key_driver cites 2+ specific numbers (RSI, MACD, DMA distance, support/resistance). Wishlist 1-day calls live on the Wishlist page.">
+        <StockOutlooks holdings={raw.holding_outlooks_1d || []} />
       </Section>
 
       <Section num="007 / 007" title="Reasoning" glyph="✦">
@@ -610,14 +607,13 @@ function PairBadge({ label, data }: { label: string; data: any }) {
   );
 }
 
-function StockOutlooks({ holdings, wishlist }: { holdings: any[]; wishlist: any[] }) {
-  if (!holdings.length && !wishlist.length) {
-    return <EmptyState title="No per-stock outlooks yet" hint="Populates once today's cron has run with the new schema." />;
+function StockOutlooks({ holdings }: { holdings: any[] }) {
+  if (!holdings.length) {
+    return <EmptyState title="No per-holding outlooks yet" hint="Populates once today's cron has run with the new schema." />;
   }
   return (
     <div className="grid grid-cols-1 gap-4">
       <StockOutlookTable title="Holdings" rows={holdings} />
-      <StockOutlookTable title="Wishlist" rows={wishlist} />
     </div>
   );
 }
@@ -630,16 +626,6 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
       </div>
       {rows.length ? (
         <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
-          {/*
-            Holdings and Wishlist are two separate <table> elements so each
-            would auto-size its columns independently from its own content.
-            That makes the Wishlist Range column stretch for "Rs.1,490-Rs.1,540"
-            while Holdings' tightest is "Rs.53-Rs.57", so column boundaries
-            drift between the two tables and the eye does not line up reading
-            down. table-layout: fixed + an explicit colgroup forces both
-            instances to use the same column widths so columns sit at the
-            same x-coordinate in both tables.
-          */}
           <colgroup>
             <col style={{ width: "14%" }} />
             <col style={{ width: "12%" }} />
