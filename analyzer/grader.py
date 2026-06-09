@@ -69,13 +69,20 @@ def _close_n_sessions_later(ticker: str, base_ts: datetime, n: int) -> float | N
 
 
 def _parse_range(rng: str) -> tuple[float, float] | None:
-    """`23200-23500` or `23200 - 23500` → (23200, 23500)."""
+    """`23200-23500` or `23200 - 23500` -> (23200, 23500). Returns None on a
+    placeholder "0-0" or any range with non-positive bounds, since the model
+    occasionally emits zeros for data-thin tickers (US ADRs absent from
+    yfinance .NS) and scoring those would inject pure garbage into the
+    grader average."""
     if not rng:
         return None
     nums = re.findall(r"\d+(?:\.\d+)?", str(rng).replace(",", ""))
     if len(nums) >= 2:
         a, b = float(nums[0]), float(nums[1])
-        return (min(a, b), max(a, b))
+        lo, hi = min(a, b), max(a, b)
+        if lo <= 0 or hi <= 0 or hi == lo:
+            return None
+        return (lo, hi)
     return None
 
 
@@ -592,6 +599,73 @@ def grade_all(lookback_days: int = 90):
                                                 "signal": w["signal"]} for w in wresults]},
                                   {"results": wresults}, avg_w, 0,
                                   notes=f"avg wishlist signal score across {len(wscores)} names")
+
+            # ----- Sector outlooks (1d direction per NSE sector index) -----
+            # Same horizon-scaled grade_direction used for NIFTY. Aggregated
+            # to one avg-direction sample per prediction-day so the per-day
+            # dedup in compute_summaries holds.
+            _SECTOR_YF = {
+                "BANK": "^NSEBANK", "IT": "^CNXIT", "AUTO": "^CNXAUTO",
+                "PHARMA": "^CNXPHARMA", "FMCG": "^CNXFMCG",
+                "ENERGY": "^CNXENERGY", "METAL": "^CNXMETAL",
+                "REALTY": "^CNXREALTY", "MEDIA": "^CNXMEDIA",
+                "FINSERV": "^CNXFINANCE",
+            }
+            if age >= 1:
+                souts = raw.get("sector_outlooks", []) or []
+                s_scores, s_results = [], []
+                for so in souts:
+                    sname = (so.get("sector") or "").strip().upper()
+                    yf_sym = _SECTOR_YF.get(sname)
+                    if not yf_sym:
+                        continue
+                    last_close = _close_on_or_after(yf_sym, run_at - timedelta(days=1))
+                    next_close = _close_on_or_after(yf_sym, run_at + timedelta(days=1))
+                    if not last_close or not next_close:
+                        continue
+                    sc, delta = grade_direction(
+                        so.get("direction") or "", last_close, next_close,
+                        flat=DIRECTION_FLAT.get(1, 0.4))
+                    s_scores.append(sc)
+                    s_results.append({"sector": sname,
+                                       "direction": so.get("direction"),
+                                       "actual_pct": round(delta, 2),
+                                       "score": sc})
+                if s_scores:
+                    avg_s = sum(s_scores) / len(s_scores)
+                    _upsert_score(sb, aid, "sector_dir_1d", 1,
+                                  {"sectors": [{"sector": r["sector"],
+                                                "direction": r["direction"]}
+                                               for r in s_results]},
+                                  {"results": s_results}, avg_s, 0,
+                                  notes=f"avg sector 1d direction across {len(s_scores)} sectors")
+
+            # ----- Index pair (NIFTY vs BankNifty relative outperformer) -----
+            if age >= 1:
+                ip = raw.get("index_pair_outlook") or {}
+                pred = (ip.get("outperformer") or "").strip().upper()
+                if pred in ("NIFTY", "BANKNIFTY", "EVEN"):
+                    n_l = _close_on_or_after("^NSEI", run_at - timedelta(days=1))
+                    n_n = _close_on_or_after("^NSEI", run_at + timedelta(days=1))
+                    b_l = _close_on_or_after("^NSEBANK", run_at - timedelta(days=1))
+                    b_n = _close_on_or_after("^NSEBANK", run_at + timedelta(days=1))
+                    if all(x and x > 0 for x in (n_l, n_n, b_l, b_n)):
+                        n_pct = (n_n - n_l) / n_l * 100
+                        b_pct = (b_n - b_l) / b_l * 100
+                        spread = b_pct - n_pct  # +ve = BANKNIFTY outperformed
+                        if pred == "BANKNIFTY":
+                            score = 100.0 if spread > 0.15 else (50.0 if abs(spread) < 0.15 else 0.0)
+                        elif pred == "NIFTY":
+                            score = 100.0 if spread < -0.15 else (50.0 if abs(spread) < 0.15 else 0.0)
+                        else:  # EVEN
+                            score = 100.0 if abs(spread) < 0.15 else 0.0
+                        _upsert_score(sb, aid, "index_pair_1d", 1,
+                                      {"outperformer": pred},
+                                      {"actual_spread_pct": round(spread, 3),
+                                        "nifty_pct": round(n_pct, 2),
+                                        "banknifty_pct": round(b_pct, 2)},
+                                      score, round(spread, 3),
+                                      notes=f"BankNifty-NIFTY spread {spread:+.2f}% vs call {pred}")
 
             # ----- Per-holding + per-wishlist 1-day direction + range -----
             # Schema fields holding_outlooks_1d / wishlist_outlooks_1d give a

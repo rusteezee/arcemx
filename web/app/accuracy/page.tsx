@@ -30,6 +30,8 @@ const DIMENSION_LABELS: Record<string, string> = {
   holding_outlook_range_1d: "Holdings Range (1d)",
   wishlist_outlook_dir_1d: "Wishlist Direction (1d)",
   wishlist_outlook_range_1d: "Wishlist Range (1d)",
+  sector_dir_1d: "Sectors Direction (1d)",
+  index_pair_1d: "NIFTY vs BankNifty (1d)",
 };
 
 const WINDOWS = [7, 30, 90];

@@ -28,6 +28,22 @@ INDEX_SYMBOLS = {
     "BANKNIFTY": "^NSEBANK",
 }
 
+# NSE sector indices on yfinance. Used both to build sector_context for the
+# prompt (current technical posture per sector) and to grade
+# sector_outlooks next-day. Picked for coverage + yfinance reliability.
+SECTOR_SYMBOLS = {
+    "BANK": "^NSEBANK",
+    "IT": "^CNXIT",
+    "AUTO": "^CNXAUTO",
+    "PHARMA": "^CNXPHARMA",
+    "FMCG": "^CNXFMCG",
+    "ENERGY": "^CNXENERGY",
+    "METAL": "^CNXMETAL",
+    "REALTY": "^CNXREALTY",
+    "MEDIA": "^CNXMEDIA",
+    "FINSERV": "^CNXFINANCE",
+}
+
 # label -> (symbol, short note on why it matters for NIFTY's next session)
 GLOBAL_CUES = {
     "india_vix": ("^INDIAVIX", "fear gauge; high = expect wider moves"),
@@ -180,9 +196,29 @@ def build_market_context() -> dict:
             snap["note"] = note
             cues[label] = snap
 
+    # Per-sector technical posture. Same shape as indices block so the model
+    # can call sector direction with the same vocabulary (RSI, MACD, vs DMA,
+    # ATR). Reduced signal block to keep token cost bounded.
+    sectors = {}
+    for name, sym in SECTOR_SYMBOLS.items():
+        sig = _index_signal(sym)
+        if not sig:
+            continue
+        sectors[name] = {
+            "last": sig.get("last"),
+            "chg_1d_pct": sig.get("chg_1d_pct"),
+            "chg_5d_pct": sig.get("chg_5d_pct"),
+            "rsi_14": sig.get("rsi_14"),
+            "macd_bullish": sig.get("macd_bullish"),
+            "vs_sma20": sig.get("vs_sma20"),
+            "vs_sma50": sig.get("vs_sma50"),
+            "expected_daily_move_pct": sig.get("expected_daily_move_pct"),
+        }
+
     return {
         "indices": indices,
         "global_cues": cues,
+        "sectors": sectors,
         "calendar": _session_calendar(),
         "note": (
             "GIFT Nifty is unavailable, so US index futures (sp500/nasdaq/dow) "

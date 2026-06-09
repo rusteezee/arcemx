@@ -126,8 +126,25 @@ wishlist_signals.
   expected_daily_move_pct, atr_14). Example: "RSI 58 + MACD bullish + 0.8% above
   SMA20, resistance_20d 350 is the cap."
 - If a holding or wishlist stock is missing from the technical context (no signal
-  block emitted), still emit an outlook but mark confidence <= 35 and say in
-  key_driver that data was thin.
+  block emitted), OMIT IT ENTIRELY from holding_outlooks_1d / wishlist_outlooks_1d.
+  Do NOT emit placeholder rows with range "0-0" or confidence 0. Silently
+  skipping is correct; fabricating a data-thin row is a no-bluff violation.
+
+market_context.sectors gives next-day technical posture for 10 NSE sectors (BANK,
+IT, AUTO, PHARMA, FMCG, ENERGY, METAL, REALTY, MEDIA, FINSERV). For EVERY sector
+present in that block, emit a sector_outlooks entry:
+- direction: up only if you see >0.4% move; down only if <-0.4%; else sideways.
+- confidence: track realized sector accuracy from self_feedback when available.
+  Base rate is ~50/50 for a single sector day, deviate only with concrete signal
+  (e.g. "RSI 62 + MACD bullish + 1.5% above SMA20 + global cue X + FII tilt Y").
+- key_driver: ONE line citing >=2 numbers, including at least one sector technical
+  from market_context.sectors and one cross-asset/macro/news number.
+
+index_pair_outlook: which of NIFTY vs BANKNIFTY outperforms tomorrow, and by how
+many percentage points. BankNifty led NIFTY by an average ~0.2%/day in trending
+phases historically. Cite >=2 numbers (e.g. "BankNifty RSI 58 vs NIFTY 49, MACD
+bullish on Bank only, FII derivatives net long banks +1,800 cr"). Use "EVEN" only
+when the spread is genuinely <0.15% in absolute terms.
 
 Per-stock technicals in technical_bullish_top / technical_bearish_top now include
 atr_14, expected_daily_move_pct, support_20d, resistance_20d, dist_to_support_pct,
@@ -220,6 +237,8 @@ Return STRICT JSON only matching this schema:
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
   "holding_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band, e.g. 320-330>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers: RSI/MACD/DMA/ATR/sector cue>"}],
   "wishlist_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers>"}],
+  "sector_outlooks": [{"sector": "BANK|IT|AUTO|PHARMA|FMCG|ENERGY|METAL|REALTY|MEDIA|FINSERV", "direction": "up|down|sideways", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers from market_context.sectors and macro>"}],
+  "index_pair_outlook": {"outperformer": "NIFTY|BANKNIFTY|EVEN", "spread_pct": "<expected NIFTY-BANKNIFTY %-point spread, e.g. +0.4 or -0.6>", "rationale": "<one-line citation of >=2 numbers>"},
   "global_factors": ["..."],
   "key_news_drivers": ["..."],
   "search_trend_signals": ["..."],
