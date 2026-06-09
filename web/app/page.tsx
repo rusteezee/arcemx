@@ -82,11 +82,11 @@ export default function TodayPage() {
           Today&apos;s read on the <span className="italic">Indian Market</span>.
         </h1>
         <p className="sub-headline max-w-2xl">
-          Gemini synthesises technicals, news flow, search interest, and global cues every weekday at 8:30 AM IST. The sync button refreshes both your INDmoney positions and this call on demand.
+          A free-tier LLM chain (Nemotron 3 Super primary, Ultra backup) synthesises technicals, news flow, search interest, sectors, and global cues every weekday at 8:30 AM IST. The sync button refreshes both your INDmoney positions and this call on demand.
         </p>
       </div>
 
-      <Section num="001 / 005" title="Snapshot" glyph="✦">
+      <Section num="001 / 007" title="Snapshot" glyph="✦">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="card p-5">
             <div className="section-num mb-3">Market Mood</div>
@@ -117,7 +117,7 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="002 / 005" title="Index Outlooks" glyph="◈">
+      <Section num="002 / 007" title="Index Outlooks" glyph="◈">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {[
             { name: "Nifty 50", data: no },
@@ -148,7 +148,11 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="003 / 005" title="Picks" glyph="◉">
+      <Section num="003 / 007" title="Sectors and Index Pair" glyph="◉" description="Per-sector next-day direction with 2+ number reasoning, plus the NIFTY vs BankNifty relative call.">
+        <SectorsIndexPair sectors={raw.sector_outlooks || []} pair={raw.index_pair_outlook} />
+      </Section>
+
+      <Section num="004 / 007" title="Picks" glyph="◉">
         {/*
           items-start lets each table size to its own row count instead
           of stretching to the taller sibling. Short Term with 3 picks
@@ -161,7 +165,7 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="004 / 005" title="Your Portfolio Verdicts" glyph="⬡">
+      <Section num="005 / 007" title="Your Portfolio Verdicts" glyph="⬡">
         {raw.portfolio_verdicts?.length ? (
           <div className="card overflow-hidden">
             <table className="data">
@@ -194,7 +198,14 @@ export default function TodayPage() {
         )}
       </Section>
 
-      <Section num="005 / 005" title="Reasoning" glyph="✦">
+      <Section num="006 / 007" title="Per-Stock 1-Day Calls" glyph="◎" description="Per-holding and per-wishlist next-day direction + ATR-anchored range. The key_driver cites 2+ specific numbers (RSI, MACD, DMA distance, support/resistance).">
+        <StockOutlooks
+          holdings={raw.holding_outlooks_1d || []}
+          wishlist={raw.wishlist_outlooks_1d || []}
+        />
+      </Section>
+
+      <Section num="007 / 007" title="Reasoning" glyph="✦">
         <ReasoningCard summary={raw.reasoning} breakdown={raw.reasoning_breakdown} />
       </Section>
     </>
@@ -212,6 +223,7 @@ function PickTable({ title, rows }: { title: string; rows: any[] }) {
           <thead>
             <tr>
               <th>Ticker</th>
+              <th>Tier</th>
               <th>Entry</th>
               <th>Target</th>
               <th>Stop Loss</th>
@@ -221,9 +233,137 @@ function PickTable({ title, rows }: { title: string; rows: any[] }) {
             {rows.map((r, i) => (
               <tr key={i}>
                 <td className="font-medium">{r.ticker}</td>
+                <td><ConvictionPill tier={r.conviction} /></td>
                 <td className="num">{formatINR(r.entry || r.entry_zone)}</td>
                 <td className="num text-[var(--gain)]">{formatINR(r.target)}</td>
                 <td className="num text-[var(--loss)]">{formatINR(r.stop_loss)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="p-8 text-center text-sm text-[var(--muted)]">None today</div>
+      )}
+    </div>
+  );
+}
+
+function ConvictionPill({ tier }: { tier?: string }) {
+  const t = (tier || "").toUpperCase();
+  // Tier A = highest conviction = positive accent. Tier C = speculative
+  // = warn accent. Tier B = neutral. Unlabelled = grey dot so a missing
+  // tier is visible (it should not happen post-Step-4 prompt).
+  const cls =
+    t === "A" ? "pill-gain" :
+    t === "C" ? "pill-warn" :
+    t === "B" ? "" : "";
+  return (
+    <span className={`pill ${cls}`} style={{ minWidth: 30, justifyContent: "center" }}>
+      {t || "·"}
+    </span>
+  );
+}
+
+function DirPill({ direction }: { direction?: string }) {
+  const d = (direction || "").toLowerCase();
+  const cls = d === "up" ? "pill-gain" : d === "down" ? "pill-loss" : "pill-warn";
+  const glyph = d === "up" ? "↑" : d === "down" ? "↓" : "→";
+  return (
+    <span className={`pill ${cls}`} style={{ minWidth: 76, justifyContent: "center" }}>
+      {glyph} {d || "?"}
+    </span>
+  );
+}
+
+function SectorsIndexPair({ sectors, pair }: { sectors: any[]; pair?: any }) {
+  if (!sectors.length && !pair) {
+    return <EmptyState title="No sector data" hint="Populates from tomorrow's cron." />;
+  }
+  return (
+    <div className="space-y-4">
+      {pair && (
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
+            <div>
+              <div className="section-num mb-1.5">NIFTY vs BankNifty</div>
+              <div className="text-xl font-semibold capitalize">
+                {pair.outperformer || "·"} outperforms
+              </div>
+            </div>
+            {pair.spread_pct !== undefined && (
+              <span className="pill num">spread {pair.spread_pct}%</span>
+            )}
+          </div>
+          {pair.rationale && (
+            <p className="text-sm text-[var(--muted)] leading-relaxed mt-2">{pair.rationale}</p>
+          )}
+        </div>
+      )}
+      {sectors.length > 0 && (
+        <div className="card overflow-hidden">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Sector</th>
+                <th>Direction</th>
+                <th>Confidence</th>
+                <th>Key Driver</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sectors.map((s: any, i: number) => (
+                <tr key={i}>
+                  <td className="font-medium">{s.sector}</td>
+                  <td><DirPill direction={s.direction} /></td>
+                  <td className="num">{s.confidence ?? "·"}</td>
+                  <td className="text-[var(--muted)] max-w-md text-sm">{s.key_driver}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StockOutlooks({ holdings, wishlist }: { holdings: any[]; wishlist: any[] }) {
+  if (!holdings.length && !wishlist.length) {
+    return <EmptyState title="No per-stock outlooks yet" hint="Populates once today's cron has run with the new schema." />;
+  }
+  return (
+    <div className="grid grid-cols-1 gap-4">
+      <StockOutlookTable title="Holdings" rows={holdings} />
+      <StockOutlookTable title="Wishlist" rows={wishlist} />
+    </div>
+  );
+}
+
+function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
+  return (
+    <div className="card overflow-hidden">
+      <div className="p-5 border-b border-border">
+        <div className="section-num mb-1">{title}</div>
+      </div>
+      {rows.length ? (
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Direction</th>
+              <th>Range</th>
+              <th>Confidence</th>
+              <th>Key Driver</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r: any, i: number) => (
+              <tr key={i}>
+                <td className="font-medium">{(r.ticker || "").replace(/\.NS$/, "")}</td>
+                <td><DirPill direction={r.direction} /></td>
+                <td className="num">{r.range || "·"}</td>
+                <td className="num">{r.confidence ?? "·"}</td>
+                <td className="text-[var(--muted)] max-w-md text-sm">{r.key_driver}</td>
               </tr>
             ))}
           </tbody>
