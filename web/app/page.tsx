@@ -147,8 +147,8 @@ export default function TodayPage() {
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <div className="section-num mb-1.5">{name}</div>
-                  <div className="text-xl font-semibold capitalize">
-                    {data.direction || "Unknown"}
+                  <div className="text-xl font-semibold uppercase tracking-wide">
+                    {data.direction || "UNKNOWN"}
                   </div>
                 </div>
                 <span className="pill num">{formatNumber(data.range)}</span>
@@ -168,18 +168,7 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="003 / 007" title="Today's Playground" glyph="◉" description="Three views in one. Top: live leaderboard sorted by today's actual move across NIFTY, Sensex, BankNifty, Midcap 150 and the 10 NSE sectors. Middle: the model's forecast ranking for tomorrow (direction sign x confidence). Bottom: relative pair calls.">
-        <Playground
-          sectors={raw.sector_outlooks || []}
-          nifty={raw.nifty_outlook}
-          sensex={raw.sensex_outlook}
-          confidence={raw.confidence}
-          pair={raw.index_pair_outlook}
-          capPair={raw.cap_pair_outlook}
-        />
-      </Section>
-
-      <Section num="004 / 007" title="Picks" glyph="◉">
+      <Section num="003 / 007" title="Picks" glyph="◉">
         {/*
           items-start lets each table size to its own row count instead
           of stretching to the taller sibling. Short Term with 3 picks
@@ -192,7 +181,7 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="005 / 007" title="Your Portfolio Verdicts" glyph="⬡">
+      <Section num="004 / 007" title="Your Portfolio Verdicts" glyph="⬡">
         {raw.portfolio_verdicts?.length ? (
           <div className="card overflow-hidden">
             <table className="data">
@@ -230,8 +219,19 @@ export default function TodayPage() {
         )}
       </Section>
 
-      <Section num="006 / 007" title="Per-Holding 1-Day Calls" glyph="◎" description="Per-holding next-day direction + ATR-anchored range. The key_driver cites 2+ specific numbers (RSI, MACD, DMA distance, support/resistance). Wishlist 1-day calls live on the Wishlist page.">
+      <Section num="005 / 007" title="Forecast Holdings" glyph="◎" description="Per-holding next-day direction + ATR-anchored range. The key driver cites 2+ specific numbers (RSI, MACD, DMA distance, support/resistance). Wishlist 1-day calls live on the Wishlist page.">
         <StockOutlooks holdings={raw.holding_outlooks_1d || []} />
+      </Section>
+
+      <Section num="006 / 007" title="Playground" glyph="◉" description="Three views in one. LIVE: today's actual move across NIFTY, Sensex, BankNifty, Midcap 150 and the 10 NSE sectors. FORECAST: the model's ranking for tomorrow (direction sign x confidence). PAIR CALLS FORECAST: relative-pair predictions.">
+        <Playground
+          sectors={raw.sector_outlooks || []}
+          nifty={raw.nifty_outlook}
+          sensex={raw.sensex_outlook}
+          confidence={raw.confidence}
+          pair={raw.index_pair_outlook}
+          capPair={raw.cap_pair_outlook}
+        />
       </Section>
 
       <Section num="007 / 007" title="Reasoning" glyph="✦">
@@ -299,8 +299,8 @@ function DirPill({ direction }: { direction?: string }) {
   const cls = d === "up" ? "pill-gain" : d === "down" ? "pill-loss" : "pill-warn";
   const glyph = d === "up" ? "↑" : d === "down" ? "↓" : "→";
   return (
-    <span className={`pill ${cls}`} style={{ minWidth: 76, justifyContent: "center" }}>
-      {glyph} {d || "?"}
+    <span className={`pill ${cls}`} style={{ minWidth: 96, justifyContent: "center" }}>
+      {glyph} {d ? d.toUpperCase() : "?"}
     </span>
   );
 }
@@ -421,7 +421,7 @@ function Playground({
           actually happened before reading what the model expects next. */}
       <div className="card overflow-hidden">
         <div className="p-5 pb-2">
-          <div className="section-num mb-1">Today (Live)</div>
+          <div className="section-num mb-1 tracking-widest">LIVE</div>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
             Actual percent change today across the same universe the model
             forecasts on. Fetched live from yfinance each page load.
@@ -489,7 +489,7 @@ function Playground({
       {items.length > 0 && (
         <div className="card overflow-hidden">
           <div className="p-5 pb-2">
-            <div className="section-num mb-1">Tomorrow (Forecast)</div>
+            <div className="section-num mb-1 tracking-widest">FORECAST</div>
             <p className="text-sm text-[var(--muted)] leading-relaxed">
               Model's ranked board for the next session. Direction sign times
               confidence, with the key driver behind every row.
@@ -564,7 +564,7 @@ function Playground({
       {(pair || capPair) && (
         <div>
           <div className="mb-2 mt-2">
-            <div className="section-num mb-1">Pair Calls (Forecast)</div>
+            <div className="section-num mb-1 tracking-widest">PAIR CALLS FORECAST</div>
             <p className="text-sm text-[var(--muted)] leading-relaxed">
               The model's relative-pair predictions for tomorrow. Read as
               context behind the ranked boards above.

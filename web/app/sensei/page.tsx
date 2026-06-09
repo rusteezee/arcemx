@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 import { Section } from "@/components/Section";
 import { EmptyState } from "@/components/EmptyState";
 import { TriggerButton } from "@/components/TriggerButton";
@@ -50,7 +51,21 @@ export default function SenseiPage() {
 
   if (!loading && !row) {
     return (
-      <main className="mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-24">
+      <motion.main
+        initial={{ opacity: 0, y: 18 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+        className="mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-24"
+      >
+        <div className="mb-12">
+          <div className="section-num mb-2">000 · Sensei</div>
+          <h1 className="headline mb-3">
+            Yesterday's <span className="italic">Verdict.</span>
+          </h1>
+          <p className="sub-headline max-w-2xl">
+            End-of-day synthesis lands here once Sensei runs against today's morning call and the grader's scores.
+          </p>
+        </div>
         <div className="mb-6 flex justify-end">
           <TriggerButton
             endpoint="/api/trigger-sensei"
@@ -63,7 +78,7 @@ export default function SenseiPage() {
           title="No Sensei retrospective yet."
           hint="Sensei runs at 8:00 PM IST Mon-Fri after market close and the grader pass. First row lands after today's session is reviewed."
         />
-      </main>
+      </motion.main>
     );
   }
 
@@ -71,13 +86,18 @@ export default function SenseiPage() {
   const conv = row.conviction_review || {};
 
   return (
-    <main className="mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-24">
+    <motion.main
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+      className="mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-24"
+    >
       <header className="mb-10">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <div className="section-num mb-2">Sensei · EOD Retrospective</div>
-            <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
-              What the analyst learned today
+            <div className="section-num mb-2">000 · Sensei</div>
+            <h1 className="headline mb-3">
+              Yesterday's <span className="italic">Verdict.</span>
             </h1>
             <p className="sub-headline mt-2 max-w-2xl">
               End-of-day synthesis over today's morning call, actual closes, and graded scores.
@@ -95,12 +115,6 @@ export default function SenseiPage() {
           <span>Close date: {row.market_close_date}</span>
           <span>·</span>
           <span>Synthesised: {fmtDate(row.run_at)}</span>
-          {row.model_used && (
-            <>
-              <span>·</span>
-              <span>Model: {row.model_used}</span>
-            </>
-          )}
           {typeof row.insight_quality_avg === "number" && (
             <>
               <span>·</span>
@@ -111,7 +125,7 @@ export default function SenseiPage() {
       </header>
 
       <Section
-        num="001 / 007"
+        num="001 / 006"
         title="Today's Reading"
         glyph="◈"
         description="One-line calibration note on stated confidence vs realized accuracy."
@@ -124,7 +138,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="002 / 007"
+        num="002 / 006"
         title="What Worked"
         glyph="◉"
         description="Calls that scored well. Read the evidence column for the numbers."
@@ -170,7 +184,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="003 / 007"
+        num="003 / 006"
         title="What Missed"
         glyph="◉"
         description="Calls that scored poorly. Root-cause column tags why."
@@ -223,24 +237,20 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="004 / 007"
+        num="004 / 006"
         title="Conviction Tier Review"
         glyph="◉"
         description="Did A / B / C labels track actual performance? Inflated tiers will surface here."
       >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {([
-            { key: "tier_A", label: "A", pill: "pill-gain", accent: "var(--gain)" },
-            { key: "tier_B", label: "B", pill: "pill-mid",  accent: "var(--mid)" },
-            { key: "tier_C", label: "C", pill: "pill-warn", accent: "var(--warn)" },
-          ] as const).map(({ key, label, pill, accent }) => {
+            { key: "tier_A", label: "A", pill: "pill-gain" },
+            { key: "tier_B", label: "B", pill: "pill-mid" },
+            { key: "tier_C", label: "C", pill: "pill-warn" },
+          ] as const).map(({ key, label, pill }) => {
             const t = (conv && (conv as any)[key]) || {};
             return (
-              <div
-                key={key}
-                className="card p-5"
-                style={{ borderTop: `2px solid ${accent}` }}
-              >
+              <div key={key} className="card p-5">
                 <div className="flex items-center justify-between mb-3">
                   <span className={`pill ${pill}`} style={{ minWidth: 50, justifyContent: "center" }}>
                     Tier {label}
@@ -259,7 +269,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="005 / 007"
+        num="005 / 006"
         title="Key Insights"
         glyph="◉"
         description="Actionable reads of today's data. Each cites at least two numbers."
@@ -278,7 +288,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="006 / 007"
+        num="006 / 006"
         title="Tomorrow Watch"
         glyph="⬡"
         description="Specific levels and events to track at next open. Read these before the morning."
@@ -296,18 +306,6 @@ export default function SenseiPage() {
         )}
       </Section>
 
-      <Section
-        num="007 / 007"
-        title="Source"
-        glyph="✦"
-        description="Reference to the morning call this retrospective covers."
-      >
-        <div className="card p-5 text-sm text-[var(--muted)] leading-relaxed">
-          Built from analysis_id {row.analysis_id ?? "·"} ({row.market_close_date}). Model:{" "}
-          {row.model_used || "unknown"}. Reasoning quality (today):{" "}
-          {row.insight_quality_avg ?? "·"}.
-        </div>
-      </Section>
-    </main>
+    </motion.main>
   );
 }

@@ -44,7 +44,7 @@ export default function WishlistPage() {
 
   return (
     <>
-      <div className="mb-12">
+      <div className="mb-8">
         <div className="section-num mb-2">000 · Wishlist</div>
         <h1 className="headline mb-3">
           Stocks you are <span className="italic">Watching.</span>
@@ -55,6 +55,23 @@ export default function WishlistPage() {
           MACD, DMA distance, support, resistance, sector cue).
         </p>
       </div>
+
+      {runAt && (
+        <div className="card p-4 mb-8 inline-flex items-center gap-3 text-sm">
+          <span className="glyph text-base">◈</span>
+          <span className="text-[var(--muted)]">
+            From analysis run at{" "}
+            <span className="text-foreground font-medium num">
+              {new Date(runAt).toLocaleString("en-IN", {
+                timeZone: "Asia/Kolkata",
+                day: "2-digit", month: "2-digit", year: "numeric",
+                hour: "numeric", minute: "2-digit", hour12: true,
+              })}
+            </span>
+            .
+          </span>
+        </div>
+      )}
 
       <div className="mb-14">
         <div className="mb-5">
@@ -111,17 +128,6 @@ export default function WishlistPage() {
             </tbody>
           </table>
         </motion.div>
-        {runAt && (
-          <div className="text-xs text-[var(--muted)] mt-3">
-            From analysis run at{" "}
-            {new Date(runAt).toLocaleString("en-IN", {
-              timeZone: "Asia/Kolkata",
-              day: "2-digit", month: "2-digit", year: "numeric",
-              hour: "numeric", minute: "2-digit", hour12: true,
-            })}
-            .
-          </div>
-        )}
       </div>
     </>
   );
@@ -132,8 +138,8 @@ function DirPill({ direction }: { direction?: string }) {
   const cls = d === "up" ? "pill-gain" : d === "down" ? "pill-loss" : "pill-warn";
   const glyph = d === "up" ? "↑" : d === "down" ? "↓" : "→";
   return (
-    <span className={`pill ${cls}`} style={{ minWidth: 76, justifyContent: "center" }}>
-      {glyph} {d || "?"}
+    <span className={`pill ${cls}`} style={{ minWidth: 96, justifyContent: "center" }}>
+      {glyph} {d ? d.toUpperCase() : "?"}
     </span>
   );
 }

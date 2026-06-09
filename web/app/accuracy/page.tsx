@@ -297,7 +297,6 @@ export default function AccuracyPage() {
             label="Direction accuracy"
             value={dirAcc == null ? "·" : `${dirAcc.toFixed(1)}%`}
             delta={dirEdgeLabel}
-            deltaPositive={dirEdgePositive}
             glyph="◎"
           />
           <Stat
@@ -331,7 +330,6 @@ export default function AccuracyPage() {
                   ? "stated > delivered"
                   : "stated < delivered"
               }
-              deltaPositive={Math.abs(calibration.gap) <= 8 ? true : calibration.gap > 0 ? false : undefined}
               glyph="⬡"
             />
           </div>
@@ -400,10 +398,8 @@ export default function AccuracyPage() {
                         return <td key={w} className="text-[var(--muted)]">·</td>;
                       }
                       const acc = s.accuracy_pct || 0;
-                      const color =
-                        acc >= 65 ? "var(--gain)" : acc >= 50 ? "var(--warn)" : "var(--loss)";
                       return (
-                        <td key={w} className="num font-medium" style={{ color }}>
+                        <td key={w} className="num font-medium">
                           {acc.toFixed(1)}%{" "}
                           <span className="text-[var(--muted)] font-normal text-xs">
                             ({s.sample_size})
@@ -542,16 +538,8 @@ export default function AccuracyPage() {
             // performance-colored (acc>=65 gain, >=50 warn, <50 loss) so a
             // green A-tier with a red number visibly flags "we labeled
             // these high conviction but they did not deliver".
-            const accColor =
-              acc == null ? "var(--muted)" : acc >= 65 ? "var(--gain)" : acc >= 50 ? "var(--warn)" : "var(--loss)";
-            const accent =
-              tier === "A" ? "var(--gain)" : tier === "C" ? "var(--warn)" : "var(--mid)";
             return (
-              <div
-                key={tier}
-                className="card p-5"
-                style={{ borderTop: `2px solid ${accent}` }}
-              >
+              <div key={tier} className="card p-5">
                 <div className="flex items-center justify-between mb-3">
                   <span className={`pill ${pill}`} style={{ minWidth: 50, justifyContent: "center" }}>
                     Tier {tier}
@@ -561,7 +549,7 @@ export default function AccuracyPage() {
                   </span>
                 </div>
                 <div className="section-num mb-1">7d alpha</div>
-                <div className="text-3xl font-semibold" style={{ color: accColor }}>
+                <div className="text-3xl font-semibold">
                   {acc == null ? "·" : `${acc.toFixed(1)}%`}
                 </div>
                 <p className="text-sm text-[var(--muted)] leading-relaxed mt-3">{gloss}</p>
@@ -579,29 +567,11 @@ export default function AccuracyPage() {
       >
         <div className="space-y-4">
           {/* 1. Where we stand right now */}
-          <div
-            className="card p-5"
-            style={{
-              borderLeft: lowConfidence
-                ? "3px solid color-mix(in srgb, var(--warn) 60%, transparent)"
-                : "3px solid color-mix(in srgb, var(--gain) 60%, transparent)",
-            }}
-          >
+          <div className="card p-5">
             <div className="section-num mb-2">Current Sample Size</div>
-            <div className="text-2xl font-semibold mb-2">
-              {maxSamples} scored sessions
-              <span
-                className="ml-3 pill"
-                style={{
-                  color: lowConfidence ? "var(--warn)" : "var(--gain)",
-                  borderColor: lowConfidence
-                    ? "color-mix(in srgb, var(--warn) 35%, transparent)"
-                    : "color-mix(in srgb, var(--gain) 35%, transparent)",
-                  background: lowConfidence
-                    ? "color-mix(in srgb, var(--warn) 8%, transparent)"
-                    : "color-mix(in srgb, var(--gain) 8%, transparent)",
-                }}
-              >
+            <div className="text-2xl font-semibold mb-2 flex items-center gap-3 flex-wrap">
+              <span>{maxSamples} scored sessions</span>
+              <span className="pill">
                 {lowConfidence ? "Low confidence" : "Sufficient confidence"}
               </span>
             </div>
@@ -817,12 +787,12 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
   // width %, Y = score (0 or 100 for interval grader). Quadrant guides at
   // x=1% (tight/wide split) and y=50 (hit/miss split) frame the useful
   // top-left quadrant.
-  const H = 280;
+  const H = 320;
   const W = 720;
-  const padL = 44;
-  const padR = 16;
-  const padT = 16;
-  const padB = 30;
+  const padL = 64;
+  const padR = 24;
+  const padT = 20;
+  const padB = 60;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
@@ -830,6 +800,14 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
   const xScale = (x: number) => padL + (Math.min(x, maxX) / maxX) * innerW;
   // y range 0-100; invert because SVG y grows downward
   const yScale = (y: number) => padT + innerH - (y / 100) * innerH;
+
+  // Build a non-overlapping x tick set. Skip 0 if the first interior tick
+  // would land within 24px of the y-axis labels.
+  const midTick = Math.round(maxX * 0.5 * 10) / 10;
+  const lastTick = Math.round(maxX * 10) / 10;
+  const xTicks = [0, midTick, lastTick].filter(
+    (v, i, arr) => arr.indexOf(v) === i,
+  );
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet">
@@ -858,17 +836,18 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
       {/* y ticks 0/50/100 */}
       {[0, 50, 100].map((t) => (
         <g key={t}>
-          <text x={padL - 8} y={yScale(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted)">
+          <text x={padL - 12} y={yScale(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted)">
             {t}
           </text>
         </g>
       ))}
-      {/* x ticks */}
-      {[0, Math.round(maxX * 0.5 * 10) / 10, Math.round(maxX * 10) / 10].map((t, i) => (
+      {/* x ticks. Push labels further below the axis to clear the axis-line
+          and leave room for the axis caption below. */}
+      {xTicks.map((t, i) => (
         <text
           key={i}
           x={xScale(t)}
-          y={padT + innerH + 18}
+          y={padT + innerH + 22}
           textAnchor="middle"
           fontSize="11"
           fill="var(--muted)"
@@ -876,16 +855,19 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
           {t}%
         </text>
       ))}
-      <text x={padL + innerW / 2} y={H - 4} textAnchor="middle" fontSize="11" fill="var(--muted)">
+      {/* x-axis caption sits well clear of the tick labels. */}
+      <text x={padL + innerW / 2} y={H - 12} textAnchor="middle" fontSize="11" fill="var(--muted)">
         Band width (% of midpoint)
       </text>
+      {/* y-axis caption. Anchor at the vertical middle of the plot, x sits
+          left of the tick numbers so the rotated text does not collide. */}
       <text
-        x={-padT - innerH / 2}
-        y={14}
+        x={18}
+        y={padT + innerH / 2}
         textAnchor="middle"
         fontSize="11"
         fill="var(--muted)"
-        transform="rotate(-90)"
+        transform={`rotate(-90 18 ${padT + innerH / 2})`}
       >
         Score
       </text>
