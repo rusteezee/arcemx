@@ -255,13 +255,14 @@ function PickTable({ title, rows }: { title: string; rows: any[] }) {
 
 function ConvictionPill({ tier }: { tier?: string }) {
   const t = (tier || "").toUpperCase();
-  // Tier A = highest conviction = positive accent. Tier C = speculative
-  // = warn accent. Tier B = neutral. Unlabelled = grey dot so a missing
-  // tier is visible (it should not happen post-Step-4 prompt).
+  // Tier A = highest conviction, green. Tier B = solid setup, lime/mid
+  // (sits between gain and warn). Tier C = speculative, amber.
+  // Unlabelled = grey dot so a missing tier is visible (it should not
+  // happen post-Step-4 prompt).
   const cls =
     t === "A" ? "pill-gain" :
-    t === "C" ? "pill-warn" :
-    t === "B" ? "" : "";
+    t === "B" ? "pill-mid" :
+    t === "C" ? "pill-warn" : "";
   return (
     <span className={`pill ${cls}`} style={{ minWidth: 30, justifyContent: "center" }}>
       {t || "·"}

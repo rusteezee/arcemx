@@ -231,7 +231,7 @@ export default function SenseiPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {([
             { key: "tier_A", label: "A", pill: "pill-gain", accent: "var(--gain)" },
-            { key: "tier_B", label: "B", pill: "", accent: "var(--border)" },
+            { key: "tier_B", label: "B", pill: "pill-mid",  accent: "var(--mid)" },
             { key: "tier_C", label: "C", pill: "pill-warn", accent: "var(--warn)" },
           ] as const).map(({ key, label, pill, accent }) => {
             const t = (conv && (conv as any)[key]) || {};

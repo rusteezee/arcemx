@@ -10,6 +10,10 @@
   --gain: #15803d;
   --loss: #b91c1c;
   --warn: #a16207;
+  /* --mid sits between gain (green) and warn (amber). Used for Conviction
+     Tier B and any other "neutral-positive" badge — lime-600 / lime-400
+     keeps the same lightness as the gain/warn pair in each theme. */
+  --mid: #65a30d;
   --card: #ffffff;
 }
 
@@ -23,6 +27,7 @@
   --gain: #4ade80;
   --loss: #f87171;
   --warn: #facc15;
+  --mid: #a3e635;
   --card: #111111;
 }
 
@@ -36,6 +41,7 @@
   --color-gain: var(--gain);
   --color-loss: var(--loss);
   --color-warn: var(--warn);
+  --color-mid: var(--mid);
   --color-card: var(--card);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -52,6 +58,7 @@
     --gain: #4ade80;
     --loss: #f87171;
     --warn: #facc15;
+    --mid: #a3e635;
     --card: #111111;
   }
 }
@@ -134,6 +141,7 @@ body {
 .pill-gain { color: var(--gain); border-color: color-mix(in srgb, var(--gain) 35%, transparent); background: color-mix(in srgb, var(--gain) 8%, transparent); }
 .pill-loss { color: var(--loss); border-color: color-mix(in srgb, var(--loss) 35%, transparent); background: color-mix(in srgb, var(--loss) 8%, transparent); }
 .pill-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.pill-mid  { color: var(--mid);  border-color: color-mix(in srgb, var(--mid)  35%, transparent); background: color-mix(in srgb, var(--mid)  8%, transparent); }
 
 .headline {
   font-size: clamp(2rem, 4vw, 3rem);

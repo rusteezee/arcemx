@@ -551,7 +551,7 @@ export default function AccuracyPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {([
             { tier: "A", dim: "short_pick_A_7d" as const, gloss: "Highest conviction. All three pillars aligned (technicals + news + sector). Capped at 0-2 per day.", pill: "pill-gain" },
-            { tier: "B", dim: "short_pick_B_7d" as const, gloss: "Solid setup. Two of three pillars aligned. Bulk of picks.", pill: "" },
+            { tier: "B", dim: "short_pick_B_7d" as const, gloss: "Solid setup. Two of three pillars aligned. Bulk of picks.", pill: "pill-mid" },
             { tier: "C", dim: "short_pick_C_7d" as const, gloss: "Speculative / asymmetric. One pillar strong, signal incomplete. Sparingly.", pill: "pill-warn" },
           ]).map(({ tier, dim, gloss, pill }) => {
             const row = summary.find((s) => s.window_days === 30 && s.dimension === dim);
@@ -566,7 +566,7 @@ export default function AccuracyPage() {
             const accColor =
               acc == null ? "var(--muted)" : acc >= 65 ? "var(--gain)" : acc >= 50 ? "var(--warn)" : "var(--loss)";
             const accent =
-              tier === "A" ? "var(--gain)" : tier === "C" ? "var(--warn)" : "var(--border)";
+              tier === "A" ? "var(--gain)" : tier === "C" ? "var(--warn)" : "var(--mid)";
             return (
               <div
                 key={tier}
