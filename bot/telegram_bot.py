@@ -483,6 +483,109 @@ async def _start_health_server(port: int):
                 )
                 writer.write(resp); await writer.drain(); return
 
+            # /trigger/sensei + /trigger/grader: dashboard-driven manual
+            # runs so the user does not have to click through GitHub Actions.
+            # Same X-Trigger-Token auth as /trigger/sync. Each dispatches the
+            # underlying job in the asyncio background and returns "queued"
+            # immediately so the dashboard fetch does not block on a 7-12
+            # minute LLM call or a 30-90 second grader sweep.
+            if method == "POST" and (
+                path.startswith("/trigger/sensei")
+                or path.startswith("/trigger/grader")
+            ):
+                token = headers.get("x-trigger-token", "")
+                if not trigger_secret or token != trigger_secret:
+                    msg = b'{"error":"unauthorized"}'
+                    resp = (
+                        b"HTTP/1.1 401 Unauthorized\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: " + str(len(msg)).encode() + b"\r\n"
+                        b"Connection: close\r\n\r\n" + msg
+                    )
+                    writer.write(resp); await writer.drain(); return
+
+                import json as _json
+                try:
+                    payload = _json.loads(body_bytes or b"{}")
+                except Exception:
+                    payload = {}
+
+                if path.startswith("/trigger/sensei"):
+                    aid = payload.get("analysis_id")
+                    try:
+                        aid_int = int(aid) if aid is not None else None
+                    except (TypeError, ValueError):
+                        aid_int = None
+                    try:
+                        from analyzer.sensei import run as run_sensei
+                        import asyncio as _asyncio
+
+                        async def _bg_sensei():
+                            try:
+                                print(f"Background Sensei starting (analysis_id={aid_int})...")
+                                loop = _asyncio.get_event_loop()
+                                await loop.run_in_executor(None, lambda: run_sensei(aid_int))
+                                print("Background Sensei complete")
+                            except Exception as bgerr:
+                                import traceback
+                                print(f"Background Sensei failed: {bgerr}")
+                                traceback.print_exc()
+
+                        task = _asyncio.create_task(_bg_sensei())
+                        _BG_TASKS.add(task)
+                        task.add_done_callback(_BG_TASKS.discard)
+                        out = _json.dumps({
+                            "ok": True, "job": "sensei", "status": "queued",
+                            "analysis_id": aid_int,
+                        }).encode()
+                        status_line = b"HTTP/1.1 202 Accepted\r\n"
+                    except Exception as e:
+                        out = _json.dumps({"ok": False, "job": "sensei", "error": str(e)}).encode()
+                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+                else:  # /trigger/grader
+                    lookback = payload.get("lookback_days", 90)
+                    try:
+                        lookback_int = int(lookback)
+                    except (TypeError, ValueError):
+                        lookback_int = 90
+                    try:
+                        from analyzer.grader import grade_all, compute_summaries
+                        import asyncio as _asyncio
+
+                        async def _bg_grader():
+                            try:
+                                print(f"Background grader starting (lookback={lookback_int}d)...")
+                                loop = _asyncio.get_event_loop()
+                                await loop.run_in_executor(
+                                    None, lambda: grade_all(lookback_days=lookback_int))
+                                await loop.run_in_executor(None, compute_summaries)
+                                print("Background grader complete")
+                            except Exception as bgerr:
+                                import traceback
+                                print(f"Background grader failed: {bgerr}")
+                                traceback.print_exc()
+
+                        task = _asyncio.create_task(_bg_grader())
+                        _BG_TASKS.add(task)
+                        task.add_done_callback(_BG_TASKS.discard)
+                        out = _json.dumps({
+                            "ok": True, "job": "grader", "status": "queued",
+                            "lookback_days": lookback_int,
+                        }).encode()
+                        status_line = b"HTTP/1.1 202 Accepted\r\n"
+                    except Exception as e:
+                        out = _json.dumps({"ok": False, "job": "grader", "error": str(e)}).encode()
+                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+
+                resp = (
+                    status_line +
+                    b"Content-Type: application/json\r\n"
+                    b"Access-Control-Allow-Origin: *\r\n"
+                    b"Content-Length: " + str(len(out)).encode() + b"\r\n"
+                    b"Connection: close\r\n\r\n" + out
+                )
+                writer.write(resp); await writer.drain(); return
+
             # default health response
             body = b"OK"
             resp = (
