@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   CAPS,
   SECTORS,
@@ -16,6 +16,18 @@ import {
   type Pick,
 } from "@/lib/calculator";
 import { formatMoney } from "@/lib/utils";
+import { sb } from "@/lib/supabase";
+
+interface LlmEnrichment {
+  thesis?: string;
+  per_pick?: Array<{ ticker: string; rationale: string }>;
+  extra_risks?: string[];
+  rebalance_triggers?: string[];
+  exit_signals?: string[];
+  backup_notes?: Array<{ ticker: string; when_to_swap: string }>;
+}
+
+type LlmStatus = "idle" | "queued" | "polling" | "ok" | "failed";
 
 type HorizonUnit = "days" | "weeks" | "months" | "years";
 
@@ -78,6 +90,101 @@ export function Calculator() {
   const onReset = () => {
     setResult(null);
     setErr(null);
+  };
+
+  // LLM enrichment state lives at the parent so a Reset clears it too.
+  const [llmStatus, setLlmStatus] = useState<LlmStatus>("idle");
+  const [llmEnrichment, setLlmEnrichment] = useState<LlmEnrichment | null>(null);
+  const [llmError, setLlmError] = useState<string | null>(null);
+  const [llmRunId, setLlmRunId] = useState<number | null>(null);
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Stop polling when component unmounts or a new run starts.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  const askSensei = async () => {
+    if (!result || llmStatus === "queued" || llmStatus === "polling") return;
+    if (pollRef.current) clearInterval(pollRef.current);
+    setLlmStatus("queued");
+    setLlmError(null);
+    setLlmEnrichment(null);
+    try {
+      const inputPayload = {
+        amount,
+        horizonDays,
+        risk,
+        sectors,
+        caps,
+      };
+      const r = await fetch("/api/calc-explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: inputPayload, deterministic: result }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data?.ok || typeof data.run_id !== "number") {
+        setLlmStatus("failed");
+        setLlmError(data?.error || `bot returned ${r.status}`);
+        return;
+      }
+      setLlmRunId(data.run_id);
+      setLlmStatus("polling");
+      pollEnrichment(data.run_id);
+    } catch (e: any) {
+      setLlmStatus("failed");
+      setLlmError(e?.message || "network error");
+    }
+  };
+
+  // Poll the calculator_runs row every 4s until status flips from 'pending'.
+  // Free-tier LLM calls take 30s-12min, so we cap polls at 25 minutes.
+  const pollEnrichment = (runId: number) => {
+    const start = Date.now();
+    const MAX_MS = 25 * 60_000;
+    const fetchOnce = async () => {
+      try {
+        const { data, error } = await sb
+          .from("calculator_runs")
+          .select("status,llm_json,error")
+          .eq("id", runId)
+          .limit(1);
+        if (error) throw error;
+        const row = (data || [])[0];
+        if (!row) return;
+        if (row.status === "ok") {
+          setLlmEnrichment((row.llm_json || {}) as LlmEnrichment);
+          setLlmStatus("ok");
+          if (pollRef.current) clearInterval(pollRef.current);
+        } else if (row.status === "failed") {
+          setLlmStatus("failed");
+          setLlmError(row.error || "LLM call failed");
+          if (pollRef.current) clearInterval(pollRef.current);
+        } else if (Date.now() - start > MAX_MS) {
+          setLlmStatus("failed");
+          setLlmError("LLM call timed out after 25 minutes");
+          if (pollRef.current) clearInterval(pollRef.current);
+        }
+      } catch (e: any) {
+        // Transient supabase miss; keep polling.
+        console.warn("Calc poll error:", e?.message || e);
+      }
+    };
+    fetchOnce();
+    pollRef.current = setInterval(fetchOnce, 4000);
+  };
+
+  // Wrapper around onReset that also clears LLM state.
+  const onResetAll = () => {
+    onReset();
+    if (pollRef.current) clearInterval(pollRef.current);
+    setLlmStatus("idle");
+    setLlmEnrichment(null);
+    setLlmError(null);
+    setLlmRunId(null);
   };
 
   return (
@@ -250,7 +357,7 @@ export function Calculator() {
           {result && (
             <button
               type="button"
-              onClick={onReset}
+              onClick={onResetAll}
               className="px-4 py-2 text-sm rounded-full border border-border hover:bg-[var(--muted-bg)] transition-colors"
             >
               Reset
@@ -263,13 +370,51 @@ export function Calculator() {
       </div>
 
       {/* Result */}
-      {result && <CalcOutput result={result} />}
+      {result && (
+        <CalcOutput
+          result={result}
+          enrichment={llmEnrichment}
+          llmStatus={llmStatus}
+          llmError={llmError}
+          llmRunId={llmRunId}
+          onAskSensei={askSensei}
+        />
+      )}
     </div>
   );
 }
 
-function CalcOutput({ result }: { result: CalcResult }) {
+function CalcOutput({
+  result,
+  enrichment,
+  llmStatus,
+  llmError,
+  llmRunId,
+  onAskSensei,
+}: {
+  result: CalcResult;
+  enrichment: LlmEnrichment | null;
+  llmStatus: LlmStatus;
+  llmError: string | null;
+  llmRunId: number | null;
+  onAskSensei: () => void;
+}) {
   const { picks, backups, risks, totals, notes } = result;
+  // Index per-pick rationale by ticker for table merge.
+  const rationaleByTicker = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const p of enrichment?.per_pick || []) {
+      if (p.ticker) m[p.ticker] = p.rationale;
+    }
+    return m;
+  }, [enrichment]);
+  const backupNoteByTicker = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const b of enrichment?.backup_notes || []) {
+      if (b.ticker) m[b.ticker] = b.when_to_swap;
+    }
+    return m;
+  }, [enrichment]);
 
   if (!picks.length) {
     return (
@@ -320,6 +465,68 @@ function CalcOutput({ result }: { result: CalcResult }) {
           </div>
         </div>
       </div>
+
+      {/* Ask Sensei: triggers the LLM enrichment pass and polls the
+          calculator_runs row by id. Result merges into picks (per-pick
+          rationale) and renders extra sections below. */}
+      <div className="card p-5">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex-1 min-w-[16rem]">
+            <div className="section-num mb-1">Sensei's Layer</div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              Ask Sensei to wrap macro and sector context around every pick. The
+              LLM call writes a per-stock rationale, rebalance triggers, exit
+              signals, and risk insights beyond the mechanical flags. Result
+              streams in below; free-tier calls land in 3-12 minutes.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onAskSensei}
+            disabled={llmStatus === "queued" || llmStatus === "polling"}
+            className="px-5 py-2 text-sm font-medium rounded-full border border-foreground bg-foreground text-background hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            {llmStatus === "queued" && "Queueing"}
+            {llmStatus === "polling" && "Sensei thinking"}
+            {llmStatus === "ok" && "Re-run Sensei"}
+            {llmStatus === "failed" && "Retry"}
+            {llmStatus === "idle" && "Ask Sensei"}
+          </button>
+        </div>
+        <AnimatePresence initial={false}>
+          {(llmStatus === "polling" || llmStatus === "queued") && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mt-3 flex items-center gap-2 text-sm text-[var(--muted)]"
+            >
+              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+              <span>
+                Polling calculator_runs id {llmRunId ?? "·"}. This page can
+                stay open; the row updates when the LLM returns.
+              </span>
+            </motion.div>
+          )}
+          {llmStatus === "failed" && llmError && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mt-3 text-sm text-[var(--loss)]"
+            >
+              {llmError}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {enrichment?.thesis && (
+        <div className="card p-5">
+          <div className="section-num mb-2">Sensei's Thesis</div>
+          <p className="text-base leading-relaxed">{enrichment.thesis}</p>
+        </div>
+      )}
 
       {/* Allocation bars */}
       <div className="card overflow-hidden">
@@ -399,7 +606,11 @@ function CalcOutput({ result }: { result: CalcResult }) {
           </thead>
           <tbody>
             {picks.map((p) => (
-              <PickRow key={p.ticker} p={p} />
+              <PickRow
+                key={p.ticker}
+                p={p}
+                llmRationale={rationaleByTicker[p.ticker]}
+              />
             ))}
           </tbody>
         </table>
@@ -431,13 +642,26 @@ function CalcOutput({ result }: { result: CalcResult }) {
       {backups.length > 0 && (
         <div className="card p-5">
           <div className="section-num mb-3">Backups (next in queue)</div>
-          <ul className="space-y-2 text-sm">
-            {backups.map((b) => (
-              <li key={b.ticker} className="flex items-baseline gap-3">
-                <span className="font-medium">{b.ticker.replace(/\.NS$/, "")}</span>
-                <span className="text-[var(--muted)] text-xs">{b.reasoning}</span>
-              </li>
-            ))}
+          <ul className="space-y-3 text-sm">
+            {backups.map((b) => {
+              const swap = backupNoteByTicker[b.ticker];
+              return (
+                <li key={b.ticker}>
+                  <div className="flex items-baseline gap-3 flex-wrap">
+                    <span className="font-medium">{b.ticker.replace(/\.NS$/, "")}</span>
+                    <span className="text-[var(--muted)] text-xs">{b.reasoning}</span>
+                  </div>
+                  {swap && (
+                    <div className="mt-1 pl-3 border-l border-border text-sm">
+                      <span className="text-[var(--muted)] text-[0.7rem] uppercase tracking-wider mr-2">
+                        Sensei
+                      </span>
+                      {swap}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -448,6 +672,39 @@ function CalcOutput({ result }: { result: CalcResult }) {
           <div className="section-num mb-3">Risk Flags</div>
           <ul className="list-disc pl-5 space-y-2 text-sm leading-relaxed">
             {risks.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {enrichment?.extra_risks && enrichment.extra_risks.length > 0 && (
+        <div className="card p-5">
+          <div className="section-num mb-3">Sensei's Risk Insights</div>
+          <ul className="list-disc pl-5 space-y-2 text-sm leading-relaxed">
+            {enrichment.extra_risks.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {enrichment?.rebalance_triggers && enrichment.rebalance_triggers.length > 0 && (
+        <div className="card p-5">
+          <div className="section-num mb-3">Rebalance Triggers</div>
+          <ul className="list-disc pl-5 space-y-2 text-sm leading-relaxed">
+            {enrichment.rebalance_triggers.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {enrichment?.exit_signals && enrichment.exit_signals.length > 0 && (
+        <div className="card p-5">
+          <div className="section-num mb-3">Exit Signals</div>
+          <ul className="list-disc pl-5 space-y-2 text-sm leading-relaxed">
+            {enrichment.exit_signals.map((r, i) => (
               <li key={i}>{r}</li>
             ))}
           </ul>
@@ -471,7 +728,7 @@ function CalcOutput({ result }: { result: CalcResult }) {
   );
 }
 
-function PickRow({ p }: { p: Pick }) {
+function PickRow({ p, llmRationale }: { p: Pick; llmRationale?: string }) {
   return (
     <tr className="align-top">
       <td className="font-medium align-top" title={p.name}>
@@ -493,7 +750,18 @@ function PickRow({ p }: { p: Pick }) {
         className="text-[var(--muted)] text-sm align-top"
         style={{ whiteSpace: "normal", wordBreak: "break-word" }}
       >
-        {p.reasoning}
+        <div>{p.reasoning}</div>
+        {llmRationale && (
+          <div
+            className="mt-2 pt-2 border-t border-border text-foreground"
+            style={{ fontSize: "0.85rem" }}
+          >
+            <span className="text-[var(--muted)] text-[0.7rem] uppercase tracking-wider mr-2">
+              Sensei
+            </span>
+            {llmRationale}
+          </div>
+        )}
       </td>
     </tr>
   );

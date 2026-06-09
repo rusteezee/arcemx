@@ -104,3 +104,20 @@ create table if not exists sensei_eod (
     insight_quality_avg numeric
 );
 create index if not exists idx_sensei_eod_date on sensei_eod(market_close_date desc);
+
+-- Calculator runs: persist deterministic prefilter output + the LLM
+-- enrichment that wraps macro / news / catalyst rationale around each
+-- pick. The bot inserts a row with status='pending' on /trigger/calc-explain
+-- and updates it to 'ok' or 'failed' once the LLM call completes.
+-- Frontend polls by id until status != 'pending'.
+create table if not exists calculator_runs (
+    id bigserial primary key,
+    run_at timestamptz default now(),
+    input_json jsonb not null,
+    deterministic_json jsonb not null,
+    llm_json jsonb,
+    model_used text,
+    status text not null default 'pending',
+    error text
+);
+create index if not exists idx_calculator_runs_status on calculator_runs(status, run_at desc);
