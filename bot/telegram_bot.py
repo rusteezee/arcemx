@@ -672,6 +672,64 @@ async def _start_health_server(port: int):
                 )
                 writer.write(resp); await writer.drain(); return
 
+            # /trigger/analysis: run JUST the LLM analysis pipeline. The
+            # /trigger/sync endpoint above already does INDmoney refresh
+            # + analysis bundled; this one is the cheap counterpart for
+            # the "analysis is stale" case where the user does not need
+            # to re-pull positions. Returns 202 + queued immediately so
+            # the dashboard does not block on the 7-12 minute LLM call.
+            if method == "POST" and path.startswith("/trigger/analysis"):
+                token = headers.get("x-trigger-token", "")
+                if not trigger_secret or token != trigger_secret:
+                    msg = b'{"error":"unauthorized"}'
+                    resp = (
+                        b"HTTP/1.1 401 Unauthorized\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: " + str(len(msg)).encode() + b"\r\n"
+                        b"Connection: close\r\n\r\n" + msg
+                    )
+                    writer.write(resp); await writer.drain(); return
+
+                import json as _json
+                try:
+                    from analyzer.aggregator import run as run_analysis
+                    from analyzer.llm_router import LITE_MODEL as _LITE
+                    import asyncio as _asyncio
+
+                    async def _bg_analysis_solo():
+                        try:
+                            print("Background analysis (solo) starting...")
+                            loop = _asyncio.get_event_loop()
+                            await loop.run_in_executor(
+                                None, lambda: run_analysis(model_name=_LITE))
+                            print("Background analysis (solo) complete")
+                        except Exception as bgerr:
+                            import traceback
+                            print(f"Background analysis (solo) failed: {bgerr}")
+                            traceback.print_exc()
+
+                    task = _asyncio.create_task(_bg_analysis_solo())
+                    _BG_TASKS.add(task)
+                    task.add_done_callback(_BG_TASKS.discard)
+                    out = _json.dumps({
+                        "ok": True, "job": "analysis", "status": "queued",
+                    }).encode()
+                    status_line = b"HTTP/1.1 202 Accepted\r\n"
+                except Exception as e:
+                    out = _json.dumps({
+                        "ok": False, "job": "analysis", "error": str(e),
+                    }).encode()
+                    status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+
+                resp = (
+                    status_line +
+                    b"Content-Type: application/json\r\n"
+                    b"Access-Control-Allow-Origin: *\r\n"
+                    b"Content-Length: " + str(len(out)).encode() + b"\r\n"
+                    b"Connection: close\r\n\r\n" + out
+                )
+                writer.write(resp); await writer.drain(); return
+
             # /trigger/portfolio-score: enrich a deterministic Portfolio
             # Scorecard run with LLM takes. Body shape:
             #   { deterministic: {...} }

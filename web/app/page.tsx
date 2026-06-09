@@ -116,7 +116,7 @@ export default function TodayPage() {
           <div className="card p-5">
             <div className="flex items-center justify-between mb-2">
               <div className="section-num">Last Update</div>
-              <span className="glyph text-sm">◈</span>
+              <RunAnalysisButton />
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <div className="text-2xl font-semibold tracking-tight num">{runDateStr}</div>
@@ -238,6 +238,102 @@ export default function TodayPage() {
         <ReasoningCard summary={raw.reasoning} breakdown={raw.reasoning_breakdown} />
       </Section>
     </>
+  );
+}
+
+function RunAnalysisButton() {
+  // Inline trigger button living inside the Last Update card. Hits
+  // /api/trigger-analysis which kicks the LLM pipeline asynchronously
+  // on the bot. INDmoney sync stays on the nav button; this fires only
+  // the analysis pass so the user does not pay a 7-12 minute wait when
+  // they just want refreshed positions.
+  // States: idle -> loading -> ok | error -> idle (auto-reset).
+  const [state, setState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const run = async () => {
+    if (state === "loading") return;
+    setState("loading");
+    setMsg("Queueing");
+    try {
+      const r = await fetch("/api/trigger-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data?.ok) {
+        setState("ok");
+        setMsg("Queued");
+      } else {
+        setState("error");
+        setMsg(data?.error || "Error");
+      }
+    } catch {
+      setState("error");
+      setMsg("Error");
+    } finally {
+      setTimeout(() => {
+        setState("idle");
+        setMsg(null);
+      }, 4000);
+    }
+  };
+
+  const borderColor =
+    state === "ok"
+      ? "color-mix(in srgb, var(--gain) 60%, transparent)"
+      : state === "error"
+      ? "color-mix(in srgb, var(--loss) 60%, transparent)"
+      : "var(--border)";
+  const bg =
+    state === "ok"
+      ? "color-mix(in srgb, var(--gain) 14%, transparent)"
+      : state === "error"
+      ? "color-mix(in srgb, var(--loss) 14%, transparent)"
+      : "transparent";
+  const fg =
+    state === "ok" ? "var(--gain)" : state === "error" ? "var(--loss)" : "var(--foreground)";
+
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={state === "loading"}
+      title={msg || "Run analysis (LLM call, 3-12 min). INDmoney sync lives on the nav."}
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-[5px] text-[0.7rem] font-medium transition-all duration-300 disabled:cursor-not-allowed"
+      style={{
+        border: `1px solid ${borderColor}`,
+        background: bg,
+        color: fg,
+      }}
+    >
+      <span
+        aria-hidden
+        className={`shrink-0 inline-block bg-current ${state === "loading" ? "animate-spin" : ""}`}
+        style={{
+          width: 14,
+          height: 14,
+          WebkitMaskImage: "url(/icons/analysis.svg)",
+          maskImage: "url(/icons/analysis.svg)",
+          WebkitMaskRepeat: "no-repeat",
+          maskRepeat: "no-repeat",
+          WebkitMaskSize: "contain",
+          maskSize: "contain",
+          WebkitMaskPosition: "center",
+          maskPosition: "center",
+        }}
+      />
+      <span className="tracking-wide whitespace-nowrap">
+        {state === "loading"
+          ? msg || "Queueing"
+          : state === "ok"
+          ? msg || "Queued"
+          : state === "error"
+          ? msg || "Error"
+          : "Run Analysis"}
+      </span>
+    </button>
   );
 }
 
