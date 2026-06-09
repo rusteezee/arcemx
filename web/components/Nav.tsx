@@ -15,7 +15,6 @@ const items = [
   { href: "/wishlist", label: "Wishlist" },
   { href: "/sensei", label: "Sensei" },
   { href: "/accuracy", label: "Accuracy" },
-  { href: "/history", label: "History" },
 ];
 
 function timeAgo(iso: string | null): string {
