@@ -396,12 +396,21 @@ def grade_all(lookback_days: int = 90):
                                       vsc, round(ratio - 1, 3))
 
             # ----- Short-term picks (7d, 14d, 30d) -----
+            # Scored as avg alpha vs NIFTY over the horizon. The aggregate
+            # short_pick_{h}d dim stays so historical scores remain
+            # comparable. Stratified-by-conviction dims short_pick_A_7d,
+            # short_pick_B_7d, short_pick_C_7d expose whether the A/B/C
+            # tiering is real signal: if A picks consistently out-alpha
+            # C picks the model knows what it knows; if A/B/C track
+            # together the model is bullshitting conviction and the
+            # feedback loop should punish it.
             for h in (7, 14, 30):
                 if age < h + 1:
                     continue
                 picks = raw.get("short_term_picks", []) or []
                 deltas = []
                 ticker_results = []
+                by_tier: dict[str, list[tuple[str, float]]] = {"A": [], "B": [], "C": []}
                 for p in picks[:5]:
                     tk = p.get("ticker")
                     if not tk:
@@ -412,7 +421,11 @@ def grade_all(lookback_days: int = 90):
                     alpha = pick_pct - (nifty_pct or 0)
                     deltas.append(alpha)
                     ticker_results.append({"ticker": tk, "pick_pct": pick_pct,
-                                            "nifty_pct": nifty_pct, "alpha": alpha})
+                                            "nifty_pct": nifty_pct, "alpha": alpha,
+                                            "conviction": (p.get("conviction") or "").upper()})
+                    tier = (p.get("conviction") or "").upper()
+                    if tier in by_tier:
+                        by_tier[tier].append((tk, alpha))
                 if deltas:
                     avg_alpha = sum(deltas) / len(deltas)
                     # score: +5% alpha = 100, 0 = 50, -5% = 0
@@ -422,6 +435,22 @@ def grade_all(lookback_days: int = 90):
                                   {"results": ticker_results},
                                   score, avg_alpha,
                                   notes=f"avg alpha vs NIFTY: {avg_alpha:+.2f}%")
+                    # Only emit per-tier dims when there are picks of that
+                    # tier on this day; the per-day dedup in
+                    # compute_summaries will still average correctly across
+                    # days even when some days are missing a tier.
+                    if h == 7:
+                        for tier in ("A", "B", "C"):
+                            items = by_tier[tier]
+                            if not items:
+                                continue
+                            t_alphas = [a for _t, a in items]
+                            t_avg = sum(t_alphas) / len(t_alphas)
+                            t_score = max(0, min(100, 50 + t_avg * 10))
+                            _upsert_score(sb, aid, f"short_pick_{tier}_7d", 7,
+                                          {"picks": [t for t, _a in items]},
+                                          {"alphas": t_alphas}, t_score, t_avg,
+                                          notes=f"tier-{tier} avg alpha vs NIFTY: {t_avg:+.2f}% n={len(items)}")
 
             # ----- Short pick target/SL hit (did it hit target before stop) -----
             if age >= 11:

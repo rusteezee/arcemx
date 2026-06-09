@@ -146,6 +146,24 @@ phases historically. Cite >=2 numbers (e.g. "BankNifty RSI 58 vs NIFTY 49, MACD
 bullish on Bank only, FII derivatives net long banks +1,800 cr"). Use "EVEN" only
 when the spread is genuinely <0.15% in absolute terms.
 
+CONVICTION TIERING (binding for every short_term_picks and long_term_picks row):
+Every pick MUST carry a "conviction" tier A, B, or C. The tiers are scored
+stratified by the grader so an inflated A label will surface as poor tier-A
+performance and will be punished in self_feedback.
+- A: Highest conviction. ALL THREE of (1) per-stock technicals strongly aligned
+  (RSI 55-70 long or 30-45 short, MACD confirmed, holding key DMA), (2) recent
+  news catalyst with materiality > 1.0 in news_digest, and (3) macro/sector
+  tailwind (e.g. sector RSI > 55 + FII net positive + supportive global cue).
+  Aim for 0-2 A-tier picks per analysis. NOT EVERY PICK IS AN A.
+- B: Solid setup. TWO of the three pillars above are clearly aligned, third is
+  neutral or slightly off. Aim for the bulk of your picks here.
+- C: Speculative / asymmetric. Setup is interesting (one pillar strong, e.g. a
+  catalyst about to hit) but signal is incomplete. Use sparingly.
+A pick that does not clearly meet ALL of A's three pillars is NOT an A. Default
+to B when in doubt; default to C when the signal is genuinely thin. The whole
+point of the tier system is differentiation — flat labelling every pick A is
+the cardinal mistake the grader will catch and the feedback loop will punish.
+
 Per-stock technicals in technical_bullish_top / technical_bearish_top now include
 atr_14, expected_daily_move_pct, support_20d, resistance_20d, dist_to_support_pct,
 dist_to_resistance_pct. ANCHOR every pick's target and stop_loss to these levels,
@@ -230,8 +248,8 @@ Return STRICT JSON only matching this schema:
   "nifty_20d_outlook": {"direction": "up|down|sideways", "rationale": "trend over the next ~20 trading sessions"},
   "volatility_regime": {"call": "expansion|contraction|normal", "rationale": "expected NIFTY volatility over the next ~5 sessions vs recent, from India VIX + ATR"},
   "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "drivers": ["..."]},
-  "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30}],
-  "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "<numeric INR or INR range, e.g. 1750-1800>", "target": "<numeric INR multi-month target, e.g. 2200>", "stop_loss": "<numeric INR thesis-break level, e.g. 1600>", "horizon_months": 6-36}],
+  "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30, "conviction": "A|B|C"}],
+  "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "<numeric INR or INR range, e.g. 1750-1800>", "target": "<numeric INR multi-month target, e.g. 2200>", "stop_loss": "<numeric INR thesis-break level, e.g. 1600>", "horizon_months": 6-36, "conviction": "A|B|C"}],
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],
   "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "<numeric INR or INR range, e.g. 380 or 360-400>", "stop_loss": "<numeric INR, e.g. 290>"}],
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
