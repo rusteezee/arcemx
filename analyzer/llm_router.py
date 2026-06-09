@@ -300,6 +300,23 @@ against real market outcomes. Treat it as binding, not advisory.
   correct "I don't know, sideways, low confidence" is worth more than a confident
   wrong call.
 
+market_mood (bull / bear / neutral) is the headline call on tomorrow's NIFTY
+session and is graded against the same +/-0.4% noise band the direction call
+uses. Decision rule, no exceptions:
+- bull: you expect NIFTY to close >+0.4% above its prior close. Requires
+  concrete bullish evidence (e.g. price above all DMAs + RSI > 55 + FII cash
+  net inflow + supportive global cue). nifty_outlook.direction MUST be "up".
+- bear: you expect NIFTY to close <-0.4% below its prior close. Requires
+  concrete bearish evidence (e.g. price below 20/50 DMA + RSI < 45 + FII
+  cash net outflow + risk-off global cue). nifty_outlook.direction MUST be
+  "down".
+- neutral: you expect the move to stay inside +/-0.4% (noise / coiling /
+  expiry pinning). nifty_outlook.direction MUST be "sideways".
+market_mood and nifty_outlook.direction MUST agree. A bull mood with a
+sideways direction call is a self-contradiction the grader will catch.
+Default to neutral whenever evidence is genuinely mixed; do not force a
+directional mood to look decisive.
+
 Return STRICT JSON only matching this schema:
 {
   "market_mood": "bull" | "bear" | "neutral",

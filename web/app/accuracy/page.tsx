@@ -10,6 +10,7 @@ import { TriggerButton } from "@/components/TriggerButton";
 import { sb } from "@/lib/supabase";
 
 const DIMENSION_LABELS: Record<string, string> = {
+  market_mood_1d: "Market Mood (1d)",
   direction_1d: "NIFTY Next Day Direction",
   range_1d: "NIFTY Next Day Range",
   direction_5d: "NIFTY 5-Day Trend",
@@ -343,8 +344,8 @@ export default function AccuracyPage() {
         glyph="◉"
         description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
       >
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {(["insight_quality", "cap_pair_1d", "fii_flow_1d", "index_pair_1d"] as const).map((dim) => {
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          {(["market_mood_1d", "insight_quality", "cap_pair_1d", "fii_flow_1d", "index_pair_1d"] as const).map((dim) => {
             const row = summary.find((s) => s.window_days === 30 && s.dimension === dim);
             const acc = row?.accuracy_pct ?? null;
             const n = row?.sample_size ?? 0;

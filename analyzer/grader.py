@@ -443,6 +443,20 @@ def grade_all(lookback_days: int = 90):
                                   {"range": list(pred_rng)},
                                   {"close": next_close}, rscore, rdelta)
 
+                # ----- Market mood (bull / bear / neutral on NIFTY 1d) -----
+                # Same horizon-scaled flat band as direction_1d. Mood maps
+                # bull -> up, bear -> down, neutral -> sideways and runs
+                # through the shared grade_direction logic so it sits on
+                # the same scale as the rest of the 1d direction dims.
+                mood = (raw.get("market_mood") or "").strip().lower()
+                if mood in ("bull", "bear", "neutral") and last_close and next_close:
+                    mapped = {"bull": "up", "bear": "down", "neutral": "sideways"}[mood]
+                    mscore, mdelta = grade_direction(mapped, last_close, next_close)
+                    _upsert_score(sb, aid, "market_mood_1d", 1,
+                                  {"mood": mood}, {"pct": mdelta},
+                                  mscore, mdelta,
+                                  notes=f"NIFTY 1d move {mdelta:+.2f}% vs mood {mood}")
+
                 # ----- Sensex direction + range (1d) -----
                 s_last = _close_on_or_after("^BSESN", run_at - timedelta(days=1))
                 s_next = _close_on_or_after("^BSESN", run_at + timedelta(days=1))
