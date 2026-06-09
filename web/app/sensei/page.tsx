@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Section } from "@/components/Section";
 import { EmptyState } from "@/components/EmptyState";
 import { Calculator } from "@/components/Calculator";
+import { PortfolioScorecard } from "@/components/PortfolioScorecard";
 import { sb } from "@/lib/supabase";
 
 interface SenseiRow {
@@ -119,12 +120,21 @@ export default function SenseiPage() {
         />
 
         <Section
-          num="001 / 001"
+          num="001 / 002"
           title="Sensei's Calculator"
           glyph="✦"
           description="Even without today's retrospective, the deterministic allocation prefilter is available. Tell Sensei the amount, horizon, risk appetite, and the universe filter."
         >
           <Calculator />
+        </Section>
+
+        <Section
+          num="002 / 002"
+          title="Portfolio Scorecard"
+          glyph="◉"
+          description="Score on your current holdings. Sector spread, single-name risk, momentum vs NIFTY, drawdown, edge."
+        >
+          <PortfolioScorecard />
         </Section>
       </motion.main>
     );
@@ -166,7 +176,7 @@ export default function SenseiPage() {
       </header>
 
       <Section
-        num="001 / 007"
+        num="001 / 008"
         title="Sensei's Read"
         glyph="◈"
         description="One-line verdict on whether stated confidence matched delivered accuracy. Strict, no softening."
@@ -179,7 +189,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="002 / 007"
+        num="002 / 008"
         title="What Worked"
         glyph="◉"
         description="Calls that hit. Evidence column shows the numbers behind each win. Treat as a checklist of what to repeat tomorrow."
@@ -225,7 +235,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="003 / 007"
+        num="003 / 008"
         title="What Missed"
         glyph="◉"
         description="Calls that broke. Root Cause column says why. Read every row before the next session opens."
@@ -278,7 +288,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="004 / 007"
+        num="004 / 008"
         title="Conviction Tier Review"
         glyph="◉"
         description="Did A / B / C labels track actual performance? Inflated tiers will surface here."
@@ -310,7 +320,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="005 / 007"
+        num="005 / 008"
         title="Key Insights"
         glyph="◉"
         description="Sensei's strict reads of today's data. Every bullet cites at least two concrete numbers. No vibe takes."
@@ -329,7 +339,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="006 / 007"
+        num="006 / 008"
         title="Tomorrow's Watchlist"
         glyph="⬡"
         description="Specific levels and events to track at next open. These are the things Sensei wants you to flag before tomorrow's session begins."
@@ -348,12 +358,21 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="007 / 007"
+        num="007 / 008"
         title="Sensei's Calculator"
         glyph="✦"
-        description="Tell Sensei how much you want to deploy, for how long, and how much risk you can stomach. A deterministic prefilter ranks the universe by momentum + RSI + realized vol and proposes an allocation. Phase 8b will layer LLM-written rationale on top."
+        description="Tell Sensei how much you want to deploy, for how long, and how much risk you can stomach. A deterministic prefilter ranks the universe by momentum + RSI + realized vol and proposes an allocation. Ask Sensei wraps the picks with macro and sector context."
       >
         <Calculator />
+      </Section>
+
+      <Section
+        num="008 / 008"
+        title="Portfolio Scorecard"
+        glyph="◉"
+        description="Live score on your actual holdings. Sector spread, single-name risk, momentum vs NIFTY, drawdown, edge over the index. Red flags and tips to lift the score below."
+      >
+        <PortfolioScorecard />
       </Section>
 
     </motion.main>
