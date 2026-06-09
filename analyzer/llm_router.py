@@ -228,6 +228,10 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         "models": models,
         "messages": messages,
         "response_format": {"type": "json_object"},
+        # Explicitly non-streaming. Some free providers default to SSE for
+        # reasoning models depending on the routed provider; we still
+        # defensively parse SSE below in case the provider ignores this.
+        "stream": False,
     }
     if reasoning:
         body["reasoning"] = {"effort": "medium"}
@@ -261,8 +265,51 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
             delay *= 2
             continue
         r.raise_for_status()
+        ct = (r.headers.get("Content-Type") or "").lower()
+        # Free OpenRouter providers occasionally ignore stream=False and
+        # return a Server-Sent Events stream for reasoning models. Detect
+        # by Content-Type AND by sniffing the body prefix (some proxies
+        # strip the header) so the call still succeeds when that happens.
+        text = r.text
+        if "text/event-stream" in ct or text.lstrip().startswith("data:"):
+            return _parse_sse(text)
         return r.json()
     raise RuntimeError(f"OpenRouter retries exhausted: {last_err}")
+
+
+def _parse_sse(text: str) -> dict:
+    """Reassemble a streamed chat.completions response into the same shape
+    the non-streaming endpoint returns, so _parse_json() downstream does
+    not care which path served the call.
+
+    SSE format per chunk:
+        data: {"choices":[{"delta":{"content":"..."},"index":0}], "model":"..."}
+        ... many chunks ...
+        data: [DONE]
+    """
+    parts: list[str] = []
+    used_model: str | None = None
+    for line in text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            obj = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        used_model = used_model or obj.get("model")
+        for ch in obj.get("choices") or []:
+            # Streaming uses `delta`, completed-final uses `message`.
+            delta = ch.get("delta") or {}
+            piece = delta.get("content") or (ch.get("message") or {}).get("content") or ""
+            if piece:
+                parts.append(piece)
+    return {
+        "model": used_model,
+        "choices": [{"message": {"content": "".join(parts)}}],
+    }
 
 
 def _strip_fences(text: str) -> str:
