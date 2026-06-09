@@ -777,6 +777,52 @@ def grade_all(lookback_days: int = 90):
                                   {"results": sr_results}, avg_sr, 0,
                                   notes=f"avg sector 1d range across {len(sr_scores)} sectors")
 
+            # ----- FII flow outlook (next-day FII cash net direction) -----
+            # Predicted direction is graded against the actual FII cash net
+            # the day AFTER the prediction. We pull the actual via
+            # fetchers.fii_dii history-full lookup; if the data is not yet
+            # available (age too small or service down at grade time) skip
+            # silently rather than fabricate a score. >500 cr threshold
+            # matches the prompt's inflow/outflow deadband.
+            if age >= 1:
+                fco = raw.get("fii_flow_outlook") or {}
+                pred = (fco.get("direction") or "").strip().lower()
+                if pred in ("inflow", "outflow", "flat"):
+                    try:
+                        import requests as _rq
+                        from datetime import datetime as _dt
+                        hist = _rq.get(
+                            "https://fii-diidata.mrchartist.com/api/history-full",
+                            headers={"User-Agent": "arcemx/1.0"}, timeout=12,
+                        ).json()
+                        # Target = next trading day after run_at (date format DD-Mon-YYYY).
+                        target_date = run_at + timedelta(days=1)
+                        # Walk forward up to 7 days for the next published row.
+                        actual_net = None
+                        for offset in range(0, 7):
+                            d = (target_date + timedelta(days=offset)).strftime("%d-%b-%Y")
+                            for row in hist:
+                                if row.get("date") == d:
+                                    actual_net = row.get("fii_net")
+                                    break
+                            if actual_net is not None:
+                                break
+                        if actual_net is not None:
+                            if pred == "inflow":
+                                score = 100.0 if actual_net > 500 else (50.0 if -500 <= actual_net <= 500 else 0.0)
+                            elif pred == "outflow":
+                                score = 100.0 if actual_net < -500 else (50.0 if -500 <= actual_net <= 500 else 0.0)
+                            else:  # flat
+                                score = 100.0 if -500 <= actual_net <= 500 else 0.0
+                            _upsert_score(sb, aid, "fii_flow_1d", 1,
+                                          {"direction": pred,
+                                           "expected_cash_net_cr": fco.get("expected_cash_net_cr")},
+                                          {"actual_fii_cash_cr": actual_net},
+                                          score, round(float(actual_net), 1),
+                                          notes=f"actual FII cash net {actual_net:+.0f} cr vs call {pred}")
+                    except Exception as e:
+                        print(f"  fii_flow grade skip: {e}")
+
             # ----- Index pair (NIFTY vs BankNifty relative outperformer) -----
             if age >= 1:
                 ip = raw.get("index_pair_outlook") or {}

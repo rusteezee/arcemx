@@ -151,6 +151,30 @@ phases historically. Cite >=2 numbers (e.g. "BankNifty RSI 58 vs NIFTY 49, MACD
 bullish on Bank only, FII derivatives net long banks +1,800 cr"). Use "EVEN" only
 when the spread is genuinely <0.15% in absolute terms.
 
+The payload now carries a flows block from yesterday's NSE provisional release
+(fields: fii_cash_cr, dii_cash_cr, fii_idx_fut_net_contracts, fii_stk_fut_net_contracts,
+fii_idx_call_net_contracts, fii_idx_put_net_contracts, pcr, fao_sentiment). USE THIS
+as primary directional evidence; institutional flow is genuinely market-moving:
+- Heavy FII cash outflow (<-3000 cr) + FII net short index futures = persistent
+  selling pressure into the next session; bias direction call down unless DII
+  absorption (>+5000 cr) was strong enough to neutralise.
+- Heavy FII cash inflow (>+2000 cr) + FII net long index futures = directional bid;
+  bias direction call up.
+- Mismatched legs (cash outflow but FII net long futures, or vice versa) = mixed
+  signal; default to sideways with explicit reasoning citing both legs.
+- PCR < 0.5 = bearish options positioning; PCR > 1.0 = bullish.
+- Cite at least one flows number (fii_cash_cr, fii_idx_fut_net, or pcr) in every
+  nifty_outlook drivers entry, sector_outlooks key_driver where relevant, and the
+  reasoning_breakdown.sentiment key.
+
+fii_flow_outlook predicts tomorrow's FII cash flow. Direction: inflow if you
+expect >+500 cr, outflow if <-500 cr, else flat. Anchor expected_cash_net_cr to
+yesterday's actual flows.fii_cash_cr trend, FII derivatives positioning (heavy
+short = persistent outflow likely to continue), USDINR delta (rupee weakening
+pulls FII money OUT), DXY direction (strong dollar = EM outflows), and US10Y
+(rising yields pull FII money OUT). Cite >=2 numbers in rationale. This call
+is graded next day against actual flows.
+
 CONVICTION TIERING (binding for every short_term_picks and long_term_picks row):
 Every pick MUST carry a "conviction" tier A, B, or C. The tiers are scored
 stratified by the grader so an inflated A label will surface as poor tier-A
@@ -261,6 +285,7 @@ Return STRICT JSON only matching this schema:
   "holding_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band, e.g. 320-330>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers: RSI/MACD/DMA/ATR/sector cue>"}],
   "wishlist_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers>"}],
   "sector_outlooks": [{"sector": "BANK|IT|AUTO|PHARMA|FMCG|ENERGY|METAL|REALTY|MEDIA|FINSERV", "direction": "up|down|sideways", "range": "<tight index-point band anchored to that sector's expected_daily_move_pct, e.g. 52500-53100>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers from market_context.sectors and macro>"}],
+  "fii_flow_outlook": {"direction": "inflow|outflow|flat", "expected_cash_net_cr": "<signed INR crore estimate for tomorrow's FII cash net, e.g. +1200 or -4500>", "rationale": "<one-line citation of >=2 numbers from flows + macro: flows.fii_idx_fut_net, USDINR delta, DXY, US10Y, prior-day fii_cash_cr trend>"},
   "index_pair_outlook": {"outperformer": "NIFTY|BANKNIFTY|EVEN", "spread_pct": "<expected NIFTY-BANKNIFTY %-point spread, e.g. +0.4 or -0.6>", "rationale": "<one-line citation of >=2 numbers>"},
   "global_factors": ["..."],
   "key_news_drivers": ["..."],

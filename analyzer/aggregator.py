@@ -11,6 +11,7 @@ from fetchers.prices import load_universe, latest_snapshot
 from fetchers.news import fetch_rss, fetch_gnews
 from fetchers.trends import fetch_trends
 from fetchers.reddit import fetch_hot
+from fetchers.fii_dii import fetch_latest as fetch_fii_dii
 from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm_router import analyze
 from analyzer.feedback import build_feedback as _load_feedback
@@ -86,6 +87,19 @@ def build_payload() -> dict:
         print(f"market_context fail: {e}")
         market_context = {}
 
+    print("FII / DII flows...")
+    flows = None
+    try:
+        flows = fetch_fii_dii()
+        if flows:
+            print(f"  FII cash net {flows.get('fii_cash_cr')} cr, "
+                  f"DII cash net {flows.get('dii_cash_cr')} cr, "
+                  f"PCR {flows.get('pcr')}")
+        else:
+            print("  no flow data available")
+    except Exception as e:
+        print(f"flows fail: {e}")
+
     print("User holdings + wishlist...")
     holdings, wishlist, prior_call = [], [], None
     holding_technicals, wishlist_technicals = {}, {}
@@ -151,6 +165,7 @@ def build_payload() -> dict:
         "timestamp": datetime.utcnow().isoformat(),
         "self_feedback": _load_feedback(),
         "market_context": market_context,
+        "flows": flows,
         "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],
         "user_holdings": holdings,
         "user_wishlist": wishlist,
