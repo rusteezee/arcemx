@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Section } from "@/components/Section";
 import { Stat } from "@/components/Stat";
 import { LineChart } from "@/components/LineChart";
+import { MultiLineChart, type Series } from "@/components/MultiLineChart";
 import { Heatmap } from "@/components/Heatmap";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
 import { fetchQuote, fetchHistory } from "@/lib/quotes";
@@ -24,6 +25,34 @@ const INDICES = [
 ];
 
 const PRESETS = ["^NSEI", "^BSESN", "^NSEBANK", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS"];
+
+// Compare-chart universe: indices + 10 NSE sectors + Midcap 150. Matches the
+// payload's market_context.sectors set so the chart visually mirrors what
+// the analyzer reasons over. Colors are stable per-symbol so toggling a
+// series doesn't shuffle the rest of the palette.
+const COMPARE_SYMBOLS: { sym: string; label: string; color: string }[] = [
+  { sym: "^NSEI",              label: "NIFTY",      color: "#3b82f6" },
+  { sym: "^BSESN",             label: "Sensex",     color: "#8b5cf6" },
+  { sym: "^NSEBANK",           label: "BankNifty",  color: "#ec4899" },
+  { sym: "NIFTYMIDCAP150.NS",  label: "Midcap 150", color: "#06b6d4" },
+  { sym: "^CNXIT",             label: "IT",         color: "#10b981" },
+  { sym: "^CNXAUTO",           label: "Auto",       color: "#f59e0b" },
+  { sym: "^CNXPHARMA",         label: "Pharma",     color: "#ef4444" },
+  { sym: "^CNXFMCG",           label: "FMCG",       color: "#84cc16" },
+  { sym: "^CNXENERGY",         label: "Energy",     color: "#a855f7" },
+  { sym: "^CNXMETAL",          label: "Metal",      color: "#64748b" },
+  { sym: "^CNXREALTY",         label: "Realty",     color: "#f97316" },
+  { sym: "^CNXMEDIA",          label: "Media",      color: "#14b8a6" },
+];
+
+const COMPARE_DEFAULT_VISIBLE = new Set([
+  "^NSEI",
+  "^BSESN",
+  "NIFTYMIDCAP150.NS",
+  "^NSEBANK",
+  "^CNXIT",
+  "^CNXAUTO",
+]);
 const PERIODS: { label: string; range: string }[] = [
   { label: "1W", range: "5d" },
   { label: "1M", range: "1mo" },
@@ -46,6 +75,14 @@ export default function MarketsPage() {
   const [heat, setHeat] = useState<Array<{ ticker: string; pct: number; weight: number }>>([]);
   const [custom, setCustom] = useState("");
   const [customTickers, setCustomTickers] = useState<string[]>([]);
+
+  // Compare-chart state. Separate period from the single-ticker chart's
+  // period so toggling the compare section doesn't disturb the main chart.
+  const [cmpPeriod, setCmpPeriod] = useState("1mo");
+  const [cmpNormalize, setCmpNormalize] = useState(true);
+  const [cmpSeries, setCmpSeries] = useState<Series[]>([]);
+  const [cmpVisible, setCmpVisible] = useState<Set<string>>(COMPARE_DEFAULT_VISIBLE);
+  const [cmpLoading, setCmpLoading] = useState(false);
 
   // Hydrate the custom-ticker pill row from localStorage on mount so the
   // user doesn't lose their additions after a refresh. Skipped on the
@@ -113,6 +150,41 @@ export default function MarketsPage() {
     return () => { cancelled = true; };
   }, [sel, period]);
 
+  // Compare chart data fetcher. Fires whenever the period changes; series
+  // for hidden symbols are still fetched so toggling them on doesn't trigger
+  // a second round trip. yfinance via /api/quote is the same proxy the
+  // single-ticker chart uses.
+  useEffect(() => {
+    let cancelled = false;
+    setCmpLoading(true);
+    (async () => {
+      const results = await Promise.all(
+        COMPARE_SYMBOLS.map(async ({ sym, label, color }) => {
+          try {
+            const q = await fetchHistory(sym, cmpPeriod);
+            const points = (q?.history || []).map((h) => ({ date: h.date, value: h.close }));
+            return { key: sym, label, color, points } as Series;
+          } catch {
+            return { key: sym, label, color, points: [] } as Series;
+          }
+        })
+      );
+      if (cancelled) return;
+      setCmpSeries(results);
+      setCmpLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [cmpPeriod]);
+
+  const toggleCmp = (sym: string) => {
+    setCmpVisible((prev) => {
+      const next = new Set(prev);
+      if (next.has(sym)) next.delete(sym);
+      else next.add(sym);
+      return next;
+    });
+  };
+
   useEffect(() => {
     (async () => {
       const wl = await sb.from("wishlist").select("ticker").eq("user_id", DEFAULT_UID);
@@ -144,7 +216,7 @@ export default function MarketsPage() {
         </h1>
       </div>
 
-      <Section num="001 / 003" title="Indices" glyph="✦">
+      <Section num="001 / 004" title="Indices" glyph="✦">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {INDICES.map(({ sym, name }) => {
             const q = idxQuotes[sym];
@@ -162,7 +234,7 @@ export default function MarketsPage() {
       </Section>
 
       <Section
-        num="002 / 003"
+        num="002 / 004"
         title="Chart"
         glyph="◈"
         action={
@@ -300,7 +372,86 @@ export default function MarketsPage() {
       </Section>
 
       <Section
-        num="003 / 003"
+        num="003 / 004"
+        title="Indices and Sector Compare"
+        glyph="◉"
+        description="NIFTY, Sensex, BankNifty, Midcap 150, and the 10 NSE sector indices on one chart. Normalized to 100 at range start so different absolute levels compare directly. Toggle any series in the legend."
+        action={
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setCmpNormalize((v) => !v)}
+              className={`px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
+                cmpNormalize ? "bg-foreground text-background" : "hover:bg-[var(--muted-bg)]"
+              }`}
+              title="Rebase each line to 100 at the start of the range so they share a common scale."
+            >
+              Normalize %
+            </button>
+            <div className="flex gap-1.5 flex-wrap">
+              {PERIODS.filter((p) => p.range !== "max").map((p) => (
+                <button
+                  key={p.range}
+                  onClick={() => setCmpPeriod(p.range)}
+                  className={`px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
+                    cmpPeriod === p.range
+                      ? "bg-foreground text-background"
+                      : "hover:bg-[var(--muted-bg)]"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        }
+      >
+        <div className="card p-6">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {COMPARE_SYMBOLS.map(({ sym, label, color }) => {
+              const active = cmpVisible.has(sym);
+              return (
+                <button
+                  key={sym}
+                  onClick={() => toggleCmp(sym)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                    active
+                      ? "border-foreground/40 bg-[var(--muted-bg)]"
+                      : "border-border opacity-50 hover:opacity-100"
+                  }`}
+                  title={active ? `Hide ${label}` : `Show ${label}`}
+                >
+                  <span
+                    aria-hidden
+                    className="inline-block size-2 rounded-full"
+                    style={{ background: color }}
+                  />
+                  <span className="font-medium">{label}</span>
+                </button>
+              );
+            })}
+            <span className="ml-auto text-xs text-[var(--muted)]">
+              {cmpLoading ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+                  Fetching
+                </span>
+              ) : (
+                <span>{cmpPeriod.toUpperCase()} · {cmpVisible.size} of {COMPARE_SYMBOLS.length} visible</span>
+              )}
+            </span>
+          </div>
+          <MultiLineChart
+            key={`${cmpPeriod}-${cmpNormalize}`}
+            series={cmpSeries}
+            visibleKeys={cmpVisible}
+            normalize={cmpNormalize}
+            height={400}
+          />
+        </div>
+      </Section>
+
+      <Section
+        num="004 / 004"
         title="Heatmap"
         glyph="⬡"
         description="NIFTY 50 plus your portfolio and wishlist. Tone by day percent change."
