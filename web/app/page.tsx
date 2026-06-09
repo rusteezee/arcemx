@@ -306,7 +306,21 @@ function SectorsIndexPair({ sectors, pair }: { sectors: any[]; pair?: any }) {
       )}
       {sectors.length > 0 && (
         <div className="card overflow-hidden">
-          <table className="data">
+          {/*
+            Same fixed-layout + colgroup widths used by the per-stock
+            Holdings/Wishlist tables (14% / 12% / 14% / 10% / remainder),
+            so columns sit at the same x-coordinate across all three
+            tables on the page even though they are separate <table>
+            elements stacked in different sections.
+          */}
+          <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+            <colgroup>
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "10%" }} />
+              <col />
+            </colgroup>
             <thead>
               <tr>
                 <th>Sector</th>
@@ -324,7 +338,7 @@ function SectorsIndexPair({ sectors, pair }: { sectors: any[]; pair?: any }) {
                   <td className="num whitespace-nowrap">{s.range ? formatINR(s.range) : "·"}</td>
                   <td className="num whitespace-nowrap">{s.confidence ?? "·"}</td>
                   <td
-                    className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis max-w-[36rem]"
+                    className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
                     title={s.key_driver}
                   >
                     {s.key_driver}
