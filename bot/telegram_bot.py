@@ -672,6 +672,89 @@ async def _start_health_server(port: int):
                 )
                 writer.write(resp); await writer.drain(); return
 
+            # /trigger/portfolio-score: enrich a deterministic Portfolio
+            # Scorecard run with LLM takes. Body shape:
+            #   { deterministic: {...} }
+            # Inserts a portfolio_score_runs row with status='pending',
+            # kicks off the LLM call in the background, returns 202 + run_id.
+            if method == "POST" and path.startswith("/trigger/portfolio-score"):
+                token = headers.get("x-trigger-token", "")
+                if not trigger_secret or token != trigger_secret:
+                    msg = b'{"error":"unauthorized"}'
+                    resp = (
+                        b"HTTP/1.1 401 Unauthorized\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: " + str(len(msg)).encode() + b"\r\n"
+                        b"Connection: close\r\n\r\n" + msg
+                    )
+                    writer.write(resp); await writer.drain(); return
+
+                import json as _json
+                try:
+                    payload = _json.loads(body_bytes or b"{}")
+                except Exception:
+                    payload = {}
+
+                det_json = payload.get("deterministic") or {}
+                if not det_json:
+                    out = _json.dumps({
+                        "ok": False, "error": "missing deterministic payload",
+                    }).encode()
+                    status_line = b"HTTP/1.1 400 Bad Request\r\n"
+                else:
+                    try:
+                        import os as _os
+                        from supabase import create_client as _create_client
+                        url = _os.getenv("SUPABASE_URL")
+                        key = _os.getenv("SUPABASE_KEY")
+                        if not url or not key:
+                            raise RuntimeError("Supabase env missing")
+                        _sb = _create_client(url, key)
+                        ins = _sb.table("portfolio_score_runs").insert({
+                            "deterministic_json": det_json,
+                            "status": "pending",
+                        }).execute()
+                        run_id = (ins.data or [{}])[0].get("id")
+                        if run_id is None:
+                            raise RuntimeError("insert returned no id")
+
+                        from analyzer.portfolio_score_llm import run as run_psc
+                        import asyncio as _asyncio
+
+                        async def _bg_psc(rid: int):
+                            try:
+                                print(f"Background portfolio LLM starting (run_id={rid})...")
+                                loop = _asyncio.get_event_loop()
+                                await loop.run_in_executor(None, lambda: run_psc(rid))
+                                print(f"Background portfolio LLM complete (run_id={rid})")
+                            except Exception as bgerr:
+                                import traceback
+                                print(f"Background portfolio LLM failed: {bgerr}")
+                                traceback.print_exc()
+
+                        task = _asyncio.create_task(_bg_psc(run_id))
+                        _BG_TASKS.add(task)
+                        task.add_done_callback(_BG_TASKS.discard)
+                        out = _json.dumps({
+                            "ok": True, "job": "portfolio-score",
+                            "status": "queued", "run_id": run_id,
+                        }).encode()
+                        status_line = b"HTTP/1.1 202 Accepted\r\n"
+                    except Exception as e:
+                        out = _json.dumps({
+                            "ok": False, "job": "portfolio-score", "error": str(e),
+                        }).encode()
+                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+
+                resp = (
+                    status_line +
+                    b"Content-Type: application/json\r\n"
+                    b"Access-Control-Allow-Origin: *\r\n"
+                    b"Content-Length: " + str(len(out)).encode() + b"\r\n"
+                    b"Connection: close\r\n\r\n" + out
+                )
+                writer.write(resp); await writer.drain(); return
+
             # default health response
             body = b"OK"
             resp = (

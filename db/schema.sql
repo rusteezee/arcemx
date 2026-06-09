@@ -121,3 +121,17 @@ create table if not exists calculator_runs (
     error text
 );
 create index if not exists idx_calculator_runs_status on calculator_runs(status, run_at desc);
+
+-- Portfolio scorecard LLM enrichment runs (Phase 9b). Mirrors
+-- calculator_runs. Frontend posts deterministic snapshot via bot
+-- /trigger/portfolio-score, polls by id until status != 'pending'.
+create table if not exists portfolio_score_runs (
+    id bigserial primary key,
+    run_at timestamptz default now(),
+    deterministic_json jsonb not null,
+    llm_json jsonb,
+    model_used text,
+    status text not null default 'pending',
+    error text
+);
+create index if not exists idx_portfolio_score_runs_status on portfolio_score_runs(status, run_at desc);
