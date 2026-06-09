@@ -290,29 +290,7 @@ export default function AccuracyPage() {
         />
       </div>
 
-      {lowConfidence && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="mb-8 flex items-start gap-3 rounded-2xl border px-4 py-3"
-          style={{
-            borderColor: "color-mix(in srgb, var(--warn) 35%, transparent)",
-            background: "color-mix(in srgb, var(--warn) 8%, transparent)",
-          }}
-        >
-          <span className="mt-0.5 text-[var(--warn)] shrink-0">◆</span>
-          <p className="text-sm text-[var(--muted)] leading-relaxed">
-            <span className="text-foreground font-medium">Low confidence.</span>{" "}
-            Only {maxSamples} sessions scored so far. At this sample size a hit
-            rate carries roughly ±20 points of uncertainty, so treat these as
-            directional signals, not conclusions. Reliability grows past{" "}
-            {CONFIDENCE_MIN_SAMPLES} scored sessions.
-          </p>
-        </motion.div>
-      )}
-
-      <Section num={calibration ? "001 / 008" : "001 / 007"} title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 009" : "001 / 008"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -334,7 +312,7 @@ export default function AccuracyPage() {
 
       {calibration && (
         <Section
-          num="002 / 008"
+          num="002 / 009"
           title="Confidence Calibration"
           glyph="◉"
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
@@ -360,7 +338,7 @@ export default function AccuracyPage() {
       )}
 
       <Section
-        num={calibration ? "003 / 008" : "002 / 007"}
+        num={calibration ? "003 / 009" : "002 / 008"}
         title="New Dimensions"
         glyph="◉"
         description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
@@ -383,7 +361,7 @@ export default function AccuracyPage() {
         </div>
       </Section>
 
-      <Section num={calibration ? "004 / 008" : "003 / 007"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
+      <Section num={calibration ? "004 / 009" : "003 / 008"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -440,7 +418,7 @@ export default function AccuracyPage() {
         </motion.div>
       </Section>
 
-      <Section num={calibration ? "005 / 008" : "004 / 007"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
+      <Section num={calibration ? "005 / 009" : "004 / 008"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -474,7 +452,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "006 / 008" : "005 / 007"}
+        num={calibration ? "006 / 009" : "005 / 008"}
         title="Insight Quality Trend"
         glyph="⬡"
         description="Rolling 5-prediction average of the reasoning_breakdown auditor score. Number-density + payload citations - banned hedges. Climbs as the model anchors more in data and stops hedging."
@@ -512,7 +490,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "007 / 008" : "006 / 007"}
+        num={calibration ? "007 / 009" : "006 / 008"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
         description="X-axis: predicted band width as percent of midpoint. Y-axis: hit (100) or miss (0) for that day. The useful cluster is top-left: tight bands that still hit. A wide right column means the engine bought hit rate with width — that's range inflation, not skill."
@@ -543,7 +521,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "008 / 008" : "007 / 007"}
+        num={calibration ? "008 / 009" : "007 / 008"}
         title="Conviction Tier Performance"
         glyph="◉"
         description="Stratified pick alpha by conviction label. A-tier alpha should exceed B; B should exceed C. Flat results across tiers means the labels carry no signal and the prompt needs tightening."
@@ -589,6 +567,244 @@ export default function AccuracyPage() {
               </div>
             );
           })}
+        </div>
+      </Section>
+
+      <Section
+        num={calibration ? "009 / 009" : "008 / 008"}
+        title="Reading These Numbers Honestly"
+        glyph="◆"
+        description="Where the data is now, what the percentages can and cannot tell you yet, and the milestones each dimension has to clear before a reading becomes a conclusion instead of a directional signal."
+      >
+        <div className="space-y-4">
+          {/* 1. Where we stand right now */}
+          <div
+            className="card p-5"
+            style={{
+              borderLeft: lowConfidence
+                ? "3px solid color-mix(in srgb, var(--warn) 60%, transparent)"
+                : "3px solid color-mix(in srgb, var(--gain) 60%, transparent)",
+            }}
+          >
+            <div className="section-num mb-2">Current Sample Size</div>
+            <div className="text-2xl font-semibold mb-2">
+              {maxSamples} scored sessions
+              <span
+                className="ml-3 pill"
+                style={{
+                  color: lowConfidence ? "var(--warn)" : "var(--gain)",
+                  borderColor: lowConfidence
+                    ? "color-mix(in srgb, var(--warn) 35%, transparent)"
+                    : "color-mix(in srgb, var(--gain) 35%, transparent)",
+                  background: lowConfidence
+                    ? "color-mix(in srgb, var(--warn) 8%, transparent)"
+                    : "color-mix(in srgb, var(--gain) 8%, transparent)",
+                }}
+              >
+                {lowConfidence ? "Low confidence" : "Sufficient confidence"}
+              </span>
+            </div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              Reliability threshold sits at {CONFIDENCE_MIN_SAMPLES} scored
+              sessions. Below that, a hit rate carries roughly ±20 points of
+              binomial uncertainty (95% Wilson interval), so a number like 55%
+              and a number like 70% are statistically indistinguishable. Above
+              that, the confidence band tightens to about ±5-10 points and the
+              numbers start to mean something.
+            </p>
+          </div>
+
+          {/* 2. Why the uncertainty math is what it is */}
+          <div className="card p-5">
+            <div className="section-num mb-2">Why ±20 Points</div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              Every dimension is a coin-flip-style trial: hit or miss against a
+              deterministic grader. At n=23 the 95% confidence interval on a
+              60% hit rate covers roughly 40-78%. At n=100 the same point
+              estimate carries an interval of 50-69%. At n=300 it tightens to
+              55-65%. The percentages on this page do not change their math
+              when you stare at them harder; only more samples narrow the band.
+            </p>
+          </div>
+
+          {/* 3. Maturity milestones */}
+          <div className="card overflow-hidden">
+            <div className="p-5 pb-2">
+              <div className="section-num mb-1">Maturity Milestones</div>
+              <p className="text-sm text-[var(--muted)] leading-relaxed">
+                What each sample-size threshold unlocks. Headline accuracy on
+                the cards above sits at one column of this table.
+              </p>
+            </div>
+            <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+              <colgroup>
+                <col style={{ width: "18%" }} />
+                <col style={{ width: "22%" }} />
+                <col />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Sessions</th>
+                  <th>Status</th>
+                  <th>What's honest to claim</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="num font-medium">&lt; 10</td>
+                  <td><span className="pill pill-warn">Cold start</span></td>
+                  <td className="text-[var(--muted)]">
+                    No signal yet. Hit rates here are noise — direction
+                    accuracy can read 80% one day and 30% the next on the same
+                    underlying engine. Watch the trend chart, not the headline.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="num font-medium">10 - 29</td>
+                  <td><span className="pill pill-warn">Building</span></td>
+                  <td className="text-[var(--muted)]">
+                    First sense of bias direction: is the engine consistently
+                    above or below 50% on direction calls? Confidence interval
+                    still ±20 pts. Useful for calibration drift detection (does
+                    stated confidence track realized?), NOT for ranking dims.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="num font-medium">30 - 99</td>
+                  <td><span className="pill pill-mid">Settling</span></td>
+                  <td className="text-[var(--muted)]">
+                    CI narrows to about ±12 pts. Cross-dimensional ranking
+                    becomes meaningful (direction vs range vs sectors).
+                    Conviction tier stratification first becomes testable
+                    here. Still cautious on absolute claims.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="num font-medium">100 - 299</td>
+                  <td><span className="pill pill-gain">Stable</span></td>
+                  <td className="text-[var(--muted)]">
+                    CI ±8 pts. Headline accuracy means what it says. Per-dim
+                    comparisons are reliable. Calibration gap is trustworthy.
+                    Self-feedback rules derived from misses at this size
+                    actually correct future calls instead of overfitting.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="num font-medium">&gt;= 300</td>
+                  <td><span className="pill pill-gain">Regime-aware</span></td>
+                  <td className="text-[var(--muted)]">
+                    CI ±5 pts. Conditional accuracy starts to mean something:
+                    "direction hit rate when VIX &gt; 18" or "range hit rate
+                    in expiry weeks" become real claims. This is where the
+                    engine moves from "is it any good" to "where is it good".
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* 4. Per-dim status — which dims have crossed which thresholds */}
+          <div className="card overflow-hidden">
+            <div className="p-5 pb-2">
+              <div className="section-num mb-1">Per-Dimension Status</div>
+              <p className="text-sm text-[var(--muted)] leading-relaxed">
+                Current 30-day sample size per dimension, plus where each
+                sits on the maturity ladder. A dimension with 4 scored
+                sessions cannot be compared to one with 50 — the smaller-n
+                hit rate is a guess, not a measurement.
+              </p>
+            </div>
+            <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+              <colgroup>
+                <col style={{ width: "44%" }} />
+                <col style={{ width: "20%" }} />
+                <col />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Dimension</th>
+                  <th>Scored · 30d</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.keys(DIMENSION_LABELS).map((dim) => {
+                  const r = summary.find((s) => s.window_days === 30 && s.dimension === dim);
+                  const n = r?.sample_size ?? 0;
+                  if (n === 0) return null;
+                  const status =
+                    n < 10
+                      ? { label: "Cold start", cls: "pill-warn" }
+                      : n < 30
+                      ? { label: "Building", cls: "pill-warn" }
+                      : n < 100
+                      ? { label: "Settling", cls: "pill-mid" }
+                      : n < 300
+                      ? { label: "Stable", cls: "pill-gain" }
+                      : { label: "Regime-aware", cls: "pill-gain" };
+                  return (
+                    <tr key={dim}>
+                      <td className="font-medium">{DIMENSION_LABELS[dim]}</td>
+                      <td className="num">{n}</td>
+                      <td>
+                        <span className={`pill ${status.cls}`}>{status.label}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 5. Decision rules — when to act, when to wait */}
+          <div className="card p-5">
+            <div className="section-num mb-2">When To Act, When To Wait</div>
+            <ul className="list-disc pl-5 space-y-2 text-sm text-[var(--muted)] leading-relaxed">
+              <li>
+                <span className="text-foreground font-medium">Cold start / Building (n &lt; 30).</span>{" "}
+                Read the calibration gap, not the headline. If stated confidence
+                matches realized accuracy within ±10 pts, the engine is being
+                honest about its own uncertainty — that is the signal that
+                matters most at this size, even when the percentage itself is
+                noisy.
+              </li>
+              <li>
+                <span className="text-foreground font-medium">Settling (n 30-99).</span>{" "}
+                Begin comparing dimensions against each other (range usually
+                beats direction; direction usually beats picks; multi-day usually
+                beats 1-day). Watch the trend chart for monotonic climb — that
+                is self-feedback working.
+              </li>
+              <li>
+                <span className="text-foreground font-medium">Stable (n &gt;= 100).</span>{" "}
+                Treat the headline number as the engine's true edge. A direction
+                accuracy that has held above 58% for 100+ sessions is real edge
+                over a coin flip; the same number on 20 sessions is not yet.
+              </li>
+              <li>
+                <span className="text-foreground font-medium">Always.</span>{" "}
+                Conviction tier A picks should beat B should beat C. If tiers
+                flatten, the labels carry no signal — that is a prompt problem,
+                not a data problem.
+              </li>
+            </ul>
+          </div>
+
+          {/* 6. Source of truth — what the grader actually does */}
+          <div className="card p-5">
+            <div className="section-num mb-2">Where The Scores Come From</div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              Every prediction_scores row is written by a deterministic
+              grader that walks actual yfinance closes for the prediction's
+              tickers. No LLM scores itself; the grader is plain Python
+              comparing the call against the actual market move with a
+              horizon-scaled flat band (0.4% at 1d, 1.2% at 5d, 2.5% at 20d).
+              insight_quality is the one auditor that reads text, and it
+              scores number-density + payload-citation - banned-hedges with
+              no model in the loop. Same code grades every call, so the
+              comparison across sessions is apples-to-apples.
+            </p>
+          </div>
         </div>
       </Section>
     </>
