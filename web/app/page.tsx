@@ -358,7 +358,24 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
         <div className="section-num mb-1">{title}</div>
       </div>
       {rows.length ? (
-        <table className="data">
+        <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+          {/*
+            Holdings and Wishlist are two separate <table> elements so each
+            would auto-size its columns independently from its own content.
+            That makes the Wishlist Range column stretch for "Rs.1,490-Rs.1,540"
+            while Holdings' tightest is "Rs.53-Rs.57", so column boundaries
+            drift between the two tables and the eye does not line up reading
+            down. table-layout: fixed + an explicit colgroup forces both
+            instances to use the same column widths so columns sit at the
+            same x-coordinate in both tables.
+          */}
+          <colgroup>
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "12%" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "10%" }} />
+            <col />
+          </colgroup>
           <thead>
             <tr>
               <th>Ticker</th>
@@ -376,7 +393,7 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
                 <td className="num whitespace-nowrap">{r.range ? formatINR(r.range) : "·"}</td>
                 <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
                 <td
-                  className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis max-w-[36rem]"
+                  className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
                   title={r.key_driver}
                 >
                   {r.key_driver}
