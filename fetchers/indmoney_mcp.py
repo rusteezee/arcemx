@@ -424,6 +424,7 @@ async def sync_to_supabase(user_id: str = "default"):
             wl_data = _extract(wl_resp)
             code_to_ticker: dict[str, str] = {}
             n_w = 0
+            live_tickers: set[str] = set()
             for wl in wl_data.get("watchlists", []):
                 for s in wl.get("stocks", []):
                     tk = s.get("ticker")
@@ -435,6 +436,7 @@ async def sync_to_supabase(user_id: str = "default"):
                         ticker = to_yf(tk)
                     else:
                         ticker = tk
+                    live_tickers.add(ticker)
                     try:
                         sb.table("wishlist").upsert({
                             "user_id": user_id, "ticker": ticker
@@ -444,6 +446,28 @@ async def sync_to_supabase(user_id: str = "default"):
                             code_to_ticker[code] = tk
                     except Exception as e:
                         print(f"wishlist fail {tk}: {e}")
+            # Stale-row cleanup. INDmoney is the source of truth for the
+            # watchlist; rows in Supabase that no longer appear there are
+            # orphans the user removed in the app but were never deleted
+            # because the prior sync was upsert-only. Drop them so the
+            # dashboard reflects the actual watchlist live.
+            try:
+                existing = sb.table("wishlist").select("ticker").eq(
+                    "user_id", user_id).execute().data or []
+                existing_tickers = {r.get("ticker") for r in existing if r.get("ticker")}
+                stale = existing_tickers - live_tickers
+                if stale and live_tickers:
+                    print(f"  pruning {len(stale)} stale wishlist rows: {sorted(stale)}")
+                    for t in stale:
+                        sb.table("wishlist").delete().eq(
+                            "user_id", user_id).eq("ticker", t).execute()
+                elif stale and not live_tickers:
+                    # INDmoney returned no watchlist this call. Could be a
+                    # transient empty response; do NOT wipe local rows in
+                    # that case. Bail on cleanup silently.
+                    print("  watchlist response empty; skipping stale cleanup")
+            except Exception as e:
+                print(f"wishlist cleanup fail: {e}")
 
             # ----- Holdings -----
             # INDmoney's MCP occasionally returns HTTP 512 / service_error

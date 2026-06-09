@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { EmptyState } from "@/components/EmptyState";
-import { sb } from "@/lib/supabase";
+import { sb, DEFAULT_UID } from "@/lib/supabase";
 import { formatINR } from "@/lib/utils";
 
 interface WishlistOutlook {
@@ -14,30 +14,73 @@ interface WishlistOutlook {
   key_driver?: string;
 }
 
+interface Row {
+  ticker: string;
+  outlook?: WishlistOutlook;
+}
+
+function normTicker(t: string): string {
+  return (t || "").toUpperCase().replace(/\.NS$/, "");
+}
+
 export default function WishlistPage() {
-  const [rows, setRows] = useState<WishlistOutlook[]>([]);
+  const [rows, setRows] = useState<Row[]>([]);
   const [runAt, setRunAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const { data } = await sb
+      // Primary source: the wishlist table synced from INDmoney. Reading
+      // this guarantees the page shows what the user actually has on the
+      // watchlist right now, regardless of whether the daily analysis has
+      // emitted an outlook row for every ticker yet.
+      const wlRes = await sb
+        .from("wishlist")
+        .select("ticker")
+        .eq("user_id", DEFAULT_UID);
+      const tickers = (wlRes.data || [])
+        .map((r: any) => r.ticker)
+        .filter((t): t is string => typeof t === "string" && t.length > 0);
+
+      // Secondary source: per-stock 1-day outlook from the latest analysis
+      // row. Merge into the wishlist set by ticker so the user sees
+      // direction / range / driver wherever the model emitted one, and a
+      // bare "Awaiting next analysis" cell where it did not.
+      const aRes = await sb
         .from("analysis")
         .select("run_at, raw_json")
         .order("run_at", { ascending: false })
         .limit(1);
-      const raw = data?.[0]?.raw_json || {};
-      setRows((raw.wishlist_outlooks_1d || []) as WishlistOutlook[]);
-      setRunAt(data?.[0]?.run_at || null);
+      const raw = aRes.data?.[0]?.raw_json || {};
+      setRunAt(aRes.data?.[0]?.run_at || null);
+      const outlooks: WishlistOutlook[] = raw.wishlist_outlooks_1d || [];
+      const outlookByTicker: Record<string, WishlistOutlook> = {};
+      for (const o of outlooks) {
+        if (o.ticker) outlookByTicker[normTicker(o.ticker)] = o;
+      }
+
+      setRows(
+        tickers
+          .map((t) => ({
+            ticker: t,
+            outlook: outlookByTicker[normTicker(t)],
+          }))
+          .sort((a, b) => a.ticker.localeCompare(b.ticker))
+      );
       setLoading(false);
     })();
   }, []);
 
+  const outlookCount = useMemo(
+    () => rows.filter((r) => r.outlook).length,
+    [rows]
+  );
+
   if (!loading && !rows.length) {
     return (
       <EmptyState
-        title="No wishlist outlooks yet."
-        hint="Populates once tomorrow's cron runs and the model emits wishlist_outlooks_1d."
+        title="Wishlist empty."
+        hint="Send /sync to the bot to pull your INDmoney watchlist, or /add_wish TICKER to add manually."
       />
     );
   }
@@ -50,28 +93,31 @@ export default function WishlistPage() {
           Stocks you are <span className="italic">Watching.</span>
         </h1>
         <p className="sub-headline max-w-2xl">
-          The model's next-day direction call and ATR-anchored range for every
-          stock on your wishlist. Key driver cites 2+ concrete numbers (RSI,
-          MACD, DMA distance, support, resistance, sector cue).
+          Your live INDmoney watchlist. Where the morning analysis has emitted
+          a per-stock 1-day outlook (direction, ATR range, key driver), it
+          merges in here. Tickers without an outlook yet show "Awaiting next
+          analysis".
         </p>
       </div>
 
-      {runAt && (
-        <div className="card p-4 mb-8 inline-flex items-center gap-3 text-sm">
-          <span className="glyph text-base">◈</span>
-          <span className="text-[var(--muted)]">
-            From analysis run at{" "}
-            <span className="text-foreground font-medium num">
-              {new Date(runAt).toLocaleString("en-IN", {
-                timeZone: "Asia/Kolkata",
-                day: "2-digit", month: "2-digit", year: "numeric",
-                hour: "numeric", minute: "2-digit", hour12: true,
-              })}
-            </span>
-            .
-          </span>
-        </div>
-      )}
+      <div className="card p-4 mb-8 inline-flex items-center gap-3 text-sm flex-wrap">
+        <span className="glyph text-base">◈</span>
+        <span className="text-[var(--muted)]">
+          {rows.length} stocks on watchlist · {outlookCount} with current outlook
+          {runAt && (
+            <>
+              {" · outlook from "}
+              <span className="text-foreground font-medium num">
+                {new Date(runAt).toLocaleString("en-IN", {
+                  timeZone: "Asia/Kolkata",
+                  day: "2-digit", month: "2-digit", year: "numeric",
+                  hour: "numeric", minute: "2-digit", hour12: true,
+                })}
+              </span>
+            </>
+          )}
+        </span>
+      </div>
 
       <div className="mb-14">
         <div className="mb-5">
@@ -105,24 +151,34 @@ export default function WishlistPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.ticker}-${i}`} className="align-middle">
+              {rows.map(({ ticker, outlook }) => (
+                <tr key={ticker} className="align-middle">
                   <td className="font-medium whitespace-nowrap">
-                    {(r.ticker || "").replace(/\.NS$/, "")}
+                    {normTicker(ticker)}
                   </td>
-                  <td className="whitespace-nowrap">
-                    <DirPill direction={r.direction} />
-                  </td>
-                  <td className="num whitespace-nowrap">
-                    {r.range ? formatINR(r.range) : "·"}
-                  </td>
-                  <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
-                  <td
-                    className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                    title={r.key_driver}
-                  >
-                    {r.key_driver || "·"}
-                  </td>
+                  {outlook ? (
+                    <>
+                      <td className="whitespace-nowrap">
+                        <DirPill direction={outlook.direction} />
+                      </td>
+                      <td className="num whitespace-nowrap">
+                        {outlook.range ? formatINR(outlook.range) : "·"}
+                      </td>
+                      <td className="num whitespace-nowrap">
+                        {outlook.confidence ?? "·"}
+                      </td>
+                      <td
+                        className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
+                        title={outlook.key_driver}
+                      >
+                        {outlook.key_driver || "·"}
+                      </td>
+                    </>
+                  ) : (
+                    <td colSpan={4} className="text-[var(--muted)] text-sm italic">
+                      Awaiting next analysis.
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

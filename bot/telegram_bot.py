@@ -778,11 +778,53 @@ async def _start_health_server(port: int):
     return server
 
 
+async def scheduled_grader():
+    """Redundant grader trigger from inside the bot. The GitHub Actions
+    cron at 17:00 IST is the primary scheduler, but the free tier
+    occasionally delays jobs by 10-60+ minutes under load. The bot is
+    kept warm by cron-job.org pings so this in-process schedule fires
+    reliably even when the GH cron drifts. Both writing to the same
+    accuracy_summary / prediction_scores tables is safe; the grader is
+    idempotent and dedups by analysis_id + dimension."""
+    import asyncio as _asyncio
+    try:
+        print("In-bot scheduled grader starting...")
+        from analyzer.grader import grade_all, compute_summaries
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: grade_all(lookback_days=90))
+        await loop.run_in_executor(None, compute_summaries)
+        print("In-bot scheduled grader complete.")
+    except Exception as e:
+        print(f"In-bot scheduled grader failed: {e}")
+
+
+async def scheduled_sensei():
+    """Redundant Sensei EOD synthesis trigger. Mirrors scheduled_grader:
+    GH cron is primary, this is a fallback in case Actions queue lag
+    pushes the 20:00 IST run beyond a useful window."""
+    import asyncio as _asyncio
+    try:
+        print("In-bot scheduled Sensei starting...")
+        from analyzer.sensei import run as run_sensei
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: run_sensei(None))
+        print("In-bot scheduled Sensei complete.")
+    except Exception as e:
+        print(f"In-bot scheduled Sensei failed: {e}")
+
+
 async def _post_init(app: Application):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
     scheduler.add_job(scheduled_sync, CronTrigger(hour=8, minute=0, day_of_week="mon-fri"))
+    # 17:05 IST: grader pass. Run 5 minutes after the GH cron's 17:00
+    # target so when GH fires on time both runs grade the same row set
+    # (idempotent), and when GH drifts the bot-side run still lands
+    # before evening Sensei needs the scores.
+    scheduler.add_job(scheduled_grader, CronTrigger(hour=17, minute=5, day_of_week="mon-fri"))
+    # 20:05 IST: Sensei EOD. Same 5-minute offset from GH's 20:00 target.
+    scheduler.add_job(scheduled_sensei, CronTrigger(hour=20, minute=5, day_of_week="mon-fri"))
     scheduler.start()
     app.bot_data["scheduler"] = scheduler
 
