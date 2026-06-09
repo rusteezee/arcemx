@@ -13,6 +13,7 @@ const items = [
   { href: "/markets", label: "Markets" },
   { href: "/portfolio", label: "Portfolio" },
   { href: "/wishlist", label: "Wishlist" },
+  { href: "/sensei", label: "Sensei" },
   { href: "/accuracy", label: "Accuracy" },
   { href: "/history", label: "History" },
 ];

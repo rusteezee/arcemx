@@ -155,6 +155,29 @@ def build_payload() -> dict:
         except Exception as e:
             print(f"Prior call fetch fail: {e}")
 
+    # Sensei EOD retrospective from the previous session. The 20:00 IST
+    # Sensei cron writes this; tomorrow's analysis reads it as the
+    # explicit "homework" block. Tomorrow's prompt mandates the model
+    # cite at least one tomorrow_watch / key_insights item in
+    # reasoning_breakdown.prior_call_check. If absent (cold start /
+    # first run), payload omits the field and prompt falls back to
+    # prior_call only.
+    sensei_yesterday = None
+    if url and key:
+        try:
+            sn = sb.table("sensei_eod").select(
+                "market_close_date,model_used,raw_json"
+            ).order("market_close_date", desc=True).limit(1).execute()
+            if sn.data:
+                sensei_yesterday = {
+                    "market_close_date": sn.data[0].get("market_close_date"),
+                    "model_used": sn.data[0].get("model_used"),
+                    **(sn.data[0].get("raw_json") or {}),
+                }
+                print(f"sensei_yesterday loaded ({sensei_yesterday.get('market_close_date')})")
+        except Exception as e:
+            print(f"sensei_yesterday fetch fail: {e}")
+
     # Order matters: analyze() truncates the JSON payload at ~120k chars,
     # so the highest-leverage signal must come FIRST. self_feedback (the
     # self-learning track record) and market_context (the index ATR/SR
@@ -164,6 +187,7 @@ def build_payload() -> dict:
     return {
         "timestamp": datetime.utcnow().isoformat(),
         "self_feedback": _load_feedback(),
+        "sensei_yesterday": sensei_yesterday,
         "market_context": market_context,
         "flows": flows,
         "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],

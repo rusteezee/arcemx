@@ -83,3 +83,24 @@ create table if not exists transactions (
 );
 create index if not exists idx_tx_user_date on transactions(user_id, execution_date);
 create index if not exists idx_tx_user_ticker on transactions(user_id, ticker);
+
+-- EOD retrospective written by analyzer.sensei after market close + grader run.
+-- One row per market-close date. Tomorrow's morning analysis reads the latest
+-- row via aggregator (sensei_yesterday) so the model goes into the next call
+-- with explicit retrospection on yesterday's misses / wins.
+create table if not exists sensei_eod (
+    id bigserial primary key,
+    run_at timestamptz default now(),
+    analysis_id bigint references analysis(id),
+    market_close_date date not null unique,
+    model_used text,
+    raw_json jsonb not null,
+    what_worked jsonb,
+    what_missed jsonb,
+    conviction_review jsonb,
+    key_insights jsonb,
+    tomorrow_watch jsonb,
+    calibration_note text,
+    insight_quality_avg numeric
+);
+create index if not exists idx_sensei_eod_date on sensei_eod(market_close_date desc);

@@ -264,6 +264,25 @@ When a prior_call is provided in the payload, treat it as your previous predicti
 - If new data contradicts prior call, explicitly state the regime shift in reasoning.
 - Do NOT flip-flop without strong evidence. Stability matters for trust.
 
+When sensei_yesterday is provided (it will be on every weekday session after the
+first), it is the EOD retrospective written after the previous session closed by a
+separate synthesis pass over the actual closes and the grader's scores. Treat it as
+binding homework, not advisory.
+- Read sensei_yesterday.tomorrow_watch and sensei_yesterday.key_insights BEFORE
+  forming your direction call. Levels and events flagged there are the first thing
+  you check against today's market_context.
+- If sensei_yesterday.what_missed lists a setup similar to today's, do NOT repeat
+  the same mistake; explicitly call out the prior miss in reasoning_breakdown.
+  prior_call_check and explain how today's call differs (or why you are holding
+  the same view despite the miss).
+- Cite at least ONE item from sensei_yesterday.tomorrow_watch or key_insights in
+  reasoning_breakdown.prior_call_check by name. No paraphrase-only references; quote
+  the specific level / event / number.
+- sensei_yesterday.calibration_note tells you whether your last stated confidence was
+  calibrated. If it flags overconfidence, lower your confidence on today's call
+  accordingly. If it flags underconfidence (rare), only raise confidence when today's
+  evidence is genuinely stronger, not because you got punished.
+
 When self_feedback is provided, it is your scored track record graded brutally
 against real market outcomes. Treat it as binding, not advisory.
 - corrective_rules: OBEY every rule. They are derived from your measured failures.
