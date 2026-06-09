@@ -6,6 +6,10 @@ on:
     - cron: "30 11 * * 1-5"
   workflow_dispatch:
 
+# See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   grade:
     runs-on: ubuntu-latest

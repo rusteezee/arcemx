@@ -5,6 +5,15 @@ on:
     - cron: "0 3 * * 1-5"  # 03:00 UTC Mon-Fri = 08:30 IST
   workflow_dispatch:
 
+# Opt every JavaScript action onto Node 24 ahead of the 16 June 2026
+# forced-migration deadline. actions/checkout@v4 and actions/setup-python@v5
+# still ship as Node 20 bundles in their current major; this env var tells
+# the runner to execute them under Node 24 instead. Removes the looming
+# break without bumping action major versions (which is a separate, larger
+# audit). Drop this var once we move to Node-24-native action releases.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
