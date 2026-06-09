@@ -60,9 +60,17 @@ interface Calibration {
   n: number;
 }
 
+interface ScatterPoint {
+  width: number;   // band width % of midpoint
+  score: number;   // 0-100 hit rate (binary for interval)
+  date: string;
+}
+
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
+  const [iqTrend, setIqTrend] = useState<{ date: string; value: number }[]>([]);
+  const [rangeScatter, setRangeScatter] = useState<ScatterPoint[]>([]);
   const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -157,6 +165,64 @@ export default function AccuracyPage() {
         return { date: d.date, value: Math.round(mean * 10) / 10 };
       });
       setTrend(points);
+
+      // ----- Insight quality trend (per analysis date, rolling-5 mean) -----
+      // insight_quality is scored age=0 (same day), so the line shows up the
+      // fastest of any dim. Smaller K than direction trend (5 vs 10) because
+      // text quality moves more slowly than direction noise.
+      const { data: iqRows } = await sb
+        .from("prediction_scores")
+        .select("score,analysis_id")
+        .eq("dimension", "insight_quality")
+        .limit(400);
+      const iqByDate = new Map<string, number[]>();
+      for (const r of (iqRows || []) as any[]) {
+        const runAt = runAtById.get(r.analysis_id);
+        if (!runAt || typeof r.score !== "number") continue;
+        const d = String(runAt).slice(0, 10);
+        const arr = iqByDate.get(d) ?? [];
+        arr.push(r.score);
+        iqByDate.set(d, arr);
+      }
+      const iqDaily = Array.from(iqByDate.entries())
+        .map(([date, arr]) => ({ date, score: arr.reduce((a, b) => a + b, 0) / arr.length }))
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
+      const IQ_K = 5;
+      const iqPoints = iqDaily.map((d, i) => {
+        const slice = iqDaily.slice(Math.max(0, i - IQ_K + 1), i + 1);
+        const mean = slice.reduce((a, b) => a + b.score, 0) / slice.length;
+        return { date: d.date, value: Math.round(mean * 10) / 10 };
+      });
+      setIqTrend(iqPoints);
+
+      // ----- Range tightness vs hit rate scatter -----
+      // Each scored range_1d row carries the predicted [lo, hi] band. Plot
+      // band width % vs the binary hit score (100 = close inside, 0 = miss).
+      // A useful range engine clusters into the top-left quadrant (tight
+      // bands that still hit). A wide right column shows the model buying
+      // hit rate with width — surfaces overconfidence/range inflation.
+      const { data: rngRows } = await sb
+        .from("prediction_scores")
+        .select("score,predicted,analysis_id")
+        .eq("dimension", "range_1d")
+        .limit(400);
+      const sPts: ScatterPoint[] = [];
+      for (const r of (rngRows || []) as any[]) {
+        const pred = r.predicted || {};
+        const rng = pred.range;
+        if (!Array.isArray(rng) || rng.length < 2) continue;
+        const lo = Number(rng[0]);
+        const hi = Number(rng[1]);
+        if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo <= 0 || hi <= 0) continue;
+        const mid = (lo + hi) / 2;
+        if (mid <= 0) continue;
+        const width = ((hi - lo) / mid) * 100;
+        const runAt = runAtById.get(r.analysis_id);
+        if (typeof r.score !== "number") continue;
+        sPts.push({ width: Math.round(width * 100) / 100, score: r.score, date: runAt ? String(runAt).slice(0, 10) : "" });
+      }
+      setRangeScatter(sPts);
+
       setLoading(false);
     })();
   }, []);
@@ -246,7 +312,7 @@ export default function AccuracyPage() {
         </motion.div>
       )}
 
-      <Section num={calibration ? "001 / 004" : "001 / 003"} title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 008" : "001 / 007"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -268,7 +334,7 @@ export default function AccuracyPage() {
 
       {calibration && (
         <Section
-          num="002 / 004"
+          num="002 / 008"
           title="Confidence Calibration"
           glyph="◉"
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
@@ -293,7 +359,31 @@ export default function AccuracyPage() {
         </Section>
       )}
 
-      <Section num={calibration ? "003 / 004" : "002 / 003"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
+      <Section
+        num={calibration ? "003 / 008" : "002 / 007"}
+        title="New Dimensions"
+        glyph="◉"
+        description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
+      >
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {(["insight_quality", "cap_pair_1d", "fii_flow_1d", "index_pair_1d"] as const).map((dim) => {
+            const row = summary.find((s) => s.window_days === 30 && s.dimension === dim);
+            const acc = row?.accuracy_pct ?? null;
+            const n = row?.sample_size ?? 0;
+            return (
+              <Stat
+                key={dim}
+                label={DIMENSION_LABELS[dim]}
+                value={acc == null ? "—" : `${acc.toFixed(1)}%`}
+                delta={acc == null ? "awaiting first grade" : `${n} scored · 30d`}
+                glyph="◎"
+              />
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section num={calibration ? "004 / 008" : "003 / 007"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -350,7 +440,7 @@ export default function AccuracyPage() {
         </motion.div>
       </Section>
 
-      <Section num={calibration ? "004 / 004" : "003 / 003"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
+      <Section num={calibration ? "005 / 008" : "004 / 007"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -382,6 +472,204 @@ export default function AccuracyPage() {
           )}
         </motion.div>
       </Section>
+
+      <Section
+        num={calibration ? "006 / 008" : "005 / 007"}
+        title="Insight Quality Trend"
+        glyph="⬡"
+        description="Rolling 5-prediction average of the reasoning_breakdown auditor score. Number-density + payload citations - banned hedges. Climbs as the model anchors more in data and stops hedging."
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
+          className="card p-6"
+        >
+          {iqTrend.length >= 3 ? (
+            <LineChart
+              data={iqTrend}
+              height={260}
+              color="var(--foreground)"
+              valueLabel="Insight Quality"
+              yTickFormatter={(v) => `${Math.round(v)}`}
+              valueFormatter={(v) => `${v.toFixed(1)}`}
+            />
+          ) : (
+            <div
+              style={{ height: 260 }}
+              className="flex flex-col items-center justify-center text-center gap-2"
+            >
+              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+              <p className="text-sm text-[var(--muted)]">
+                Collecting data. Trend appears once at least 3 sessions are scored.
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {iqTrend.length} scored so far.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      </Section>
+
+      <Section
+        num={calibration ? "007 / 008" : "006 / 007"}
+        title="Range Tightness vs Hit Rate"
+        glyph="◈"
+        description="X-axis: predicted band width as percent of midpoint. Y-axis: hit (100) or miss (0) for that day. The useful cluster is top-left: tight bands that still hit. A wide right column means the engine bought hit rate with width — that's range inflation, not skill."
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.24 }}
+          className="card p-6"
+        >
+          {rangeScatter.length >= 3 ? (
+            <RangeScatter points={rangeScatter} />
+          ) : (
+            <div
+              style={{ height: 280 }}
+              className="flex flex-col items-center justify-center text-center gap-2"
+            >
+              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+              <p className="text-sm text-[var(--muted)]">
+                Collecting data. Scatter appears once at least 3 range predictions are scored.
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {rangeScatter.length} scored so far.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      </Section>
+
+      <Section
+        num={calibration ? "008 / 008" : "007 / 007"}
+        title="Conviction Tier Performance"
+        glyph="◉"
+        description="Stratified pick alpha by conviction label. A-tier alpha should exceed B; B should exceed C. Flat results across tiers means the labels carry no signal and the prompt needs tightening."
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {([
+            { tier: "A", dim: "short_pick_A_7d" as const, gloss: "Highest conviction. All three pillars aligned (technicals + news + sector). Capped at 0-2 per day." },
+            { tier: "B", dim: "short_pick_B_7d" as const, gloss: "Solid setup. Two of three pillars aligned. Bulk of picks." },
+            { tier: "C", dim: "short_pick_C_7d" as const, gloss: "Speculative / asymmetric. One pillar strong, signal incomplete. Sparingly." },
+          ]).map(({ tier, dim, gloss }) => {
+            const row = summary.find((s) => s.window_days === 30 && s.dimension === dim);
+            const acc = row?.accuracy_pct ?? null;
+            const n = row?.sample_size ?? 0;
+            const accColor =
+              acc == null ? "var(--muted)" : acc >= 65 ? "var(--gain)" : acc >= 50 ? "var(--warn)" : "var(--loss)";
+            return (
+              <div key={tier} className="card p-5">
+                <div className="flex items-baseline justify-between mb-2">
+                  <div className="section-num">Tier {tier} · 7d alpha</div>
+                  <span className="num text-xs text-[var(--muted)]">
+                    {n} scored
+                  </span>
+                </div>
+                <div className="text-3xl font-semibold" style={{ color: accColor }}>
+                  {acc == null ? "—" : `${acc.toFixed(1)}%`}
+                </div>
+                <p className="text-sm text-[var(--muted)] leading-relaxed mt-3">{gloss}</p>
+              </div>
+            );
+          })}
+        </div>
+      </Section>
     </>
+  );
+}
+
+function RangeScatter({ points }: { points: ScatterPoint[] }) {
+  // Inline SVG scatter so we do not pull a second chart library. X = band
+  // width %, Y = score (0 or 100 for interval grader). Quadrant guides at
+  // x=1% (tight/wide split) and y=50 (hit/miss split) frame the useful
+  // top-left quadrant.
+  const H = 280;
+  const W = 720;
+  const padL = 44;
+  const padR = 16;
+  const padT = 16;
+  const padB = 30;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const maxX = Math.max(2, ...points.map((p) => p.width));
+  const xScale = (x: number) => padL + (Math.min(x, maxX) / maxX) * innerW;
+  // y range 0-100; invert because SVG y grows downward
+  const yScale = (y: number) => padT + innerH - (y / 100) * innerH;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet">
+      {/* axis lines */}
+      <line x1={padL} y1={padT} x2={padL} y2={padT + innerH} stroke="var(--border)" />
+      <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="var(--border)" />
+      {/* quadrant guides */}
+      <line
+        x1={xScale(Math.min(1.0, maxX))}
+        y1={padT}
+        x2={xScale(Math.min(1.0, maxX))}
+        y2={padT + innerH}
+        stroke="var(--muted)"
+        strokeDasharray="3 4"
+        opacity="0.45"
+      />
+      <line
+        x1={padL}
+        y1={yScale(50)}
+        x2={padL + innerW}
+        y2={yScale(50)}
+        stroke="var(--muted)"
+        strokeDasharray="3 4"
+        opacity="0.45"
+      />
+      {/* y ticks 0/50/100 */}
+      {[0, 50, 100].map((t) => (
+        <g key={t}>
+          <text x={padL - 8} y={yScale(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted)">
+            {t}
+          </text>
+        </g>
+      ))}
+      {/* x ticks */}
+      {[0, Math.round(maxX * 0.5 * 10) / 10, Math.round(maxX * 10) / 10].map((t, i) => (
+        <text
+          key={i}
+          x={xScale(t)}
+          y={padT + innerH + 18}
+          textAnchor="middle"
+          fontSize="11"
+          fill="var(--muted)"
+        >
+          {t}%
+        </text>
+      ))}
+      <text x={padL + innerW / 2} y={H - 4} textAnchor="middle" fontSize="11" fill="var(--muted)">
+        Band width (% of midpoint)
+      </text>
+      <text
+        x={-padT - innerH / 2}
+        y={14}
+        textAnchor="middle"
+        fontSize="11"
+        fill="var(--muted)"
+        transform="rotate(-90)"
+      >
+        Score
+      </text>
+      {/* points */}
+      {points.map((p, i) => (
+        <circle
+          key={i}
+          cx={xScale(p.width)}
+          cy={yScale(p.score)}
+          r="4"
+          fill={p.score >= 50 ? "var(--gain)" : "var(--loss)"}
+          opacity="0.75"
+        >
+          <title>{`${p.date}: width ${p.width}%, score ${p.score}`}</title>
+        </circle>
+      ))}
+    </svg>
   );
 }
