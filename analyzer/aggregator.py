@@ -88,12 +88,42 @@ def build_payload() -> dict:
 
     print("User holdings + wishlist...")
     holdings, wishlist, prior_call = [], [], None
+    holding_technicals, wishlist_technicals = {}, {}
     if url and key:
         sb = create_client(url, key)
         h = sb.table("portfolio").select("ticker,qty,avg_buy_price").execute()
         holdings = h.data or []
         w = sb.table("wishlist").select("ticker").execute()
         wishlist = [x["ticker"] for x in (w.data or [])]
+
+        # Per-stock technicals for holdings + wishlist specifically. Most of
+        # the user's holdings are smallcap/midcap and NOT in the NIFTY50
+        # universe, so screen_universe never produced ATR/SR/RSI for them.
+        # The new holding_outlooks_1d / wishlist_outlooks_1d schema demands
+        # the model anchor per-stock predictions to ATR + S/R, so we have
+        # to enrich here. Tickers stored in DB may or may not have .NS so
+        # we tolerate both.
+        def _norm(t: str) -> str:
+            t = (t or "").strip().upper()
+            return t if t.endswith(".NS") else f"{t}.NS"
+        focus_tickers = list({_norm(h["ticker"]) for h in holdings if h.get("ticker")}
+                             | {_norm(t) for t in wishlist})
+        if focus_tickers:
+            try:
+                focus_signals = screen_universe(focus_tickers)
+                holding_set = {_norm(h["ticker"]) for h in holdings if h.get("ticker")}
+                wishlist_set = {_norm(t) for t in wishlist}
+                for tk, sig in focus_signals.items():
+                    if not sig:
+                        continue
+                    if tk in holding_set:
+                        holding_technicals[tk] = sig
+                    if tk in wishlist_set:
+                        wishlist_technicals[tk] = sig
+                print(f"Per-stock technicals: holdings={len(holding_technicals)} "
+                      f"wishlist={len(wishlist_technicals)}")
+            except Exception as e:
+                print(f"focus technicals fail: {e}")
         # Prior analysis for self-context
         try:
             prev = sb.table("analysis").select("run_at,market_mood,raw_json").order(
@@ -124,6 +154,8 @@ def build_payload() -> dict:
         "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],
         "user_holdings": holdings,
         "user_wishlist": wishlist,
+        "holding_technicals": holding_technicals,
+        "wishlist_technicals": wishlist_technicals,
         "prior_call": prior_call,
         "technical_bullish_top": ranked["bullish"],
         "technical_bearish_top": ranked["bearish"],

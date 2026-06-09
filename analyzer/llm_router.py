@@ -109,6 +109,26 @@ The payload includes a market_context block. USE IT as your primary evidence bas
   widen the band slightly and be cautious on a strong directional call. Note
   month-end window dressing when relevant.
 
+EVERY holding in user_holdings AND every stock in user_wishlist gets a separate
+next-day outlook in holding_outlooks_1d and wishlist_outlooks_1d respectively.
+This is in addition to (not replacing) the existing 7-day portfolio_verdicts and
+wishlist_signals.
+- direction: up only if you see >0.4% upside vs prior close; down only if >0.4%
+  downside; otherwise sideways. (Same horizon-scaled bar the grader applies.)
+- range: tightest INR band you can defend. Width should be near 1x the stock's
+  expected_daily_move_pct (ATR-based). A range wider than 2x ATR signals you do
+  not have a view; widen only when you say why.
+- confidence: 0-100, MUST track realized accuracy from self_feedback. For a single
+  next-day stock direction the base rate is ~50/50, so default ~50 and deviate
+  only with concrete signal.
+- key_driver: ONE line, must cite AT LEAST TWO concrete numbers from the per-stock
+  technicals block (RSI, MACD state, vs SMA20/50/200, support_20d, resistance_20d,
+  expected_daily_move_pct, atr_14). Example: "RSI 58 + MACD bullish + 0.8% above
+  SMA20, resistance_20d 350 is the cap."
+- If a holding or wishlist stock is missing from the technical context (no signal
+  block emitted), still emit an outlook but mark confidence <= 35 and say in
+  key_driver that data was thin.
+
 Per-stock technicals in technical_bullish_top / technical_bearish_top now include
 atr_14, expected_daily_move_pct, support_20d, resistance_20d, dist_to_support_pct,
 dist_to_resistance_pct. ANCHOR every pick's target and stop_loss to these levels,
@@ -198,6 +218,8 @@ Return STRICT JSON only matching this schema:
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],
   "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "<numeric INR or INR range, e.g. 380 or 360-400>", "stop_loss": "<numeric INR, e.g. 290>"}],
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
+  "holding_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band, e.g. 320-330>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers: RSI/MACD/DMA/ATR/sector cue>"}],
+  "wishlist_outlooks_1d": [{"ticker": "<ticker without .NS suffix>", "direction": "up|down|sideways", "range": "<tight INR band>", "confidence": 0-100, "key_driver": "<one-line citation of >=2 numbers>"}],
   "global_factors": ["..."],
   "key_news_drivers": ["..."],
   "search_trend_signals": ["..."],

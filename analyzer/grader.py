@@ -593,6 +593,70 @@ def grade_all(lookback_days: int = 90):
                                   {"results": wresults}, avg_w, 0,
                                   notes=f"avg wishlist signal score across {len(wscores)} names")
 
+            # ----- Per-holding + per-wishlist 1-day direction + range -----
+            # Schema fields holding_outlooks_1d / wishlist_outlooks_1d give a
+            # per-stock next-day call (separate from the 7d verdict / signal).
+            # Graded with the same horizon-scaled grade_direction (flat=0.4%
+            # for 1d) and grade_range (interval, tightness-penalised) used
+            # for NIFTY, so per-stock results sit on the same scale as the
+            # index dims. Aggregated to one (avg_dir, avg_range) sample per
+            # prediction-day per dim, matching how compute_summaries dedups.
+            for src_key, dir_dim, range_dim, label in (
+                ("holding_outlooks_1d", "holding_outlook_dir_1d",
+                 "holding_outlook_range_1d", "holding"),
+                ("wishlist_outlooks_1d", "wishlist_outlook_dir_1d",
+                 "wishlist_outlook_range_1d", "wishlist"),
+            ):
+                if age < 1:
+                    continue
+                outlooks = raw.get(src_key, []) or []
+                if not outlooks:
+                    continue
+                dir_scores, range_scores, results = [], [], []
+                for o in outlooks:
+                    tk = (o.get("ticker") or "").strip().upper()
+                    if not tk:
+                        continue
+                    yf_tk = tk if tk.endswith(".NS") else f"{tk}.NS"
+                    last_close = _close_on_or_after(yf_tk, run_at - timedelta(days=1))
+                    next_close = _close_on_or_after(yf_tk, run_at + timedelta(days=1))
+                    if not last_close or not next_close:
+                        continue
+                    dscore, delta = grade_direction(
+                        o.get("direction") or "", last_close, next_close,
+                        flat=DIRECTION_FLAT.get(1, 0.4))
+                    dir_scores.append(dscore)
+                    rng = _parse_range(o.get("range") or "")
+                    rscore = None
+                    rdelta = 0
+                    if rng:
+                        rscore, rdelta = grade_range(rng, next_close)
+                        range_scores.append(rscore)
+                    results.append({
+                        "ticker": tk,
+                        "direction": o.get("direction"),
+                        "range": o.get("range"),
+                        "actual_pct": round(delta, 2),
+                        "dir_score": dscore,
+                        "range_score": rscore,
+                    })
+                if dir_scores:
+                    avg_d = sum(dir_scores) / len(dir_scores)
+                    _upsert_score(sb, aid, dir_dim, 1,
+                                  {"outlooks": [{"ticker": r["ticker"],
+                                                 "direction": r["direction"]}
+                                                for r in results]},
+                                  {"results": results}, avg_d, 0,
+                                  notes=f"avg per-{label} 1d direction across {len(dir_scores)} names")
+                if range_scores:
+                    avg_r = sum(range_scores) / len(range_scores)
+                    _upsert_score(sb, aid, range_dim, 1,
+                                  {"outlooks": [{"ticker": r["ticker"],
+                                                 "range": r["range"]}
+                                                for r in results]},
+                                  {"results": results}, avg_r, 0,
+                                  notes=f"avg per-{label} 1d range across {len(range_scores)} names")
+
             print(f"  graded analysis {aid} ({age}d old)")
         except Exception as e:
             print(f"  fail analysis {row.get('id')}: {e}")

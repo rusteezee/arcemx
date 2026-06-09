@@ -26,6 +26,10 @@ const DIMENSION_LABELS: Record<string, string> = {
   verdict_7d: "Portfolio Verdicts (7d)",
   verdict_tp_sl: "Holding Target/SL Hit (20d)",
   wishlist_7d: "Wishlist Signals (7d)",
+  holding_outlook_dir_1d: "Holdings Direction (1d)",
+  holding_outlook_range_1d: "Holdings Range (1d)",
+  wishlist_outlook_dir_1d: "Wishlist Direction (1d)",
+  wishlist_outlook_range_1d: "Wishlist Range (1d)",
 };
 
 const WINDOWS = [7, 30, 90];
