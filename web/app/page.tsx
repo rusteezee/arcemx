@@ -180,14 +180,19 @@ export default function TodayPage() {
               </thead>
               <tbody>
                 {raw.portfolio_verdicts.map((v: any, i: number) => (
-                  <tr key={i}>
-                    <td className="font-medium">{v.ticker}</td>
-                    <td>
+                  <tr key={i} className="align-middle">
+                    <td className="font-medium whitespace-nowrap">{v.ticker}</td>
+                    <td className="whitespace-nowrap">
                       <VerdictPill v={v.verdict} />
                     </td>
-                    <td className="text-[var(--muted)] max-w-md">{v.reason}</td>
-                    <td className="num text-[var(--gain)]">{formatINR(v.target)}</td>
-                    <td className="num text-[var(--loss)]">{formatINR(v.stop_loss)}</td>
+                    <td
+                      className="text-[var(--muted)] whitespace-nowrap overflow-hidden text-ellipsis max-w-[32rem]"
+                      title={v.reason}
+                    >
+                      {v.reason}
+                    </td>
+                    <td className="num whitespace-nowrap text-[var(--gain)]">{formatINR(v.target)}</td>
+                    <td className="num whitespace-nowrap text-[var(--loss)]">{formatINR(v.stop_loss)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -313,12 +318,17 @@ function SectorsIndexPair({ sectors, pair }: { sectors: any[]; pair?: any }) {
             </thead>
             <tbody>
               {sectors.map((s: any, i: number) => (
-                <tr key={i}>
-                  <td className="font-medium">{s.sector}</td>
-                  <td><DirPill direction={s.direction} /></td>
-                  <td className="num">{s.range || "·"}</td>
-                  <td className="num">{s.confidence ?? "·"}</td>
-                  <td className="text-[var(--muted)] max-w-md text-sm">{s.key_driver}</td>
+                <tr key={i} className="align-middle">
+                  <td className="font-medium whitespace-nowrap">{s.sector}</td>
+                  <td className="whitespace-nowrap"><DirPill direction={s.direction} /></td>
+                  <td className="num whitespace-nowrap">{s.range ? formatINR(s.range) : "·"}</td>
+                  <td className="num whitespace-nowrap">{s.confidence ?? "·"}</td>
+                  <td
+                    className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis max-w-[36rem]"
+                    title={s.key_driver}
+                  >
+                    {s.key_driver}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -360,12 +370,17 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
           </thead>
           <tbody>
             {rows.map((r: any, i: number) => (
-              <tr key={i}>
-                <td className="font-medium">{(r.ticker || "").replace(/\.NS$/, "")}</td>
-                <td><DirPill direction={r.direction} /></td>
-                <td className="num">{r.range || "·"}</td>
-                <td className="num">{r.confidence ?? "·"}</td>
-                <td className="text-[var(--muted)] max-w-md text-sm">{r.key_driver}</td>
+              <tr key={i} className="align-middle">
+                <td className="font-medium whitespace-nowrap">{(r.ticker || "").replace(/\.NS$/, "")}</td>
+                <td className="whitespace-nowrap"><DirPill direction={r.direction} /></td>
+                <td className="num whitespace-nowrap">{r.range ? formatINR(r.range) : "·"}</td>
+                <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
+                <td
+                  className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis max-w-[36rem]"
+                  title={r.key_driver}
+                >
+                  {r.key_driver}
+                </td>
               </tr>
             ))}
           </tbody>
