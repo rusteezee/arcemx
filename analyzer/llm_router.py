@@ -33,7 +33,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
+# Strip whitespace defensively. A trailing newline or space pasted into a
+# secrets store (common copy-paste artifact) makes requests reject the
+# Authorization header with InvalidHeader, since no real key contains
+# whitespace in its content this is safe and universal.
+OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
 # Primary: Nemotron 3 Super 120B (free). 120B/12B-active MoE, 1M ctx.
 # Selected over Ultra after bake-off on a real payload: Super produced
