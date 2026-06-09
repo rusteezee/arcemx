@@ -437,50 +437,7 @@ function Playground({
             No live quotes available. Yfinance may be rate-limiting.
           </div>
         ) : (
-          <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
-            <colgroup>
-              <col style={{ width: "6%" }} />
-              <col style={{ width: "22%" }} />
-              <col style={{ width: "16%" }} />
-              <col />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Instrument</th>
-                <th>Today</th>
-                <th>Relative</th>
-              </tr>
-            </thead>
-            <tbody>
-              {live.map((r, i) => {
-                const accent = r.pct > 0 ? "var(--gain)" : r.pct < 0 ? "var(--loss)" : "var(--muted)";
-                const barPct = Math.min(100, (Math.abs(r.pct) / liveMax) * 100);
-                return (
-                  <tr key={r.name} className="align-middle">
-                    <td className="num text-[var(--muted)] font-medium">{i + 1}</td>
-                    <td className="font-medium whitespace-nowrap">{r.name}</td>
-                    <td className="num whitespace-nowrap" style={{ color: accent }}>
-                      {formatPct(r.pct)}
-                    </td>
-                    <td>
-                      <span
-                        aria-hidden
-                        className="inline-block rounded-full"
-                        style={{
-                          width: `${barPct * 0.8}%`,
-                          maxWidth: "100%",
-                          height: 5,
-                          background: accent,
-                          opacity: 0.55,
-                        }}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <LiveBars rows={live} max={liveMax} />
         )}
       </div>
 
@@ -576,6 +533,81 @@ function Playground({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function LiveBars({ rows, max }: { rows: LiveRow[]; max: number }) {
+  // Horizontal bar graph. Each row: name on the left, bar centered at the
+  // zero line, value at the right. Gain bars shoot right, loss bars shoot
+  // left, mirrored around a vertical zero line so the visual axis itself
+  // tells you "up vs down today" at a glance.
+  return (
+    <div className="px-5 pb-5">
+      <div className="space-y-1.5">
+        {rows.map((r, i) => {
+          const isGain = r.pct > 0;
+          const isLoss = r.pct < 0;
+          const accent = isGain ? "var(--gain)" : isLoss ? "var(--loss)" : "var(--muted)";
+          // Half the inner track each side of zero so the largest absolute
+          // move (up or down) fills 100% of its side.
+          const widthPct = Math.min(100, (Math.abs(r.pct) / max) * 100);
+          return (
+            <div key={r.name} className="flex items-center gap-3 text-sm">
+              <div className="w-6 text-right num text-[var(--muted)] font-medium">
+                {i + 1}
+              </div>
+              <div className="w-24 sm:w-28 font-medium whitespace-nowrap truncate">
+                {r.name}
+              </div>
+              {/* Bar track. Split at the center for symmetric mirroring. */}
+              <div className="flex-1 flex items-center" style={{ minHeight: 18 }}>
+                <div className="flex-1 flex justify-end pr-[1px]">
+                  {isLoss && (
+                    <span
+                      aria-hidden
+                      className="block rounded-l-full"
+                      style={{
+                        width: `${widthPct}%`,
+                        height: 12,
+                        background: accent,
+                        opacity: 0.78,
+                        transition: "width 0.5s ease-out",
+                      }}
+                    />
+                  )}
+                </div>
+                <div
+                  className="self-stretch"
+                  style={{ width: 1, background: "var(--border)" }}
+                  aria-hidden
+                />
+                <div className="flex-1 flex justify-start pl-[1px]">
+                  {isGain && (
+                    <span
+                      aria-hidden
+                      className="block rounded-r-full"
+                      style={{
+                        width: `${widthPct}%`,
+                        height: 12,
+                        background: accent,
+                        opacity: 0.78,
+                        transition: "width 0.5s ease-out",
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+              <div
+                className="num whitespace-nowrap w-20 text-right"
+                style={{ color: accent }}
+              >
+                {formatPct(r.pct)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
