@@ -150,7 +150,7 @@ export function MultiLineChart({
             fontSize: 12,
           }}
         />
-        {visible.map((s) => (
+        {visible.map((s, i) => (
           <Line
             key={s.key}
             type="monotone"
@@ -160,7 +160,10 @@ export function MultiLineChart({
             strokeWidth={1.6}
             dot={false}
             connectNulls
-            isAnimationActive={false}
+            isAnimationActive
+            animationDuration={1100}
+            animationBegin={i * 60}
+            animationEasing="ease-out"
           />
         ))}
       </RLineChart>

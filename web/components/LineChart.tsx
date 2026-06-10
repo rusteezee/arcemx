@@ -345,7 +345,9 @@ export function LineChart({
             fill="url(#gFill)"
             dot={false}
             activeDot={{ r: 4, strokeWidth: 0, fill: color }}
-            isAnimationActive={false}
+            isAnimationActive
+            animationDuration={1100}
+            animationEasing="ease-out"
           />
           {hasInvested && (
             <Area
@@ -357,7 +359,9 @@ export function LineChart({
               fill="transparent"
               dot={false}
               activeDot={{ r: 4, strokeWidth: 0, fill: investedColor }}
-              isAnimationActive={false}
+              isAnimationActive
+              animationDuration={1100}
+              animationEasing="ease-out"
             />
           )}
         </AreaChart>
@@ -401,7 +405,16 @@ export function LineChart({
           labelFormatter={(label) => formatTick(label as number)}
           formatter={(val) => [fmtVal(val as number), valueLabel]}
         />
-        <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} />
+        <Line
+          type="monotone"
+          dataKey="value"
+          stroke={color}
+          strokeWidth={2}
+          dot={false}
+          isAnimationActive
+          animationDuration={1100}
+          animationEasing="ease-out"
+        />
       </RLineChart>
     </ResponsiveContainer>
       </div>

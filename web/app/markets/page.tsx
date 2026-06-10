@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Section } from "@/components/Section";
 import { Stat } from "@/components/Stat";
 import { LineChart } from "@/components/LineChart";
 import { MultiLineChart, type Series } from "@/components/MultiLineChart";
 import { Heatmap } from "@/components/Heatmap";
+import { Playground } from "@/components/Playground";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
 import { fetchQuote, fetchHistory } from "@/lib/quotes";
 import { formatPct, isIndian, stripTicker } from "@/lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 const NIFTY50 = [
   "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
@@ -76,6 +77,7 @@ export default function MarketsPage() {
   const [heat, setHeat] = useState<Array<{ ticker: string; pct: number; weight: number }>>([]);
   const [custom, setCustom] = useState("");
   const [customTickers, setCustomTickers] = useState<string[]>([]);
+  const [analysis, setAnalysis] = useState<any>(null);
 
   // Compare-chart state. Separate period from the single-ticker chart's
   // period so toggling the compare section doesn't disturb the main chart.
@@ -121,6 +123,17 @@ export default function MarketsPage() {
       const q = await fetchQuote(sym);
       if (q) setIdxQuotes((p) => ({ ...p, [sym]: q }));
     });
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb
+        .from("analysis")
+        .select("*")
+        .order("run_at", { ascending: false })
+        .limit(1);
+      if (data?.[0]) setAnalysis(data[0]);
+    })();
   }, []);
 
   useEffect(() => {
@@ -220,7 +233,7 @@ export default function MarketsPage() {
         </h1>
       </div>
 
-      <Section num="001 / 004" title="Indices" glyph="✦">
+      <Section num="001 / 005" title="Indices" glyph="✦">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {INDICES.map(({ sym, name }) => {
             const q = idxQuotes[sym];
@@ -238,7 +251,7 @@ export default function MarketsPage() {
       </Section>
 
       <Section
-        num="002 / 004"
+        num="002 / 005"
         title="Chart"
         glyph="◈"
         action={
@@ -357,41 +370,35 @@ export default function MarketsPage() {
               </span>
             </div>
           </div>
-          <AnimatePresence mode="wait" initial={false}>
-            {chartError ? (
-              <motion.div
-                key="err"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                style={{ height: 380 }}
-                className="flex items-center justify-center text-center text-sm text-[var(--muted)] px-6"
-              >
-                {chartError}
-              </motion.div>
-            ) : chartLoading ? (
-              <ChartSkeleton key="skel" height={380} />
-            ) : (
-              <motion.div
-                key={`${sel}-${period}`}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <LineChart
-                  data={chart}
-                  height={380}
-                  color="var(--foreground)"
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {chartError ? (
+            <div
+              style={{ height: 380 }}
+              className="flex items-center justify-center text-center text-sm text-[var(--muted)] px-6"
+            >
+              {chartError}
+            </div>
+          ) : (
+            // No skeleton. Keep the previous chart visible while a new
+            // range fetches; dim to 0.55 to signal stale, then snap back
+            // to 1 when fresh data lands. Recharts' built-in animation
+            // handles the line draw + slide-up-from-x-axis.
+            <motion.div
+              key={`${sel}-${period}`}
+              animate={{ opacity: chartLoading ? 0.55 : 1 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <LineChart
+                data={chart}
+                height={380}
+                color="var(--foreground)"
+              />
+            </motion.div>
+          )}
         </div>
       </Section>
 
       <Section
-        num="003 / 004"
+        num="003 / 005"
         title="Indices and Sector Compare"
         glyph="◉"
         description="NIFTY, Sensex, BankNifty, Midcap 150, and the 10 NSE sector indices on one chart. Normalized to 100 at range start so different absolute levels compare directly. Toggle any series in the legend."
@@ -459,30 +466,39 @@ export default function MarketsPage() {
               )}
             </span>
           </div>
-          <AnimatePresence mode="wait" initial={false}>
-            {cmpLoading ? (
-              <ChartSkeleton key="cmp-skel" height={400} />
-            ) : (
-              <motion.div
-                key={`${cmpPeriod}-${cmpNormalize}`}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <MultiLineChart
-                  series={cmpSeries}
-                  visibleKeys={cmpVisible}
-                  normalize={cmpNormalize}
-                  height={400}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <motion.div
+            key={`${cmpPeriod}-${cmpNormalize}`}
+            animate={{ opacity: cmpLoading ? 0.55 : 1 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <MultiLineChart
+              series={cmpSeries}
+              visibleKeys={cmpVisible}
+              normalize={cmpNormalize}
+              height={400}
+            />
+          </motion.div>
         </div>
       </Section>
 
       <Section
-        num="004 / 004"
+        num="004 / 005"
+        title="Playground"
+        glyph="◉"
+        description="Three views in one. SECTOR PERFORMANCE: actual move across NIFTY, Sensex, BankNifty, Midcap 150 and the 10 NSE sectors with a period switcher. FORECAST: the model's ranking for tomorrow (direction sign x confidence). PAIR CALLS FORECAST: relative-pair predictions."
+      >
+        <Playground
+          sectors={analysis?.raw_json?.sector_outlooks || []}
+          nifty={analysis?.raw_json?.nifty_outlook}
+          sensex={analysis?.raw_json?.sensex_outlook}
+          confidence={analysis?.raw_json?.confidence}
+          pair={analysis?.raw_json?.index_pair_outlook}
+          capPair={analysis?.raw_json?.cap_pair_outlook}
+        />
+      </Section>
+
+      <Section
+        num="005 / 005"
         title="Heatmap"
         glyph="⬡"
         description="NIFTY 50 plus your portfolio and wishlist. Tone by day percent change."
@@ -493,41 +509,3 @@ export default function MarketsPage() {
   );
 }
 
-// Soft shimmer skeleton used while a chart fetches. Replaces the bare
-// "Loading" text with a low-key animated placeholder that matches the
-// shape of the chart, so the layout doesn't pop when data lands.
-function ChartSkeleton({ height }: { height: number }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      style={{ height }}
-      className="relative w-full overflow-hidden rounded-xl"
-    >
-      <div className="absolute inset-0 bg-[var(--muted-bg)] opacity-40" />
-      <motion.div
-        aria-hidden
-        className="absolute inset-y-0"
-        style={{
-          width: "32%",
-          background:
-            "linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--foreground) 7%, transparent) 50%, transparent 100%)",
-        }}
-        initial={{ x: "-40%" }}
-        animate={{ x: "140%" }}
-        transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <div className="absolute inset-0 flex items-end gap-2 px-6 pb-6 opacity-30">
-        {Array.from({ length: 24 }).map((_, i) => (
-          <div
-            key={i}
-            className="flex-1 rounded-t-sm bg-[var(--foreground)]"
-            style={{ height: `${20 + ((i * 53) % 70)}%` }}
-          />
-        ))}
-      </div>
-    </motion.div>
-  );
-}
