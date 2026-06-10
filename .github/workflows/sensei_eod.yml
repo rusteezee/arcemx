@@ -2,7 +2,13 @@ name: Sensei EOD
 
 on:
   schedule:
-    - cron: "30 14 * * 1-5"  # 14:30 UTC Mon-Fri = 20:00 IST
+    # 14:41 UTC Mon-Fri = 20:11 IST. Off the half-hour mark: GitHub's
+    # free-tier cron skipped the 14:30 slot entirely on 10/06/2026 (top
+    # of hour and half-hour are the most congested slots). The bot's
+    # in-process 20:05 IST job is the primary; this is the fallback.
+    # Sensei self-grades before synthesizing, so double runs are
+    # idempotent and ordering vs the grader no longer matters.
+    - cron: "41 14 * * 1-5"
   workflow_dispatch:
     inputs:
       analysis_id:

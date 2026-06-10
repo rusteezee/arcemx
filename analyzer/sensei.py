@@ -218,15 +218,31 @@ def _calibration(sb) -> list[dict]:
 
 
 def _resolve_analysis(sb, analysis_id: int | None) -> dict:
-    if analysis_id is None:
+    """Pick the analysis to retrospect on.
+
+    NOT simply the latest row: an analysis run AFTER today's 15:30 IST
+    close targets TOMORROW's session, so retrospecting it today finds
+    zero graded 1d dims and produces a data-thin note. The morning call
+    for today's session is the latest analysis whose run_at is BEFORE
+    today's close (10:00 UTC). Fall back to the absolute latest only
+    when no pre-close row exists (e.g. first day of usage).
+    """
+    if analysis_id is not None:
+        r = sb.table("analysis").select("id,run_at,raw_json").eq(
+            "id", analysis_id).single().execute()
+        return r.data
+    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    close_utc = datetime(ist_now.year, ist_now.month, ist_now.day,
+                         10, 0, tzinfo=timezone.utc)
+    r = sb.table("analysis").select("id,run_at,raw_json").lt(
+        "run_at", close_utc.isoformat()).order(
+        "run_at", desc=True).limit(1).execute()
+    if not r.data:
         r = sb.table("analysis").select("id,run_at,raw_json").order(
             "run_at", desc=True).limit(1).execute()
-        if not r.data:
-            raise RuntimeError("no analysis rows in DB")
-        return r.data[0]
-    r = sb.table("analysis").select("id,run_at,raw_json").eq(
-        "id", analysis_id).single().execute()
-    return r.data
+    if not r.data:
+        raise RuntimeError("no analysis rows in DB")
+    return r.data[0]
 
 
 def build_payload(analysis_id: int | None = None) -> dict:
@@ -277,6 +293,12 @@ def save(result: dict, analysis_id: int) -> None:
     ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
     close_date = ist_now.date().isoformat()
     sb.table("sensei_eod").upsert({
+        # run_at explicitly set: the column default only applies on
+        # INSERT, so an upsert that overwrites an earlier same-day row
+        # (manual click before the cron) would otherwise keep the stale
+        # first-write time. The startup catch-up in the bot uses run_at
+        # to decide whether the row predates grading and needs a redo.
+        "run_at": datetime.now(timezone.utc).isoformat(),
         "analysis_id": analysis_id,
         "market_close_date": close_date,
         "model_used": result.get("_model_used"),
@@ -293,6 +315,22 @@ def save(result: dict, analysis_id: int) -> None:
 
 
 def run(analysis_id: int | None = None) -> dict:
+    # Self-sufficient: grade BEFORE synthesizing so grader_results are
+    # guaranteed present regardless of whether the separate grader cron
+    # fired (or fired late). On 10/06 the GH grader landed at 20:06 IST,
+    # one minute AFTER the 20:05 Sensei, and the retrospective went out
+    # data-thin; this ordering dependency is now gone. grade_all is
+    # idempotent (upsert per analysis+dimension+horizon) so double
+    # grading with the cron is harmless. Short lookback keeps the pass
+    # fast; the daily cron still grades the full 90d window.
+    try:
+        from analyzer.grader import grade_all, compute_summaries
+        print("Sensei: running grader pass first (lookback 10d)...")
+        grade_all(lookback_days=10)
+        compute_summaries()
+    except Exception as e:
+        print(f"Sensei: pre-grade pass failed, continuing with existing scores: {e}")
+
     payload = build_payload(analysis_id)
     aid = payload["morning_analysis_id"]
     result = synthesize(payload)

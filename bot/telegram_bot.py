@@ -959,10 +959,85 @@ async def scheduled_analysis():
         _JOB_RUNNING.discard("analysis")
 
 
+async def _startup_catchup():
+    """Self-heal after a restart. Render redeploys on every push (13
+    restarts on 10/06/2026 alone) and APScheduler state is in-memory, so
+    any cron moment spanned by a restart is silently lost; that is how
+    the 17:05 grader and 20:05 Sensei both got skipped while GH's crons
+    drifted hours. On boot, check what today (IST, weekday) should have
+    already produced and run whatever is missing. Every branch is
+    guarded by a freshness probe so repeated restarts do not repeat
+    work: analysis at most once per day, grader only while summaries
+    predate 17:00, sensei only while today's row is missing or was
+    written before grading was possible."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(45)  # let the dyno settle before heavy work
+    try:
+        from datetime import datetime, timedelta, timezone as _tz
+        ist = datetime.now(_tz.utc) + timedelta(hours=5, minutes=30)
+        if ist.weekday() > 4:
+            return
+        today_ist = ist.date()
+
+        from supabase import create_client as _cc
+        url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
+        if not url or not key:
+            return
+        sb = _cc(url, key)
+
+        # --- Morning analysis missing? (past 08:35 IST, none today) ---
+        if ist.hour > 8 or (ist.hour == 8 and ist.minute >= 35):
+            r = sb.table("analysis").select("run_at").order(
+                "run_at", desc=True).limit(1).execute().data or []
+            latest_ist = None
+            if r:
+                latest_ist = (datetime.fromisoformat(
+                    r[0]["run_at"].replace("Z", "+00:00"))
+                    + timedelta(hours=5, minutes=30)).date()
+            if latest_ist != today_ist:
+                print("Catch-up: no analysis today, running morning analysis")
+                await scheduled_analysis()
+
+        # --- Grader pass missing? (past 17:10 IST, summaries stale) ---
+        if (ist.hour, ist.minute) >= (17, 10):
+            cutoff = datetime(today_ist.year, today_ist.month, today_ist.day,
+                              11, 30, tzinfo=_tz.utc)  # 17:00 IST in UTC
+            acc = sb.table("accuracy_summary").select("computed_at").order(
+                "computed_at", desc=True).limit(1).execute().data or []
+            fresh = acc and datetime.fromisoformat(
+                acc[0]["computed_at"].replace("Z", "+00:00")) >= cutoff
+            if not fresh:
+                print("Catch-up: summaries predate 17:00 IST, running grader")
+                await scheduled_grader()
+
+        # --- Sensei missing or pre-grading? (past 20:10 IST) ---
+        if (ist.hour, ist.minute) >= (20, 10):
+            cutoff = datetime(today_ist.year, today_ist.month, today_ist.day,
+                              11, 30, tzinfo=_tz.utc)
+            sn = sb.table("sensei_eod").select("market_close_date,run_at").eq(
+                "market_close_date", today_ist.isoformat()).limit(1).execute().data or []
+            ok = False
+            if sn and sn[0].get("run_at"):
+                wrote = datetime.fromisoformat(
+                    sn[0]["run_at"].replace("Z", "+00:00"))
+                ok = wrote >= cutoff
+            if not ok:
+                print("Catch-up: Sensei row missing or predates grading, rerunning")
+                await scheduled_sensei()
+    except Exception as e:
+        print(f"Startup catch-up failed: {e}")
+
+
 async def _post_init(app: Application):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
-    scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
+    # misfire_grace_time: fire a due job up to an hour late instead of
+    # the 1-second default, so a busy loop or slow boot does not drop
+    # the day's run. coalesce collapses a missed-pileup into one run.
+    scheduler = AsyncIOScheduler(
+        timezone="Asia/Kolkata",
+        job_defaults={"misfire_grace_time": 3600, "coalesce": True},
+    )
     scheduler.add_job(scheduled_sync, CronTrigger(hour=8, minute=0, day_of_week="mon-fri"))
     # 08:30 IST: morning analysis, bot-primary (GH cron drifted hours or
     # skipped entirely on free tier; see scheduled_analysis docstring).
@@ -973,9 +1048,18 @@ async def _post_init(app: Application):
     # before evening Sensei needs the scores.
     scheduler.add_job(scheduled_grader, CronTrigger(hour=17, minute=5, day_of_week="mon-fri"))
     # 20:05 IST: Sensei EOD. Same 5-minute offset from GH's 20:00 target.
+    # Sensei also self-grades before synthesizing, so even a late fire
+    # never produces a data-thin retrospective again.
     scheduler.add_job(scheduled_sensei, CronTrigger(hour=20, minute=5, day_of_week="mon-fri"))
     scheduler.start()
     app.bot_data["scheduler"] = scheduler
+
+    # Startup catch-up: run whatever today's missed cron moments should
+    # have produced. Kicked as a background task so boot is not blocked.
+    import asyncio as _asyncio
+    task = _asyncio.create_task(_startup_catchup())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
 
     port = int(os.getenv("PORT", "0"))
     if port:
