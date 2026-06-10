@@ -25,13 +25,12 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-import pandas as pd
-import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client
 
 from analyzer.llm_router import _post, _parse_json, _chain
 from analyzer.market_context import INDEX_SYMBOLS, SECTOR_SYMBOLS
+from analyzer.grader import _session_bounds
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,31 +140,6 @@ def _sb():
     return create_client(url, key)
 
 
-def _close_on(symbol: str, on_or_after: datetime) -> float | None:
-    """First close on or after the given UTC datetime. Returns None on
-    missing data / non-positive close (yfinance returns 0 for some
-    delisted/non-trading rows; we filter those)."""
-    try:
-        start = (on_or_after - timedelta(days=3)).strftime("%Y-%m-%d")
-        end = (on_or_after + timedelta(days=5)).strftime("%Y-%m-%d")
-        df = yf.download(symbol, start=start, end=end, auto_adjust=True,
-                         progress=False)
-        if df.empty:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        target_d = on_or_after.date()
-        for ix, row in df.iterrows():
-            if ix.date() >= target_d:
-                v = float(row["Close"])
-                if v > 0:
-                    return v
-        return None
-    except Exception as e:
-        print(f"  close fetch fail {symbol}: {e}")
-        return None
-
-
 def _pct(curr: float | None, prev: float | None) -> float | None:
     if curr is None or prev is None or prev == 0:
         return None
@@ -173,29 +147,31 @@ def _pct(curr: float | None, prev: float | None) -> float | None:
 
 
 def _todays_actuals(run_at: datetime, raw: dict) -> dict:
-    """Build the actuals block: today's close vs prior close for every
-    universe the morning call took a position on. We use run_at - 1 day
-    as the prior anchor (matches the grader's _close_on_or_after walk)
-    and run_at + 1 day as today's actual close. The same windowing the
-    grader uses for prediction_scores so Sensei reads the same numbers.
+    """Build the actuals block: target-session close vs prior-session close
+    for every universe the morning call took a position on. Uses the
+    grader's _session_bounds so Sensei reads exactly the numbers the
+    grader scored against: the first session whose close follows run_at,
+    baselined on the session before it. The old run_at+1day window asked
+    for a bar that does not exist at 20:00 IST, so every today_close came
+    back None and the retrospective was permanently data-thin.
     """
-    prior_dt = run_at - timedelta(days=1)
-    next_dt = run_at + timedelta(days=1)
     actuals: dict = {"indices": {}, "sectors": {}, "holdings": {}, "wishlist": {}}
+
+    def _bounds(sym: str) -> dict:
+        b = _session_bounds(sym, run_at)
+        if not b:
+            return {"prior_close": None, "today_close": None, "chg_pct": None}
+        p, c, d = b
+        return {"prior_close": round(p, 2), "today_close": round(c, 2),
+                "chg_pct": _pct(c, p), "session": d}
 
     # Indices (NIFTY, Sensex, BankNifty, Midcap150)
     for name, sym in INDEX_SYMBOLS.items():
-        p = _close_on(sym, prior_dt)
-        c = _close_on(sym, next_dt)
-        actuals["indices"][name] = {"prior_close": p, "today_close": c,
-                                    "chg_pct": _pct(c, p)}
+        actuals["indices"][name] = _bounds(sym)
 
     # Sectors (10 NSE)
     for name, sym in SECTOR_SYMBOLS.items():
-        p = _close_on(sym, prior_dt)
-        c = _close_on(sym, next_dt)
-        actuals["sectors"][name] = {"prior_close": p, "today_close": c,
-                                    "chg_pct": _pct(c, p)}
+        actuals["sectors"][name] = _bounds(sym)
 
     # Per-stock holdings + wishlist (from morning call's emitted lists,
     # so we only fetch tickers the model actually predicted on)
@@ -209,11 +185,7 @@ def _todays_actuals(run_at: datetime, raw: dict) -> dict:
             tk = (o.get("ticker") or "").strip().upper()
             if not tk:
                 continue
-            yf_tk = _norm(tk)
-            p = _close_on(yf_tk, prior_dt)
-            c = _close_on(yf_tk, next_dt)
-            actuals[target_key][tk] = {"prior_close": p, "today_close": c,
-                                       "chg_pct": _pct(c, p)}
+            actuals[target_key][tk] = _bounds(_norm(tk))
 
     return actuals
 

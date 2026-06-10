@@ -3,6 +3,13 @@
 Runs daily 5 PM IST (17:00, 90 min after close) via cron. For each analysis
 row, computes scores per dimension once that horizon has elapsed.
 
+All 1-day dimensions are SESSION-anchored via _session_bounds: a prediction
+made at run_at targets the first session whose close follows run_at, and is
+graded as that session's close vs the close of the session immediately
+before it. One session, exactly. This makes the 17:00 IST pass score the
+same morning's call (so Sensei at 20:00 reads real grades), handles weekend
+and post-close runs correctly, and never compares a bar against itself.
+
 Dimensions scored (see grade_all for the full set):
 - direction_1d / 5d / 20d : NIFTY direction, horizon-scaled noise band
 - range_1d                : interval score (tightness-penalised) for NIFTY band
@@ -64,6 +71,62 @@ def _close_n_sessions_later(ticker: str, base_ts: datetime, n: int) -> float | N
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         return float(df["Close"].iloc[n])
+    except Exception:
+        return None
+
+
+# NSE/BSE cash session closes 15:30 IST = 10:00 UTC. A prediction made
+# before the close targets THAT session; made after the close (or on a
+# non-trading day) it targets the NEXT session. Grading must compare the
+# target session's close against the close of the session immediately
+# before it, one session, no more. The old calendar-day windowing
+# (run_at-1d vs run_at+1d) graded a TWO-session move on weekdays and a
+# zero move (same bar on both sides) for weekend runs, which handed
+# sideways calls free 100s and directional calls fake 0s.
+_SESSION_CLOSE_UTC = 10
+
+
+def _session_bounds(ticker: str, run_at: datetime) -> tuple[float, float, str] | None:
+    """Resolve (prev_close, target_close, target_date) for the session a
+    prediction made at run_at is about.
+
+    target session = first trading session whose close happens after
+    run_at. prev_close = close of the session immediately before it.
+    Returns None when the target session has not closed yet (call still
+    in flight, grade on a later pass) or data is missing. yfinance
+    serves a partial in-progress bar for the current session, so we
+    additionally require now to be past the target session's close
+    (+15 min settle buffer) before trusting the bar.
+    """
+    try:
+        start = run_at - timedelta(days=12)
+        end = run_at + timedelta(days=8)
+        df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                         end=end.strftime("%Y-%m-%d"), interval="1d",
+                         progress=False, auto_adjust=True)
+        if df.empty or len(df) < 2:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        run_date = run_at.date()
+        cutoff = run_date if run_at.hour < _SESSION_CLOSE_UTC else run_date + timedelta(days=1)
+        target_idx = None
+        for i, ix in enumerate(df.index):
+            if ix.date() >= cutoff:
+                target_idx = i
+                break
+        if target_idx is None or target_idx == 0:
+            return None
+        target_date = df.index[target_idx].date()
+        settle = datetime(target_date.year, target_date.month, target_date.day,
+                          _SESSION_CLOSE_UTC, 15, tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < settle:
+            return None
+        prev_close = float(df["Close"].iloc[target_idx - 1])
+        target_close = float(df["Close"].iloc[target_idx])
+        if prev_close <= 0 or target_close <= 0:
+            return None
+        return prev_close, target_close, target_date.isoformat()
     except Exception:
         return None
 
@@ -427,21 +490,27 @@ def grade_all(lookback_days: int = 90):
                           notes=f"avg text quality across reasoning_breakdown keys")
 
             # ----- Direction + Range (1d horizon) -----
-            if age >= 1:
-                last_close = _close_on_or_after("^NSEI", run_at - timedelta(days=1))
-                next_close = _close_on_or_after("^NSEI", run_at + timedelta(days=1))
+            # Session-anchored: graded the same day once the target session
+            # has closed (the 17:00 IST grader pass scores the morning call
+            # against that day's actual close). _session_bounds returns None
+            # while the call is still in flight, so no age gate is needed.
+            nifty_anchor = _session_bounds("^NSEI", run_at)
+            if nifty_anchor:
+                last_close, next_close, target_d = nifty_anchor
                 pred_dir = (raw.get("nifty_outlook") or {}).get("direction", "")
                 pred_rng = _parse_range((raw.get("nifty_outlook") or {}).get("range", ""))
 
                 score, delta = grade_direction(pred_dir, last_close, next_close)
                 _upsert_score(sb, aid, "direction_1d", 1,
                               {"direction": pred_dir}, {"pct": delta},
-                              score, delta)
+                              score, delta,
+                              notes=f"target session {target_d}")
                 if pred_rng:
                     rscore, rdelta = grade_range(pred_rng, next_close)
                     _upsert_score(sb, aid, "range_1d", 1,
                                   {"range": list(pred_rng)},
-                                  {"close": next_close}, rscore, rdelta)
+                                  {"close": next_close}, rscore, rdelta,
+                                  notes=f"target session {target_d}")
 
                 # ----- Market mood (bull / bear / neutral on NIFTY 1d) -----
                 # Same horizon-scaled flat band as direction_1d. Mood maps
@@ -449,29 +518,32 @@ def grade_all(lookback_days: int = 90):
                 # through the shared grade_direction logic so it sits on
                 # the same scale as the rest of the 1d direction dims.
                 mood = (raw.get("market_mood") or "").strip().lower()
-                if mood in ("bull", "bear", "neutral") and last_close and next_close:
+                if mood in ("bull", "bear", "neutral"):
                     mapped = {"bull": "up", "bear": "down", "neutral": "sideways"}[mood]
                     mscore, mdelta = grade_direction(mapped, last_close, next_close)
                     _upsert_score(sb, aid, "market_mood_1d", 1,
                                   {"mood": mood}, {"pct": mdelta},
                                   mscore, mdelta,
-                                  notes=f"NIFTY 1d move {mdelta:+.2f}% vs mood {mood}")
+                                  notes=f"NIFTY 1d move {mdelta:+.2f}% on {target_d} vs mood {mood}")
 
-                # ----- Sensex direction + range (1d) -----
-                s_last = _close_on_or_after("^BSESN", run_at - timedelta(days=1))
-                s_next = _close_on_or_after("^BSESN", run_at + timedelta(days=1))
+            # ----- Sensex direction + range (1d) -----
+            sensex_anchor = _session_bounds("^BSESN", run_at)
+            if sensex_anchor:
+                s_last, s_next, s_target = sensex_anchor
                 s_dir = (raw.get("sensex_outlook") or {}).get("direction", "")
                 s_rng = _parse_range((raw.get("sensex_outlook") or {}).get("range", ""))
-                if s_dir and s_last and s_next:
+                if s_dir:
                     sscore, sdelta = grade_direction(s_dir, s_last, s_next)
                     _upsert_score(sb, aid, "sensex_direction_1d", 1,
                                   {"direction": s_dir}, {"pct": sdelta},
-                                  sscore, sdelta)
-                if s_rng and s_next:
+                                  sscore, sdelta,
+                                  notes=f"target session {s_target}")
+                if s_rng:
                     srscore, srdelta = grade_range(s_rng, s_next)
                     _upsert_score(sb, aid, "sensex_range_1d", 1,
                                   {"range": list(s_rng)},
-                                  {"close": s_next}, srscore, srdelta)
+                                  {"close": s_next}, srscore, srdelta,
+                                  notes=f"target session {s_target}")
 
             # ----- NIFTY multi-day direction (5d, 20d): trend, more signal -----
             for h, key in ((5, "nifty_5d_outlook"), (20, "nifty_20d_outlook")):
@@ -740,10 +812,12 @@ def grade_all(lookback_days: int = 90):
                 "PHARMA": "^CNXPHARMA", "FMCG": "^CNXFMCG",
                 "ENERGY": "^CNXENERGY", "METAL": "^CNXMETAL",
                 "REALTY": "^CNXREALTY", "MEDIA": "^CNXMEDIA",
-                "FINSERV": "^CNXFINANCE",
+                # ^CNXFINANCE 404s on yfinance; NIFTY_FIN_SERVICE.NS is the
+                # working alias (same mapping as market_context.SECTOR_SYMBOLS).
+                "FINSERV": "NIFTY_FIN_SERVICE.NS",
             }
-            if age >= 1:
-                souts = raw.get("sector_outlooks", []) or []
+            souts = raw.get("sector_outlooks", []) or []
+            if souts:
                 s_scores, s_results = [], []
                 sr_scores, sr_results = [], []
                 for so in souts:
@@ -751,10 +825,10 @@ def grade_all(lookback_days: int = 90):
                     yf_sym = _SECTOR_YF.get(sname)
                     if not yf_sym:
                         continue
-                    last_close = _close_on_or_after(yf_sym, run_at - timedelta(days=1))
-                    next_close = _close_on_or_after(yf_sym, run_at + timedelta(days=1))
-                    if not last_close or not next_close:
+                    anchor = _session_bounds(yf_sym, run_at)
+                    if not anchor:
                         continue
+                    last_close, next_close, _target = anchor
                     sc, delta = grade_direction(
                         so.get("direction") or "", last_close, next_close,
                         flat=DIRECTION_FLAT.get(1, 0.4))
@@ -791,35 +865,31 @@ def grade_all(lookback_days: int = 90):
                                   {"results": sr_results}, avg_sr, 0,
                                   notes=f"avg sector 1d range across {len(sr_scores)} sectors")
 
-            # ----- FII flow outlook (next-day FII cash net direction) -----
-            # Predicted direction is graded against the actual FII cash net
-            # the day AFTER the prediction. We pull the actual via
-            # fetchers.fii_dii history-full lookup; if the data is not yet
-            # available (age too small or service down at grade time) skip
-            # silently rather than fabricate a score. >500 cr threshold
-            # matches the prompt's inflow/outflow deadband.
-            if age >= 1:
+            # ----- FII flow outlook (target-session FII cash net direction) -----
+            # Graded against the actual FII cash net of the SAME target
+            # session the direction call is about (the session anchor above).
+            # Exact-date match only: walking forward to the next published
+            # row would grade the call against a different session's flows.
+            # If the row is not published yet at grade time, skip and let a
+            # later pass score it. >500 cr threshold matches the prompt's
+            # inflow/outflow deadband.
+            if nifty_anchor:
                 fco = raw.get("fii_flow_outlook") or {}
                 pred = (fco.get("direction") or "").strip().lower()
                 if pred in ("inflow", "outflow", "flat"):
                     try:
                         import requests as _rq
-                        from datetime import datetime as _dt
+                        from datetime import date as _date
                         hist = _rq.get(
                             "https://fii-diidata.mrchartist.com/api/history-full",
                             headers={"User-Agent": "arcemx/1.0"}, timeout=12,
                         ).json()
-                        # Target = next trading day after run_at (date format DD-Mon-YYYY).
-                        target_date = run_at + timedelta(days=1)
-                        # Walk forward up to 7 days for the next published row.
+                        target_str = _date.fromisoformat(
+                            nifty_anchor[2]).strftime("%d-%b-%Y")
                         actual_net = None
-                        for offset in range(0, 7):
-                            d = (target_date + timedelta(days=offset)).strftime("%d-%b-%Y")
-                            for row in hist:
-                                if row.get("date") == d:
-                                    actual_net = row.get("fii_net")
-                                    break
-                            if actual_net is not None:
+                        for row in hist:
+                            if row.get("date") == target_str:
+                                actual_net = row.get("fii_net")
                                 break
                         if actual_net is not None:
                             if pred == "inflow":
@@ -838,15 +908,14 @@ def grade_all(lookback_days: int = 90):
                         print(f"  fii_flow grade skip: {e}")
 
             # ----- Index pair (NIFTY vs BankNifty relative outperformer) -----
-            if age >= 1:
+            if nifty_anchor:
                 ip = raw.get("index_pair_outlook") or {}
                 pred = (ip.get("outperformer") or "").strip().upper()
                 if pred in ("NIFTY", "BANKNIFTY", "EVEN"):
-                    n_l = _close_on_or_after("^NSEI", run_at - timedelta(days=1))
-                    n_n = _close_on_or_after("^NSEI", run_at + timedelta(days=1))
-                    b_l = _close_on_or_after("^NSEBANK", run_at - timedelta(days=1))
-                    b_n = _close_on_or_after("^NSEBANK", run_at + timedelta(days=1))
-                    if all(x and x > 0 for x in (n_l, n_n, b_l, b_n)):
+                    bank_anchor = _session_bounds("^NSEBANK", run_at)
+                    if bank_anchor:
+                        n_l, n_n, _ = nifty_anchor
+                        b_l, b_n, _ = bank_anchor
                         n_pct = (n_n - n_l) / n_l * 100
                         b_pct = (b_n - b_l) / b_l * 100
                         spread = b_pct - n_pct  # +ve = BANKNIFTY outperformed
@@ -868,15 +937,14 @@ def grade_all(lookback_days: int = 90):
             # Midcap pair runs noisier than the bank pair (broader basket,
             # heavier retail/DII flow). Deadband widened to 0.20 absolute %
             # to match.
-            if age >= 1:
+            if nifty_anchor:
                 cp = raw.get("cap_pair_outlook") or {}
                 pred = (cp.get("outperformer") or "").strip().upper()
                 if pred in ("NIFTY", "MIDCAP150", "EVEN"):
-                    n_l = _close_on_or_after("^NSEI", run_at - timedelta(days=1))
-                    n_n = _close_on_or_after("^NSEI", run_at + timedelta(days=1))
-                    m_l = _close_on_or_after("NIFTYMIDCAP150.NS", run_at - timedelta(days=1))
-                    m_n = _close_on_or_after("NIFTYMIDCAP150.NS", run_at + timedelta(days=1))
-                    if all(x and x > 0 for x in (n_l, n_n, m_l, m_n)):
+                    mid_anchor = _session_bounds("NIFTYMIDCAP150.NS", run_at)
+                    if mid_anchor:
+                        n_l, n_n, _ = nifty_anchor
+                        m_l, m_n, _ = mid_anchor
                         n_pct = (n_n - n_l) / n_l * 100
                         m_pct = (m_n - m_l) / m_l * 100
                         spread = m_pct - n_pct  # +ve = MIDCAP150 outperformed
@@ -908,8 +976,6 @@ def grade_all(lookback_days: int = 90):
                 ("wishlist_outlooks_1d", "wishlist_outlook_dir_1d",
                  "wishlist_outlook_range_1d", "wishlist"),
             ):
-                if age < 1:
-                    continue
                 outlooks = raw.get(src_key, []) or []
                 if not outlooks:
                     continue
@@ -919,10 +985,10 @@ def grade_all(lookback_days: int = 90):
                     if not tk:
                         continue
                     yf_tk = tk if tk.endswith(".NS") else f"{tk}.NS"
-                    last_close = _close_on_or_after(yf_tk, run_at - timedelta(days=1))
-                    next_close = _close_on_or_after(yf_tk, run_at + timedelta(days=1))
-                    if not last_close or not next_close:
+                    anchor = _session_bounds(yf_tk, run_at)
+                    if not anchor:
                         continue
+                    last_close, next_close, _target = anchor
                     dscore, delta = grade_direction(
                         o.get("direction") or "", last_close, next_close,
                         flat=DIRECTION_FLAT.get(1, 0.4))
@@ -979,9 +1045,20 @@ def compute_summaries(windows=(7, 30, 90)):
     a single day dominate. sample_size below is distinct prediction-days.
     """
     sb = _sb()
-    scores = sb.table("prediction_scores").select(
-        "dimension,score,delta,predicted,analysis_id"
-    ).limit(5000).execute().data or []
+    # PostgREST caps any single response at max_rows (1000 on this project)
+    # no matter what .limit() asks for, so page with .range() until a short
+    # page arrives. A silent 1000-row cap here would compute summaries on
+    # an arbitrary subset once history grows past ~5 weeks.
+    scores: list[dict] = []
+    off = 0
+    while True:
+        page = sb.table("prediction_scores").select(
+            "dimension,score,delta,predicted,analysis_id"
+        ).order("id", desc=False).range(off, off + 999).execute().data or []
+        scores.extend(page)
+        if len(page) < 1000:
+            break
+        off += 1000
 
     # analysis_id -> run_at (chunked to keep the in_() filter small).
     ids = list({r["analysis_id"] for r in scores if r.get("analysis_id") is not None})

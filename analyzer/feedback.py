@@ -36,9 +36,12 @@ def _latest_summaries(sb) -> dict[tuple, dict]:
 def _direction_history(sb) -> list[dict]:
     """Recent direction predictions joined to their analysis date + the
     confidence the model stated when it made them. FK-independent join."""
+    # Newest first so the 200-row cap keeps the RECENT track record once
+    # history grows past it (unordered reads return an arbitrary subset).
     ds = sb.table("prediction_scores").select(
         "analysis_id,score,delta,predicted"
-    ).eq("dimension", "direction_1d").limit(200).execute().data or []
+    ).eq("dimension", "direction_1d").order(
+        "id", desc=True).limit(200).execute().data or []
     ids = list({r["analysis_id"] for r in ds if r.get("analysis_id") is not None})
     meta: dict[int, dict] = {}
     if ids:
