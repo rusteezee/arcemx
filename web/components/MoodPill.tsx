@@ -15,7 +15,7 @@ export function MoodPill({ mood, size = "md" }: MoodPillProps) {
   const sizes: Record<string, string> = {
     sm: "text-[0.65rem] px-2 py-0.5",
     md: "",
-    lg: "text-sm px-3 py-1",
+    lg: "text-base px-4 py-1.5",
   };
   const glyphs: Record<string, string> = { bull: "↑", bear: "↓", neutral: "→" };
 

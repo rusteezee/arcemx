@@ -96,6 +96,11 @@ export function polishMarketText(input: string | null | undefined): string {
     return n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
   });
 
+  // The model emits clauses joined with semicolons (e.g. "RSI 39 below 50;
+  // price 0.6% above support"). Convert to a period + space + capitalize
+  // the next clause's opener so each clause reads as a complete sentence.
+  s = s.replace(/;\s+([a-zA-Z])/g, (_m, c) => ". " + c.toUpperCase());
+
   s = s.replace(
     /\b(support|resistance|target|stop[_ ]?loss|stop|entry|level)(\s+(?:[a-z0-9_]+\s+){0,2})(\d[\d,]*(?:\.\d+)?)/gi,
     (_full, word: string, mid: string, num: string) => {

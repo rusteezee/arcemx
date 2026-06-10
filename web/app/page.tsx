@@ -29,24 +29,21 @@ const LEADERBOARD_SYMBOLS: { sym: string; name: string }[] = [
 
 export default function TodayPage() {
   const [analysis, setAnalysis] = useState<any>(null);
-  const [lastSyncTs, setLastSyncTs] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const refetchAnalysis = async () => {
+    const { data } = await sb
+      .from("analysis")
+      .select("*")
+      .order("run_at", { ascending: false })
+      .limit(1);
+    if (data?.[0]) setAnalysis(data[0]);
+    return data?.[0] || null;
+  };
 
   useEffect(() => {
     (async () => {
-      const [{ data: aData }, lsRes] = await Promise.all([
-        sb
-          .from("analysis")
-          .select("*")
-          .order("run_at", { ascending: false })
-          .limit(1),
-        // Pull the same "latest of analysis or sync_log" timestamp the
-        // nav indicator uses so this page's "Last Update" card and the
-        // nav badge always agree on the most recent refresh moment.
-        fetch("/api/last-sync", { cache: "no-store" }).then((r) => r.json()),
-      ]);
-      setAnalysis(aData?.[0] || null);
-      setLastSyncTs(lsRes?.ts || null);
+      await refetchAnalysis();
       setLoading(false);
     })();
   }, []);
@@ -63,18 +60,13 @@ export default function TodayPage() {
   const raw = analysis?.raw_json || {};
   const mood = raw.market_mood || "neutral";
   const conf = raw.confidence || 0;
-  // Show the most recent of (analysis.run_at, sync_log latest) so this
-  // card reads the same as the nav badge. The two events refresh
-  // different parts of the dashboard (AI call vs INDmoney positions),
-  // but the user just wants one "this is how fresh the page is" number.
-  const analysisTs = analysis?.run_at ? new Date(analysis.run_at) : null;
-  const syncTs = lastSyncTs ? new Date(lastSyncTs) : null;
-  const runAtDate =
-    syncTs && analysisTs
-      ? syncTs > analysisTs
-        ? syncTs
-        : analysisTs
-      : syncTs ?? analysisTs;
+  // Last Update reflects the LLM analysis's run_at exclusively. The nav
+  // INDmoney sync writes a sync_log row but does not by itself create a
+  // new analysis, so blending the two (previous behavior) made the time
+  // here jump forward on a nav-sync click and read as "the AI just
+  // refreshed" when it had not. The nav badge keeps the blended max via
+  // /api/last-sync; this card answers "when did the model last speak".
+  const runAtDate = analysis?.run_at ? new Date(analysis.run_at) : null;
   const runDateStr = runAtDate
     ? runAtDate.toLocaleDateString("en-IN", {
         timeZone: "Asia/Kolkata",
@@ -130,7 +122,7 @@ export default function TodayPage() {
               <div className="section-num">Confidence</div>
               <span className="glyph text-sm">◎</span>
             </div>
-            <div className="text-3xl font-semibold tracking-tight num">{conf}%</div>
+            <div className="text-5xl font-semibold tracking-tight num">{conf}%</div>
             <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
               Model&apos;s self-rated certainty on today&apos;s direction call, calibrated against realized accuracy on past predictions.
             </p>
@@ -155,7 +147,10 @@ export default function TodayPage() {
                 </span>
               )}
             </div>
-            <RunAnalysisButton />
+            <RunAnalysisButton
+              currentRunAt={analysis?.run_at || null}
+              onComplete={refetchAnalysis}
+            />
           </div>
         </div>
       </Section>
@@ -289,24 +284,52 @@ function moodOneLiner(mood: string, niftyOutlook: any): string {
   return "Mixed signals: model expects the move to stay inside the ±0.4% noise band; no decisive direction either way.";
 }
 
-function RunAnalysisButton() {
+function RunAnalysisButton({
+  currentRunAt,
+  onComplete,
+}: {
+  currentRunAt: string | null;
+  onComplete: () => Promise<any> | void;
+}) {
   // Inline trigger button living inside the Last Update card. Hits
   // /api/trigger-analysis which kicks the LLM pipeline asynchronously
   // on the bot. INDmoney sync stays on the nav button; this fires only
   // the analysis pass so the user does not pay a 7-12 minute wait when
   // they just want refreshed positions.
-  // States: idle -> loading -> ok | error -> idle (auto-reset).
-  const [state, setState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  // idle -> syncing (POST in flight + LLM in flight) -> ok | error.
+  // syncing covers both "the bot accepted the trigger" and "the new
+  // analysis row is still pending"; we poll the analysis table until
+  // it lands or the timeout fires.
+  const [state, setState] = useState<"idle" | "syncing" | "ok" | "error">("idle");
   const [msg, setMsg] = useState<string | null>(null);
-  // One-line result popup under the button so the outcome is readable
-  // text, not just a border color flash.
   const [detail, setDetail] = useState<string | null>(null);
 
+  // Poll the analysis table for a row newer than the one the page
+  // started with. The bot's LLM call takes 3-12 min; rather than ask
+  // the user to refresh manually, watch for the new row and refresh
+  // the displayed analysis as soon as it lands.
+  const waitForNewAnalysis = async (since: string | null): Promise<boolean> => {
+    const deadline = Date.now() + 15 * 60 * 1000; // 15 min cap
+    const sinceMs = since ? new Date(since).getTime() : 0;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 15_000));
+      const { data } = await sb
+        .from("analysis")
+        .select("run_at")
+        .order("run_at", { ascending: false })
+        .limit(1);
+      const latest = data?.[0]?.run_at;
+      if (latest && new Date(latest).getTime() > sinceMs) return true;
+    }
+    return false;
+  };
+
   const run = async () => {
-    if (state === "loading") return;
-    setState("loading");
-    setMsg("Queueing");
-    setDetail(null);
+    if (state === "syncing") return;
+    setState("syncing");
+    setMsg("Syncing");
+    setDetail("Sending the trigger to the bot...");
+    let kicked = false;
     try {
       const r = await fetch("/api/trigger-analysis", {
         method: "POST",
@@ -315,28 +338,39 @@ function RunAnalysisButton() {
       });
       const data = await r.json().catch(() => ({}));
       if (r.ok && data?.ok) {
-        setState("ok");
-        setMsg("Queued");
-        setDetail("Analysis queued. Fresh call with current news lands in 3-12 min; refresh the page after.");
+        kicked = true;
+        setDetail("Analysis running. Fresh call with current news typically lands in 3-12 min.");
       } else if (r.status === 409 || data?.status === "already_running") {
-        setState("ok");
-        setMsg("Running");
-        setDetail("An analysis is already in progress. Refresh in a few minutes.");
+        kicked = true;
+        setDetail("An analysis is already running. Waiting for it to finish.");
       } else {
         setState("error");
         setMsg("Failed");
         setDetail(data?.error || "Bot unreachable. Render may be waking from sleep; try again in ~30s.");
+        setTimeout(() => { setState("idle"); setMsg(null); setDetail(null); }, 10000);
+        return;
       }
     } catch {
       setState("error");
       setMsg("Failed");
       setDetail("Network error reaching the bot. Try again in ~30s.");
-    } finally {
-      setTimeout(() => {
-        setState("idle");
-        setMsg(null);
-        setDetail(null);
-      }, 8000);
+      setTimeout(() => { setState("idle"); setMsg(null); setDetail(null); }, 10000);
+      return;
+    }
+    if (!kicked) return;
+
+    const landed = await waitForNewAnalysis(currentRunAt);
+    if (landed) {
+      await onComplete();
+      setState("ok");
+      setMsg("Synced");
+      setDetail("Synced. Page refreshed with the new analysis.");
+      setTimeout(() => { setState("idle"); setMsg(null); setDetail(null); }, 10000);
+    } else {
+      setState("error");
+      setMsg("Failed");
+      setDetail("Timed out waiting for the new analysis. It may still complete; refresh the page in a few minutes.");
+      setTimeout(() => { setState("idle"); setMsg(null); setDetail(null); }, 12000);
     }
   };
 
@@ -360,7 +394,7 @@ function RunAnalysisButton() {
     <button
       type="button"
       onClick={run}
-      disabled={state === "loading"}
+      disabled={state === "syncing"}
       title={msg || "Run analysis (LLM call, 3-12 min). INDmoney sync lives on the nav."}
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-[5px] text-[0.7rem] font-medium transition-all duration-300 disabled:cursor-not-allowed"
       style={{
@@ -371,7 +405,7 @@ function RunAnalysisButton() {
     >
       <span
         aria-hidden
-        className={`shrink-0 inline-block bg-current ${state === "loading" ? "animate-spin" : ""}`}
+        className={`shrink-0 inline-block bg-current ${state === "syncing" ? "animate-spin" : ""}`}
         style={{
           width: 14,
           height: 14,
@@ -386,12 +420,12 @@ function RunAnalysisButton() {
         }}
       />
       <span className="tracking-wide whitespace-nowrap">
-        {state === "loading"
-          ? msg || "Queueing"
+        {state === "syncing"
+          ? msg || "Syncing"
           : state === "ok"
-          ? msg || "Queued"
+          ? msg || "Synced"
           : state === "error"
-          ? msg || "Error"
+          ? msg || "Failed"
           : "Run Analysis"}
       </span>
     </button>
