@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { EmptyState } from "@/components/EmptyState";
 import { DirPill } from "@/components/DirPill";
-import { fetchQuote } from "@/lib/quotes";
+import { fetchQuote, fetchHistory } from "@/lib/quotes";
 import { formatNumber, polishMarketText } from "@/lib/utils";
 
 const LEADERBOARD_SYMBOLS: { sym: string; name: string }[] = [
@@ -241,17 +241,24 @@ function SectorBarChart({ symbols }: { symbols: { sym: string; name: string }[] 
     setStale(true);
     (async () => {
       const range = PERIOD_RANGE[period];
+      // LIVE = today vs prior close (fetchQuote returns pct directly and
+      // handles Yahoo's prev===last quirk). Every other period needs a
+      // candle history to compute first-close vs last-close, which only
+      // fetchHistory returns.
       const results = await Promise.all(
         symbols.map(async ({ sym, name }) => {
-          const q = await fetchQuote(sym, range);
-          if (!q) return null;
           let pct: number | null = null;
           if (period === "LIVE") {
-            pct = Number.isFinite(q.pct) ? q.pct : null;
-          } else if (q.history && q.history.length >= 2) {
-            const first = q.history[0].close;
-            const last = q.history[q.history.length - 1].close;
-            if (first > 0) pct = ((last - first) / first) * 100;
+            const q = await fetchQuote(sym, range);
+            if (q && Number.isFinite(q.pct)) pct = q.pct;
+          } else {
+            const q = await fetchHistory(sym, range);
+            const h = q?.history || [];
+            if (h.length >= 2) {
+              const first = h[0].close;
+              const last = h[h.length - 1].close;
+              if (first > 0) pct = ((last - first) / first) * 100;
+            }
           }
           if (pct == null || !Number.isFinite(pct)) return null;
           return { name, pct } as BarRow;
@@ -279,18 +286,18 @@ function SectorBarChart({ symbols }: { symbols: { sym: string; name: string }[] 
   const yMin = -yMax;
 
   const W = 920;
-  const H = 380;
+  const H = 340;
   const padL = 56;
-  const padR = 18;
-  const padT = 26;
-  const padB = 64;
+  const padR = 24;
+  const padT = 24;
+  const padB = 52;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const yZero = padT + innerH / 2;
   const yPerPct = innerH / (yMax - yMin);
   const n = Math.max(symbols.length, 1);
   const slot = innerW / n;
-  const barW = slot * 0.66;
+  const barW = slot * 0.72;
 
   const ticks = [-1, -0.5, 0, 0.5, 1].map((t) => ({
     yPct: t * yMax,
@@ -415,16 +422,17 @@ function SectorBarChart({ symbols }: { symbols: { sym: string; name: string }[] 
           {rows.map((r) => {
             const i = positionByName.get(r.name) ?? 0;
             const cx = padL + (i + 0.5) * slot;
+            const ly = H - padB + 14;
             return (
               <motion.text
                 key={`xlabel-${period}-${r.name}`}
-                initial={{ x: cx, y: H - padB + 14, opacity: 0 }}
-                animate={{ x: cx, y: H - padB + 14, opacity: 1 }}
+                initial={{ x: cx, y: ly, opacity: 0 }}
+                animate={{ x: cx, y: ly, opacity: 1 }}
                 transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1], delay: i * 0.025 + 0.15 }}
                 fontSize={11}
                 fill="var(--muted)"
-                textAnchor="end"
-                transform={`rotate(-38 ${cx} ${H - padB + 14})`}
+                textAnchor="middle"
+                transform={`rotate(-32 ${cx} ${ly})`}
               >
                 {r.name}
               </motion.text>
