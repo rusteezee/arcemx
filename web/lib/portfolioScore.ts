@@ -93,15 +93,26 @@ async function fetchCloses(
   cutoff: Date,
 ): Promise<Record<string, Array<{ date: string; close: number }>>> {
   if (!tickers.length) return {};
-  const { data } = await sb
-    .from("prices")
-    .select("ticker,ts,close")
-    .in("ticker", tickers)
-    .gte("ts", cutoff.toISOString())
-    .order("ts", { ascending: true })
-    .limit(20000);
+  // PostgREST caps every response at max_rows (1000 on this project)
+  // regardless of .limit(); with ts-ascending order the cap would silently
+  // drop the newest closes once holdings x sessions exceeds it. Page with
+  // .range() until a short page arrives.
+  const PAGE = 1000;
+  const rows: Array<{ ticker: string; ts: string; close: number | null }> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await sb
+      .from("prices")
+      .select("ticker,ts,close")
+      .in("ticker", tickers)
+      .gte("ts", cutoff.toISOString())
+      .order("ts", { ascending: true })
+      .range(from, from + PAGE - 1);
+    const page = (data || []) as Array<{ ticker: string; ts: string; close: number | null }>;
+    rows.push(...page);
+    if (page.length < PAGE) break;
+  }
   const out: Record<string, Array<{ date: string; close: number }>> = {};
-  for (const row of (data || []) as Array<{ ticker: string; ts: string; close: number | null }>) {
+  for (const row of rows) {
     if (row.close == null) continue;
     const date = row.ts.slice(0, 10);
     (out[row.ticker] ??= []).push({ date, close: Number(row.close) });

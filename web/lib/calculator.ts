@@ -92,22 +92,36 @@ export function filterUniverse(
 // 70 days covers ~50 trading sessions, enough for a 60d momentum and a
 // 14d RSI. Missing tickers come back with closes:[] and are dropped
 // from scoring; the calculator never fabricates a price.
+//
+// PostgREST caps every response at max_rows (1000 on this project) no
+// matter what .limit() asks for, and with ts-ascending order the cap
+// silently discards the NEWEST closes: the calculator was ranking on
+// months-old momentum and allocating amounts off stale lastClose values.
+// Page with .range() until a short page arrives (same pattern as the
+// portfolio page).
 export async function fetchPriceBundles(
   tickers: string[],
 ): Promise<Record<string, PriceBundle>> {
   if (!tickers.length) return {};
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 75);
-  const { data } = await sb
-    .from("prices")
-    .select("ticker,ts,close")
-    .in("ticker", tickers)
-    .gte("ts", cutoff.toISOString())
-    .order("ts", { ascending: true })
-    .limit(8000);
+  const PAGE = 1000;
+  const rows: Array<{ ticker: string; close: number | null }> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await sb
+      .from("prices")
+      .select("ticker,ts,close")
+      .in("ticker", tickers)
+      .gte("ts", cutoff.toISOString())
+      .order("ts", { ascending: true })
+      .range(from, from + PAGE - 1);
+    const page = (data || []) as Array<{ ticker: string; close: number | null }>;
+    rows.push(...page);
+    if (page.length < PAGE) break;
+  }
 
   const by: Record<string, number[]> = {};
-  for (const row of (data || []) as Array<{ ticker: string; close: number | null }>) {
+  for (const row of rows) {
     if (row.close == null) continue;
     (by[row.ticker] ??= []).push(Number(row.close));
   }
@@ -118,18 +132,32 @@ export async function fetchPriceBundles(
   return out;
 }
 
-// 14-day Wilder RSI. Returns NaN if not enough data.
+// 14-day Wilder RSI: smoothed averages seeded with the simple mean of the
+// first 14 deltas, then Wilder-smoothed over the rest of the series. Same
+// smoothing family as the backend's analyzer.technical.rsi (ewm alpha=1/14),
+// so the same stock reads the same RSI on every surface. The previous
+// version was a plain 14-delta sum (Cutler-style), which disagreed with
+// the backend by several points on trending names. Returns NaN if not
+// enough data.
 export function rsi14(closes: number[]): number {
-  if (closes.length < 16) return NaN;
-  let gains = 0;
-  let losses = 0;
-  for (let i = closes.length - 15; i < closes.length; i++) {
+  const period = 14;
+  if (closes.length < period + 2) return NaN;
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
     const d = closes[i] - closes[i - 1];
-    if (d >= 0) gains += d;
-    else losses += -d;
+    if (d >= 0) avgGain += d;
+    else avgLoss += -d;
   }
-  if (losses === 0) return 100;
-  const rs = gains / losses;
+  avgGain /= period;
+  avgLoss /= period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
+  }
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
 }
 
@@ -200,7 +228,7 @@ export function targetPickCount(risk: Risk, horizonDays: number): number {
   return Math.min(12, base + lift);
 }
 
-// Allocation policy. Conservative -> equal weight, capped 18%.
+// Allocation policy. Conservative -> equal weight, capped 22%.
 // Balanced -> 1/vol weights (lower-vol gets more), Aggressive ->
 // score-tilted (high score gets more) with floor + cap so no name
 // dominates.
