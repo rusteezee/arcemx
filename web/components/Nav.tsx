@@ -54,12 +54,14 @@ function SyncModeIcon({
         aria-hidden
         className={cn(
           "shrink-0 inline-block bg-current",
-          // Soft pulse opacity 1 <-> 0.4 while syncing.
-          syncing && "animate-pulse",
+          // Shuriken spins while syncing (throwing-star motion). Was a
+          // soft pulse for the old figure icon; the star reads as motion
+          // far better with rotation.
+          syncing && "animate-spin",
         )}
         style={{
-          width: 16,
-          height: 16,
+          width: 13,
+          height: 13,
           WebkitMaskImage: "url(/icons/sensei.svg)",
           maskImage: "url(/icons/sensei.svg)",
           WebkitMaskRepeat: "no-repeat",
