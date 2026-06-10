@@ -107,21 +107,29 @@ export default function TodayPage() {
 
       <Section num="001 / 007" title="Snapshot" glyph="✦">
         {/* Inline cards (not the shared Stat) so all three boxes share the
-            larger p-7 / min-h footprint without touching Stat's other
-            call sites on the accuracy page. */}
+            larger fixed-height footprint without touching Stat's other
+            call sites on the accuracy page. Height is FIXED (h-[200px])
+            so the Run Analysis result popup floats inside its card
+            instead of pushing the row taller when it appears. */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="card p-7 min-h-[170px]">
+          <div className="card p-7 h-[200px] flex flex-col">
             <div className="section-num mb-4">Market Mood</div>
             <MoodPill mood={mood} size="lg" />
+            <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
+              {moodOneLiner(mood, no)}
+            </p>
           </div>
-          <div className="card p-7 min-h-[170px]">
+          <div className="card p-7 h-[200px] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="section-num">Confidence</div>
               <span className="glyph text-sm">◎</span>
             </div>
             <div className="text-3xl font-semibold tracking-tight num">{conf}%</div>
+            <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
+              Model&apos;s self-rated certainty on today&apos;s direction call, calibrated against realized accuracy on past predictions.
+            </p>
           </div>
-          <div className="card p-7 min-h-[170px]">
+          <div className="card p-7 h-[200px] relative overflow-hidden">
             <div className="section-num mb-4">Last Update</div>
             <div className="flex items-center gap-3 flex-wrap mb-4">
               <div className="text-3xl font-semibold tracking-tight num">{runDateStr}</div>
@@ -247,6 +255,20 @@ export default function TodayPage() {
   );
 }
 
+// One-line read on why the mood is what it is. Prefer the model's own
+// first driver of the nifty outlook (already a number-anchored short
+// sentence per the system prompt); fall back to a generic regime line
+// when drivers are missing.
+function moodOneLiner(mood: string, niftyOutlook: any): string {
+  const drivers: string[] = Array.isArray(niftyOutlook?.drivers) ? niftyOutlook.drivers : [];
+  const first = (drivers[0] || "").trim();
+  if (first) return first.length > 140 ? first.slice(0, 137) + "..." : first;
+  const m = (mood || "").toLowerCase();
+  if (m === "bull") return "Tilt up: expecting >0.4% NIFTY close above prior session.";
+  if (m === "bear") return "Tilt down: expecting >0.4% NIFTY close below prior session.";
+  return "Mixed signals; move expected inside the ±0.4% noise band.";
+}
+
 function RunAnalysisButton() {
   // Inline trigger button living inside the Last Update card. Hits
   // /api/trigger-analysis which kicks the LLM pipeline asynchronously
@@ -314,7 +336,7 @@ function RunAnalysisButton() {
     state === "ok" ? "var(--gain)" : state === "error" ? "var(--loss)" : "var(--foreground)";
 
   return (
-    <div>
+    <>
     <button
       type="button"
       onClick={run}
@@ -354,14 +376,17 @@ function RunAnalysisButton() {
       </span>
     </button>
     {detail && (
+      // Pinned to the card's bottom-left via absolute positioning so the
+      // popup never pushes the card taller. The parent card is `relative
+      // overflow-hidden` and 200px tall; this sits inside that frame.
       <div
-        className="text-[0.7rem] leading-snug mt-2 max-w-[280px]"
+        className="absolute left-7 right-7 bottom-5 text-[0.7rem] leading-snug"
         style={{ color: fg }}
       >
         {detail}
       </div>
     )}
-    </div>
+    </>
   );
 }
 
