@@ -353,10 +353,12 @@ export function Nav() {
                 "flex items-center gap-1.5 rounded-full border transition-all duration-300 overflow-hidden",
                 "text-[0.72rem] font-medium",
                 "size-9 justify-center sm:size-auto sm:px-2.5 sm:py-[5px]",
-                // Sensei + Grader labels are slightly wider than the
-                // INDmoney "1m ago" / "Synced" text, so reserve a hair
-                // more room on those routes.
-                mode === "indmoney" ? "sm:w-[96px]" : "sm:w-[124px]",
+                // Fixed width across every route so the whole nav bar
+                // never resizes when the user moves between INDmoney
+                // (short labels like "1m ago" / "Synced") and Sensei /
+                // Grader (longer "Sync Sensei" / "Sync Grader") routes.
+                // 124px is the widest label so it accommodates all modes.
+                "sm:w-[124px]",
                 syncing ? "opacity-80 border-border" : "hover:bg-[var(--muted-bg)]",
                 "disabled:cursor-not-allowed",
                 syncState === "ok" &&
