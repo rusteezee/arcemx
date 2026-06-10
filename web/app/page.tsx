@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { Section } from "@/components/Section";
 import { MoodPill } from "@/components/MoodPill";
 import { EmptyState } from "@/components/EmptyState";
@@ -570,12 +571,6 @@ function buildPlaygroundList(
   return items;
 }
 
-interface LiveRow {
-  name: string;
-  pct: number;
-  last: number;
-}
-
 function Playground({
   sectors,
   nifty,
@@ -591,61 +586,21 @@ function Playground({
   pair?: any;
   capPair?: any;
 }) {
-  const [live, setLive] = useState<LiveRow[]>([]);
-  const [liveLoading, setLiveLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const results = await Promise.all(
-        LEADERBOARD_SYMBOLS.map(async ({ sym, name }) => {
-          const q = await fetchQuote(sym);
-          if (!q || q.pct == null || !Number.isFinite(q.pct)) return null;
-          return { name, pct: q.pct, last: q.last } as LiveRow;
-        })
-      );
-      if (cancelled) return;
-      const rows = results
-        .filter((r): r is LiveRow => r !== null)
-        .sort((a, b) => b.pct - a.pct);
-      setLive(rows);
-      setLiveLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
   if (!sectors.length && !nifty && !sensex && !pair && !capPair) {
     return <EmptyState title="No leaderboard data" hint="Populates from tomorrow's cron." />;
   }
   const items = buildPlaygroundList(sectors, nifty, sensex, confidence);
   const max = Math.max(1, ...items.map((it) => Math.abs(it.score)));
-  const liveMax = Math.max(0.1, ...live.map((r) => Math.abs(r.pct)));
   return (
     <div className="space-y-4">
-      {/* Live leaderboard. Today's actual chg_pct ranking, top to bottom.
-          Sits above the forecast ranking so the reader anchors on what
-          actually happened before reading what the model expects next. */}
-      <div className="card overflow-hidden">
-        <div className="p-5 pb-2">
-          <div className="section-num mb-1 tracking-widest">LIVE</div>
-          <p className="text-sm text-[var(--muted)] leading-relaxed">
-            Actual percent change today across the same universe the model
-            forecasts on. Fetched live from yfinance each page load.
-          </p>
-        </div>
-        {liveLoading ? (
-          <div className="px-5 pb-5 flex items-center gap-2 text-sm text-[var(--muted)]">
-            <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
-            Fetching live quotes
-          </div>
-        ) : live.length === 0 ? (
-          <div className="px-5 pb-5 text-sm text-[var(--muted)]">
-            No live quotes available. Yfinance may be rate-limiting.
-          </div>
-        ) : (
-          <LiveBars rows={live} max={liveMax} />
-        )}
-      </div>
+      {/* Sector performance bar chart. Replaces the old horizontal LIVE
+          leaderboard with a proper x/y axis chart and a period switcher
+          (LIVE through MAX). Bars slide vertically into their new heights
+          on period change. No skeleton: previous bars stay onscreen
+          during the refetch and just animate to the new values when they
+          arrive. */}
+      <SectorBarChart symbols={LEADERBOARD_SYMBOLS} />
+
 
       {/* Forecast ranking. The model's directional + confidence call for
           tomorrow, sorted same direction-sign x confidence convention. */}
@@ -743,80 +698,251 @@ function Playground({
   );
 }
 
-function LiveBars({ rows, max }: { rows: LiveRow[]; max: number }) {
-  // Horizontal bar graph. Each row: name on the left, bar centered at the
-  // zero line, value at the right. Gain bars shoot right, loss bars shoot
-  // left, mirrored around a vertical zero line so the visual axis itself
-  // tells you "up vs down today" at a glance.
+// Period switcher for SectorBarChart. LIVE = today's chg vs prior close
+// (matches the old leaderboard semantics). All other periods are
+// first-close vs last-close over the named window pulled from yfinance.
+type ChartPeriod = "LIVE" | "1W" | "1M" | "3M" | "6M" | "1Y" | "2Y" | "5Y" | "MAX";
+const CHART_PERIODS: ChartPeriod[] = ["LIVE", "1W", "1M", "3M", "6M", "1Y", "2Y", "5Y", "MAX"];
+const PERIOD_RANGE: Record<ChartPeriod, string> = {
+  LIVE: "5d",
+  "1W": "5d",
+  "1M": "1mo",
+  "3M": "3mo",
+  "6M": "6mo",
+  "1Y": "1y",
+  "2Y": "2y",
+  "5Y": "5y",
+  MAX: "max",
+};
+
+// Round up to a clean axis ceiling so the y-axis labels read as round
+// percentages (1.5%, 3%, 10%, 50%) instead of arbitrary decimals.
+function niceAxisCeiling(v: number): number {
+  if (v <= 0.5) return 0.5;
+  if (v <= 1) return 1;
+  if (v <= 2) return 2;
+  if (v <= 5) return Math.ceil(v);
+  if (v <= 20) return Math.ceil(v / 2) * 2;
+  if (v <= 50) return Math.ceil(v / 5) * 5;
+  if (v <= 200) return Math.ceil(v / 10) * 10;
+  return Math.ceil(v / 25) * 25;
+}
+
+interface BarRow {
+  name: string;
+  pct: number;
+}
+
+function SectorBarChart({ symbols }: { symbols: { sym: string; name: string }[] }) {
+  const [period, setPeriod] = useState<ChartPeriod>("LIVE");
+  const [rows, setRows] = useState<BarRow[]>([]);
+  const [busy, setBusy] = useState(true);
+  const [stale, setStale] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBusy(true);
+    setStale(true);
+    (async () => {
+      const range = PERIOD_RANGE[period];
+      const results = await Promise.all(
+        symbols.map(async ({ sym, name }) => {
+          const q = await fetchQuote(sym, range);
+          if (!q) return null;
+          let pct: number | null = null;
+          if (period === "LIVE") {
+            pct = Number.isFinite(q.pct) ? q.pct : null;
+          } else if (q.history && q.history.length >= 2) {
+            const first = q.history[0].close;
+            const last = q.history[q.history.length - 1].close;
+            if (first > 0) pct = ((last - first) / first) * 100;
+          }
+          if (pct == null || !Number.isFinite(pct)) return null;
+          return { name, pct } as BarRow;
+        }),
+      );
+      if (cancelled) return;
+      const filtered = results
+        .filter((r): r is BarRow => r !== null)
+        .sort((a, b) => b.pct - a.pct);
+      setRows(filtered);
+      setBusy(false);
+      setStale(false);
+    })();
+    return () => { cancelled = true; };
+  }, [period, symbols]);
+
+  // Position bars by name so framer-motion can animate them between
+  // periods. A name that disappears just unmounts; a new name fades in.
+  const positionByName = useMemo(() => {
+    const m = new Map<string, number>();
+    rows.forEach((r, i) => m.set(r.name, i));
+    return m;
+  }, [rows]);
+
+  const maxAbs = Math.max(0.5, ...rows.map((r) => Math.abs(r.pct)));
+  const yMax = niceAxisCeiling(maxAbs);
+  const yMin = -yMax;
+
+  const W = 920;
+  const H = 380;
+  const padL = 56;
+  const padR = 18;
+  const padT = 26;
+  const padB = 64;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const yZero = padT + innerH / 2;
+  const yPerPct = innerH / (yMax - yMin); // pixels per percent
+  const n = Math.max(symbols.length, 1);
+  const slot = innerW / n;
+  const barW = slot * 0.66;
+
+  // Five gridlines: -yMax, -yMax/2, 0, +yMax/2, +yMax.
+  const ticks = [-1, -0.5, 0, 0.5, 1].map((t) => ({
+    yPct: t * yMax,
+    y: yZero - t * yMax * yPerPct,
+  }));
+
   return (
-    <div className="px-5 pb-5">
-      <div className="space-y-1.5">
-        {rows.map((r, i) => {
-          const isGain = r.pct > 0;
-          const isLoss = r.pct < 0;
-          const accent = isGain ? "var(--gain)" : isLoss ? "var(--loss)" : "var(--muted)";
-          // Half the inner track each side of zero so the largest absolute
-          // move (up or down) fills 100% of its side.
-          const widthPct = Math.min(100, (Math.abs(r.pct) / max) * 100);
-          return (
-            <div key={r.name} className="flex items-center gap-3 text-sm">
-              <div className="w-6 text-right num text-[var(--muted)] font-medium">
-                {i + 1}
-              </div>
-              <div className="w-24 sm:w-28 font-medium whitespace-nowrap truncate">
-                {r.name}
-              </div>
-              {/* Bar track. Split at the center for symmetric mirroring. */}
-              <div className="flex-1 flex items-center" style={{ minHeight: 18 }}>
-                <div className="flex-1 flex justify-end pr-[1px]">
-                  {isLoss && (
-                    <span
-                      aria-hidden
-                      className="block rounded-l-full"
-                      style={{
-                        width: `${widthPct}%`,
-                        height: 12,
-                        background: accent,
-                        opacity: 0.78,
-                        transition: "width 0.5s ease-out",
-                      }}
-                    />
-                  )}
-                </div>
-                <div
-                  className="self-stretch"
-                  style={{ width: 1, background: "var(--border)" }}
-                  aria-hidden
-                />
-                <div className="flex-1 flex justify-start pl-[1px]">
-                  {isGain && (
-                    <span
-                      aria-hidden
-                      className="block rounded-r-full"
-                      style={{
-                        width: `${widthPct}%`,
-                        height: 12,
-                        background: accent,
-                        opacity: 0.78,
-                        transition: "width 0.5s ease-out",
-                      }}
-                    />
-                  )}
-                </div>
-              </div>
-              <div
-                className="num whitespace-nowrap w-20 text-right"
-                style={{ color: accent }}
+    <div className="card overflow-hidden">
+      <div className="p-5 pb-3 flex flex-col gap-3">
+        <div>
+          <div className="section-num mb-1 tracking-widest">SECTOR PERFORMANCE</div>
+          <p className="text-sm text-[var(--muted)] leading-relaxed">
+            Percent change across the same universe the model forecasts on,
+            for the selected window. LIVE is today vs prior close; every
+            other period is first close vs last close over that range.
+          </p>
+        </div>
+        {/* Period switcher */}
+        <div className="flex flex-wrap gap-1">
+          {CHART_PERIODS.map((p) => {
+            const active = period === p;
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPeriod(p)}
+                disabled={busy && p !== period}
+                className="text-xs font-medium tracking-wide rounded-full px-3 py-1 border transition-colors disabled:cursor-not-allowed"
+                style={{
+                  borderColor: active ? "var(--foreground)" : "var(--border)",
+                  background: active ? "var(--foreground)" : "transparent",
+                  color: active ? "var(--background)" : "var(--muted)",
+                }}
               >
-                {formatPct(r.pct)}
-              </div>
-            </div>
-          );
-        })}
+                {p}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="px-3 sm:px-5 pb-5">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full h-auto"
+          role="img"
+          aria-label={`Sector performance bar chart, period ${period}`}
+        >
+          {/* Gridlines + y-axis labels */}
+          {ticks.map((t, i) => (
+            <g key={i}>
+              <line
+                x1={padL}
+                x2={W - padR}
+                y1={t.y}
+                y2={t.y}
+                stroke={t.yPct === 0 ? "var(--border)" : "color-mix(in srgb, var(--border) 55%, transparent)"}
+                strokeWidth={t.yPct === 0 ? 1.2 : 1}
+                strokeDasharray={t.yPct === 0 ? "" : "3 3"}
+              />
+              <text
+                x={padL - 8}
+                y={t.y}
+                textAnchor="end"
+                dominantBaseline="middle"
+                fontSize={11}
+                fill="var(--muted)"
+              >
+                {`${t.yPct > 0 ? "+" : ""}${t.yPct.toFixed(t.yPct === 0 ? 0 : yMax >= 5 ? 0 : 1)}%`}
+              </text>
+            </g>
+          ))}
+
+          {/* Y-axis label */}
+          <text
+            x={14}
+            y={padT + innerH / 2}
+            textAnchor="middle"
+            fontSize={11}
+            fill="var(--muted)"
+            transform={`rotate(-90 14 ${padT + innerH / 2})`}
+          >
+            % change
+          </text>
+
+          {/* Bars */}
+          {rows.map((r) => {
+            const i = positionByName.get(r.name) ?? 0;
+            const cx = padL + (i + 0.5) * slot;
+            const barH = Math.abs(r.pct) * yPerPct;
+            const y = r.pct >= 0 ? yZero - barH : yZero;
+            const fill = r.pct >= 0 ? "var(--gain)" : "var(--loss)";
+            return (
+              <motion.g key={r.name}>
+                <motion.rect
+                  initial={false}
+                  animate={{ x: cx - barW / 2, y, width: barW, height: Math.max(barH, 1) }}
+                  transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                  fill={fill}
+                  rx={3}
+                  opacity={stale ? 0.55 : 0.9}
+                />
+                <motion.text
+                  initial={false}
+                  animate={{
+                    x: cx,
+                    y: r.pct >= 0 ? y - 6 : y + barH + 13,
+                  }}
+                  transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fill={fill}
+                  className="num"
+                >
+                  {`${r.pct >= 0 ? "+" : ""}${r.pct.toFixed(2)}%`}
+                </motion.text>
+              </motion.g>
+            );
+          })}
+
+          {/* X-axis labels, rotated to fit 13 names */}
+          {rows.map((r) => {
+            const i = positionByName.get(r.name) ?? 0;
+            const cx = padL + (i + 0.5) * slot;
+            return (
+              <motion.text
+                key={`xlabel-${r.name}`}
+                initial={false}
+                animate={{ x: cx, y: H - padB + 14 }}
+                transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                fontSize={11}
+                fill="var(--muted)"
+                textAnchor="end"
+                transform={`rotate(-38 ${cx} ${H - padB + 14})`}
+              >
+                {r.name}
+              </motion.text>
+            );
+          })}
+        </svg>
       </div>
     </div>
   );
 }
+
 
 function PairBadge({ label, data }: { label: string; data: any }) {
   // Compact relative-pair card. Sits at the foot of the Playground so the
