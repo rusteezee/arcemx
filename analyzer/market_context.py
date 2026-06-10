@@ -161,30 +161,33 @@ def _cue_snapshot(symbol: str) -> dict | None:
 
 
 def _session_calendar() -> dict:
-    """Deterministic expiry / month-end context in IST. NSE Nifty weekly
-    options expire Thursday; monthly is the last Thursday. Expiry days tend
-    to see pinning and elevated intraday volatility; month-end can bring
-    window dressing. Flagged as inferred so a schedule change is obvious."""
+    """Deterministic expiry / month-end context in IST. NSE moved Nifty
+    weekly options expiry from Thursday to TUESDAY effective 1 Sep 2025
+    (SEBI's one-weekly-expiry-per-exchange rule; BSE Sensex kept Thursday).
+    Monthly expiry = last Tuesday of the month. Expiry days tend to see
+    pinning and elevated intraday volatility; month-end can bring window
+    dressing. Flagged as inferred so a schedule change is obvious."""
     today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).date()
-    wd = today.weekday()  # Mon=0 .. Sun=6; Thursday=3
-    days_to_thu = (3 - wd) % 7
-    next_thu = today + timedelta(days=days_to_thu)
-    last_day = _cal.monthrange(next_thu.year, next_thu.month)[1]
-    d = next_thu.replace(day=last_day)
-    while d.weekday() != 3:
+    wd = today.weekday()  # Mon=0 .. Sun=6; Tuesday=1
+    days_to_tue = (1 - wd) % 7
+    next_tue = today + timedelta(days=days_to_tue)
+    last_day = _cal.monthrange(next_tue.year, next_tue.month)[1]
+    d = next_tue.replace(day=last_day)
+    while d.weekday() != 1:
         d -= timedelta(days=1)
     eom = _cal.monthrange(today.year, today.month)[1]
     return {
         "weekday": today.strftime("%A"),
-        "days_to_weekly_expiry": days_to_thu,
-        "is_expiry_today": wd == 3,
-        "is_expiry_tomorrow": days_to_thu == 1,
-        "is_monthly_expiry_week": next_thu == d,
+        "days_to_weekly_expiry": days_to_tue,
+        "is_expiry_today": wd == 1,
+        "is_expiry_tomorrow": days_to_tue == 1,
+        "is_monthly_expiry_week": next_tue == d,
         "days_to_month_end": eom - today.day,
         "note": (
-            "Expiry inferred as Thursday (NSE weekly options); monthly = last "
-            "Thursday. Expiry days often see option pinning and higher intraday "
-            "volatility; month-end can bring window dressing."
+            "Expiry inferred as Tuesday (NSE weekly Nifty options since Sep "
+            "2025; monthly = last Tuesday). Expiry days often see option "
+            "pinning and higher intraday volatility; month-end can bring "
+            "window dressing."
         ),
     }
 

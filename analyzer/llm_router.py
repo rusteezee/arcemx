@@ -520,13 +520,43 @@ def _chain(primary: str | None) -> list[str]:
     return [p] + [m for m in FALLBACK_CHAIN if m and m != p]
 
 
+# Lowest-leverage payload fields first. When the serialized payload
+# exceeds the size budget, whole fields are dropped in this order until
+# it fits, so the model always receives VALID JSON. The old approach
+# sliced the JSON string at a fixed offset, which handed the model a
+# malformed tail. news_recent goes first since news_digest already
+# carries that signal in distilled form.
+_PAYLOAD_DROP_ORDER = (
+    "news_recent", "reddit_hot", "google_trends", "indices",
+    "technical_bearish_top", "technical_bullish_top",
+)
+
+
+def _payload_json(payload: dict, max_chars: int = 120000) -> str:
+    s = json.dumps(payload, default=str)
+    if len(s) <= max_chars:
+        return s
+    trimmed = dict(payload)
+    for field in _PAYLOAD_DROP_ORDER:
+        if field not in trimmed:
+            continue
+        trimmed[field] = "dropped_for_size"
+        s = json.dumps(trimmed, default=str)
+        print(f"payload over budget; dropped {field} ({len(s)} chars now)")
+        if len(s) <= max_chars:
+            return s
+    # Still over budget with everything droppable gone: hard-truncate as
+    # the last resort, same behavior as before.
+    return s[:max_chars]
+
+
 def analyze(payload: dict, model_name: str | None = None) -> dict:
     """Run the strict-JSON market analysis. Signature preserved from
     analyzer.llm so callers swap with a one-line import change."""
     chain = _chain(model_name)
     print(f"OpenRouter primary: {chain[0]} | fallbacks: {chain[1:]}")
     user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
-                + json.dumps(payload, default=str)[:120000])
+                + _payload_json(payload))
     resp = _post(
         [{"role": "system", "content": SYSTEM_PROMPT},
          {"role": "user", "content": user_msg}],

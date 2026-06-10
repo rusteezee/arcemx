@@ -175,6 +175,26 @@ export default function AccuracyPage() {
         .select("score,analysis_id")
         .eq("dimension", "insight_quality")
         .limit(400);
+      // runAtById was built from direction_1d ids only. insight_quality is
+      // scored same-day while direction waits for the session close, so the
+      // newest analyses exist ONLY here; without this top-up fetch they
+      // silently vanish from the IQ trend (today always missing).
+      const iqMissingIds = Array.from(
+        new Set(
+          (iqRows || [])
+            .map((r: any) => r.analysis_id)
+            .filter((x: any) => x != null && !runAtById.has(x))
+        )
+      );
+      if (iqMissingIds.length) {
+        const { data: extraRows } = await sb
+          .from("analysis")
+          .select("id,run_at")
+          .in("id", iqMissingIds);
+        for (const a of (extraRows || []) as any[]) {
+          if (a?.id != null && a?.run_at) runAtById.set(a.id, a.run_at);
+        }
+      }
       const iqByDate = new Map<string, number[]>();
       for (const r of (iqRows || []) as any[]) {
         const runAt = runAtById.get(r.analysis_id);

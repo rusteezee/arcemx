@@ -84,6 +84,41 @@ create table if not exists transactions (
 create index if not exists idx_tx_user_date on transactions(user_id, execution_date);
 create index if not exists idx_tx_user_ticker on transactions(user_id, ticker);
 
+-- Grader output (documented from the live DB; these two tables were created
+-- out of band in an earlier session and were missing from this file).
+-- prediction_scores: one row per (analysis, dimension, horizon), upserted
+-- idempotently by analyzer.grader on every pass. The unique constraint is
+-- what makes the dual GH-cron + in-bot-APScheduler grading safe.
+create table if not exists prediction_scores (
+    id bigserial primary key,
+    analysis_id bigint references analysis(id),
+    dimension text not null,
+    horizon_days int not null,
+    predicted jsonb,
+    actual jsonb,
+    score double precision,
+    delta double precision,
+    notes text,
+    scored_at timestamptz default now(),
+    unique(analysis_id, dimension, horizon_days)
+);
+create index if not exists idx_pred_scores_dim on prediction_scores(dimension, analysis_id);
+
+-- accuracy_summary: append-only snapshots per (window, dimension) written by
+-- analyzer.grader.compute_summaries after each grading pass. Readers
+-- (feedback, sensei, dashboard) take the newest row per key by computed_at.
+create table if not exists accuracy_summary (
+    id bigserial primary key,
+    computed_at timestamptz default now(),
+    window_days int not null,
+    dimension text not null,
+    accuracy_pct double precision,
+    avg_delta double precision,
+    sample_size int,
+    bias jsonb
+);
+create index if not exists idx_acc_summary_at on accuracy_summary(computed_at desc);
+
 -- EOD retrospective written by analyzer.sensei after market close + grader run.
 -- One row per market-close date. Tomorrow's morning analysis reads the latest
 -- row via aggregator (sensei_yesterday) so the model goes into the next call
