@@ -378,6 +378,13 @@ async def scheduled_sync():
 
 _BG_TASKS: set = set()
 
+# In-flight locks for the expensive single-flight jobs. A double click on
+# the dashboard (or a retrying proxy) must not queue a second 7-12 minute
+# LLM run: analyses 42-44 in prod were three full quota-burning runs fired
+# one minute apart. Contains the job name ("analysis" / "sensei" /
+# "grader") while that job runs; triggers answer 409 instead of queueing.
+_JOB_RUNNING: set = set()
+
 
 async def _start_health_server(port: int):
     """HTTP server for Render port scan + /trigger/sync webhook."""
@@ -439,7 +446,11 @@ async def _start_health_server(port: int):
                     # table separately so a slow Gemini call will not time out
                     # the client.
                     refresh_analysis = bool(payload.get("refresh_analysis", True))
-                    if refresh_analysis:
+                    if refresh_analysis and "analysis" in _JOB_RUNNING:
+                        # Same single-flight lock as /trigger/analysis: an
+                        # LLM run is already going, don't queue a second.
+                        result["analysis"] = "already_running"
+                    elif refresh_analysis:
                         try:
                             from analyzer.aggregator import run as run_analysis
                             import asyncio as _asyncio
@@ -461,12 +472,16 @@ async def _start_health_server(port: int):
                                     import traceback
                                     print(f"Background analysis failed: {bgerr}")
                                     traceback.print_exc()
+                                finally:
+                                    _JOB_RUNNING.discard("analysis")
 
+                            _JOB_RUNNING.add("analysis")
                             task = _asyncio.create_task(_bg_analysis())
                             _BG_TASKS.add(task)
                             task.add_done_callback(_BG_TASKS.discard)
                             result["analysis"] = "queued"
                         except Exception as ae:
+                            _JOB_RUNNING.discard("analysis")
                             result["analysis_error"] = str(ae)
                     out = _json.dumps({"ok": True, **result}).encode()
                     status_line = b"HTTP/1.1 200 OK\r\n"
@@ -516,38 +531,63 @@ async def _start_health_server(port: int):
                         aid_int = int(aid) if aid is not None else None
                     except (TypeError, ValueError):
                         aid_int = None
-                    try:
-                        from analyzer.sensei import run as run_sensei
-                        import asyncio as _asyncio
-
-                        async def _bg_sensei():
-                            try:
-                                print(f"Background Sensei starting (analysis_id={aid_int})...")
-                                loop = _asyncio.get_event_loop()
-                                await loop.run_in_executor(None, lambda: run_sensei(aid_int))
-                                print("Background Sensei complete")
-                            except Exception as bgerr:
-                                import traceback
-                                print(f"Background Sensei failed: {bgerr}")
-                                traceback.print_exc()
-
-                        task = _asyncio.create_task(_bg_sensei())
-                        _BG_TASKS.add(task)
-                        task.add_done_callback(_BG_TASKS.discard)
+                    if "sensei" in _JOB_RUNNING:
                         out = _json.dumps({
-                            "ok": True, "job": "sensei", "status": "queued",
-                            "analysis_id": aid_int,
+                            "ok": False, "job": "sensei",
+                            "status": "already_running",
                         }).encode()
-                        status_line = b"HTTP/1.1 202 Accepted\r\n"
-                    except Exception as e:
-                        out = _json.dumps({"ok": False, "job": "sensei", "error": str(e)}).encode()
-                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+                        status_line = b"HTTP/1.1 409 Conflict\r\n"
+                    else:
+                        try:
+                            from analyzer.sensei import run as run_sensei
+                            import asyncio as _asyncio
+
+                            async def _bg_sensei():
+                                try:
+                                    print(f"Background Sensei starting (analysis_id={aid_int})...")
+                                    loop = _asyncio.get_event_loop()
+                                    await loop.run_in_executor(None, lambda: run_sensei(aid_int))
+                                    print("Background Sensei complete")
+                                except Exception as bgerr:
+                                    import traceback
+                                    print(f"Background Sensei failed: {bgerr}")
+                                    traceback.print_exc()
+                                finally:
+                                    _JOB_RUNNING.discard("sensei")
+
+                            _JOB_RUNNING.add("sensei")
+                            task = _asyncio.create_task(_bg_sensei())
+                            _BG_TASKS.add(task)
+                            task.add_done_callback(_BG_TASKS.discard)
+                            out = _json.dumps({
+                                "ok": True, "job": "sensei", "status": "queued",
+                                "analysis_id": aid_int,
+                            }).encode()
+                            status_line = b"HTTP/1.1 202 Accepted\r\n"
+                        except Exception as e:
+                            _JOB_RUNNING.discard("sensei")
+                            out = _json.dumps({"ok": False, "job": "sensei", "error": str(e)}).encode()
+                            status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
                 else:  # /trigger/grader
                     lookback = payload.get("lookback_days", 90)
                     try:
                         lookback_int = int(lookback)
                     except (TypeError, ValueError):
                         lookback_int = 90
+                    if "grader" in _JOB_RUNNING:
+                        out = _json.dumps({
+                            "ok": False, "job": "grader",
+                            "status": "already_running",
+                        }).encode()
+                        status_line = b"HTTP/1.1 409 Conflict\r\n"
+                        resp = (
+                            status_line +
+                            b"Content-Type: application/json\r\n"
+                            b"Access-Control-Allow-Origin: *\r\n"
+                            b"Content-Length: " + str(len(out)).encode() + b"\r\n"
+                            b"Connection: close\r\n\r\n" + out
+                        )
+                        writer.write(resp); await writer.drain(); return
                     try:
                         from analyzer.grader import grade_all, compute_summaries
                         import asyncio as _asyncio
@@ -564,7 +604,10 @@ async def _start_health_server(port: int):
                                 import traceback
                                 print(f"Background grader failed: {bgerr}")
                                 traceback.print_exc()
+                            finally:
+                                _JOB_RUNNING.discard("grader")
 
+                        _JOB_RUNNING.add("grader")
                         task = _asyncio.create_task(_bg_grader())
                         _BG_TASKS.add(task)
                         task.add_done_callback(_BG_TASKS.discard)
@@ -574,6 +617,7 @@ async def _start_health_server(port: int):
                         }).encode()
                         status_line = b"HTTP/1.1 202 Accepted\r\n"
                     except Exception as e:
+                        _JOB_RUNNING.discard("grader")
                         out = _json.dumps({"ok": False, "job": "grader", "error": str(e)}).encode()
                         status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
 
@@ -691,35 +735,46 @@ async def _start_health_server(port: int):
                     writer.write(resp); await writer.drain(); return
 
                 import json as _json
-                try:
-                    from analyzer.aggregator import run as run_analysis
-                    from analyzer.llm_router import LITE_MODEL as _LITE
-                    import asyncio as _asyncio
-
-                    async def _bg_analysis_solo():
-                        try:
-                            print("Background analysis (solo) starting...")
-                            loop = _asyncio.get_event_loop()
-                            await loop.run_in_executor(
-                                None, lambda: run_analysis(model_name=_LITE))
-                            print("Background analysis (solo) complete")
-                        except Exception as bgerr:
-                            import traceback
-                            print(f"Background analysis (solo) failed: {bgerr}")
-                            traceback.print_exc()
-
-                    task = _asyncio.create_task(_bg_analysis_solo())
-                    _BG_TASKS.add(task)
-                    task.add_done_callback(_BG_TASKS.discard)
+                if "analysis" in _JOB_RUNNING:
                     out = _json.dumps({
-                        "ok": True, "job": "analysis", "status": "queued",
+                        "ok": False, "job": "analysis",
+                        "status": "already_running",
                     }).encode()
-                    status_line = b"HTTP/1.1 202 Accepted\r\n"
-                except Exception as e:
-                    out = _json.dumps({
-                        "ok": False, "job": "analysis", "error": str(e),
-                    }).encode()
-                    status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+                    status_line = b"HTTP/1.1 409 Conflict\r\n"
+                else:
+                    try:
+                        from analyzer.aggregator import run as run_analysis
+                        from analyzer.llm_router import LITE_MODEL as _LITE
+                        import asyncio as _asyncio
+
+                        async def _bg_analysis_solo():
+                            try:
+                                print("Background analysis (solo) starting...")
+                                loop = _asyncio.get_event_loop()
+                                await loop.run_in_executor(
+                                    None, lambda: run_analysis(model_name=_LITE))
+                                print("Background analysis (solo) complete")
+                            except Exception as bgerr:
+                                import traceback
+                                print(f"Background analysis (solo) failed: {bgerr}")
+                                traceback.print_exc()
+                            finally:
+                                _JOB_RUNNING.discard("analysis")
+
+                        _JOB_RUNNING.add("analysis")
+                        task = _asyncio.create_task(_bg_analysis_solo())
+                        _BG_TASKS.add(task)
+                        task.add_done_callback(_BG_TASKS.discard)
+                        out = _json.dumps({
+                            "ok": True, "job": "analysis", "status": "queued",
+                        }).encode()
+                        status_line = b"HTTP/1.1 202 Accepted\r\n"
+                    except Exception as e:
+                        _JOB_RUNNING.discard("analysis")
+                        out = _json.dumps({
+                            "ok": False, "job": "analysis", "error": str(e),
+                        }).encode()
+                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
 
                 resp = (
                     status_line +

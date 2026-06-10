@@ -250,6 +250,15 @@ def run(model_name: str | None = None) -> dict:
 
 
 def save(result: dict, payload: dict) -> None:
+    # A failed LLM call ({"error": "parse_failed" / "no_choices", ...}) is
+    # not an analysis. Saving it poisons everything downstream: the grader
+    # scores insight_quality=0 on a missing reasoning_breakdown, prior_call
+    # and Sensei read it as a real prediction, and the dashboard renders an
+    # empty card. Log and drop instead.
+    if not result or result.get("error"):
+        print(f"LLM result error ({(result or {}).get('error')}); NOT saving "
+              f"an analysis row. raw head: {str((result or {}).get('raw'))[:200]}")
+        return
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
     if not url or not key:
         out_path = ROOT / "data" / f"analysis_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.json"
