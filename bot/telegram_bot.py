@@ -926,11 +926,47 @@ async def scheduled_sensei():
         print(f"In-bot scheduled Sensei failed: {e}")
 
 
+async def scheduled_analysis():
+    """PRIMARY 08:30 IST weekday morning analysis, in-bot. GitHub's
+    free-tier cron has fired hours late (3h50m drift observed) and on
+    10 June 2026 did not fire at all, so the bot owns the morning run
+    and the GH workflow becomes the 08:43 IST fallback. run_if_stale
+    guards both directions: whoever fires second sees a fresh analysis
+    row and exits without burning a second LLM call. On a successful
+    run the daily Telegram call is pushed from here, which previously
+    only happened when the GH workflow ran."""
+    import asyncio as _asyncio
+    if "analysis" in _JOB_RUNNING:
+        print("In-bot scheduled analysis: already running, skip")
+        return
+    _JOB_RUNNING.add("analysis")
+    try:
+        print("In-bot scheduled analysis starting...")
+        from analyzer.aggregator import run_if_stale
+        loop = _asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: run_if_stale(max_age_minutes=90))
+        if result is not None and not result.get("error"):
+            try:
+                from bot.daily_push import push as _push_daily
+                await _push_daily()
+            except Exception as pe:
+                print(f"Telegram push after analysis failed: {pe}")
+        print("In-bot scheduled analysis complete.")
+    except Exception as e:
+        print(f"In-bot scheduled analysis failed: {e}")
+    finally:
+        _JOB_RUNNING.discard("analysis")
+
+
 async def _post_init(app: Application):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
     scheduler.add_job(scheduled_sync, CronTrigger(hour=8, minute=0, day_of_week="mon-fri"))
+    # 08:30 IST: morning analysis, bot-primary (GH cron drifted hours or
+    # skipped entirely on free tier; see scheduled_analysis docstring).
+    scheduler.add_job(scheduled_analysis, CronTrigger(hour=8, minute=30, day_of_week="mon-fri"))
     # 17:05 IST: grader pass. Run 5 minutes after the GH cron's 17:00
     # target so when GH fires on time both runs grade the same row set
     # (idempotent), and when GH drifts the bot-side run still lands

@@ -2,7 +2,7 @@
 import os
 import json
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client
@@ -247,6 +247,44 @@ def run(model_name: str | None = None) -> dict:
     result = analyze(payload, model_name=model_name)
     save(result, payload)
     return result
+
+
+def latest_run_age_minutes() -> float | None:
+    """Minutes since the newest analysis row. None when the table is empty
+    or Supabase is unconfigured (callers treat None as stale)."""
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
+    if not url or not key:
+        return None
+    try:
+        sb = create_client(url, key)
+        r = sb.table("analysis").select("run_at").order(
+            "run_at", desc=True).limit(1).execute()
+        if not r.data:
+            return None
+        run_at = datetime.fromisoformat(
+            r.data[0]["run_at"].replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - run_at).total_seconds() / 60
+    except Exception as e:
+        print(f"latest_run_age check fail: {e}")
+        return None
+
+
+def run_if_stale(max_age_minutes: int = 90,
+                 model_name: str | None = None) -> dict | None:
+    """Run the analysis only when the newest row is older than the cutoff.
+
+    Two schedulers cover the 08:30 IST morning run: the in-bot APScheduler
+    job (primary; GitHub's free-tier cron has fired hours late or skipped
+    days outright) and the GH Actions workflow at 08:43 IST (fallback for
+    a sleeping Render dyno). Whoever fires second sees a fresh row and
+    exits without burning a second LLM call. Returns None when skipped.
+    """
+    age = latest_run_age_minutes()
+    if age is not None and age < max_age_minutes:
+        print(f"Analysis is fresh ({age:.0f} min old < {max_age_minutes} min "
+              f"cutoff); skipping run")
+        return None
+    return run(model_name=model_name)
 
 
 def save(result: dict, payload: dict) -> None:

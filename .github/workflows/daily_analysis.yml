@@ -2,7 +2,15 @@ name: Daily Market Analysis
 
 on:
   schedule:
-    - cron: "0 3 * * 1-5"  # 03:00 UTC Mon-Fri = 08:30 IST
+    # 03:13 UTC Mon-Fri = 08:43 IST. FALLBACK layer: the bot's in-process
+    # APScheduler owns the 08:30 IST primary run (Render dyno kept warm by
+    # cron-job.org pings). This workflow fires 13 minutes later and skips
+    # itself when a fresh analysis row already exists (run_if_stale guard),
+    # so it only spends quota when the bot was asleep or dead. The :13
+    # minute also dodges top-of-hour congestion: GitHub's free-tier cron
+    # fired 03:00 UTC nearly 4 hours late on 09/06/2026 and not at all on
+    # 10/06/2026.
+    - cron: "13 3 * * 1-5"
   workflow_dispatch:
 
 # Opt every JavaScript action onto Node 24 ahead of the 16 June 2026
@@ -24,7 +32,8 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Run aggregator
+      - name: Run aggregator (skips when the bot already ran this morning)
+        id: agg
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -33,8 +42,25 @@ jobs:
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
-        run: python -m analyzer.aggregator
+          # Manual dispatches always run; only the scheduled fallback
+          # defers to a fresh row from the bot's 08:30 IST primary run.
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          python - <<'EOF'
+          import os
+          from analyzer.aggregator import run, run_if_stale
+          if os.getenv("FORCE_RUN") == "true":
+              res = run()
+          else:
+              res = run_if_stale(max_age_minutes=90)
+          ran = res is not None and not (res or {}).get("error")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"ran={'true' if ran else 'false'}\n")
+          EOF
       - name: Push to Telegram
+        # Only when THIS workflow produced the analysis. When the bot's
+        # 08:30 run produced it, the bot already pushed the daily call.
+        if: steps.agg.outputs.ran == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
