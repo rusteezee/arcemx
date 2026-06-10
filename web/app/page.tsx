@@ -112,8 +112,11 @@ export default function TodayPage() {
             so the Run Analysis result popup floats inside its card
             instead of pushing the row taller when it appears. */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="card p-7 h-[200px] flex flex-col items-start">
-            <div className="section-num mb-4">Market Mood</div>
+          <div className="card p-7 h-[230px] flex flex-col items-start relative">
+            <div className="flex w-full items-center justify-between mb-4">
+              <div className="section-num">Market Mood</div>
+              <span className="glyph text-sm">◈</span>
+            </div>
             {/* items-start on the card prevents flex column from stretching
                 the pill to full card width, so it sits compact at its own
                 content width. */}
@@ -122,7 +125,7 @@ export default function TodayPage() {
               {moodOneLiner(mood, no)}
             </p>
           </div>
-          <div className="card p-7 h-[200px] flex flex-col">
+          <div className="card p-7 h-[230px] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="section-num">Confidence</div>
               <span className="glyph text-sm">◎</span>
@@ -132,8 +135,11 @@ export default function TodayPage() {
               Model&apos;s self-rated certainty on today&apos;s direction call, calibrated against realized accuracy on past predictions.
             </p>
           </div>
-          <div className="card p-7 h-[200px] relative overflow-hidden">
-            <div className="section-num mb-4">Last Update</div>
+          <div className="card p-7 h-[230px] relative overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <div className="section-num">Last Update</div>
+              <span className="glyph text-sm">◷</span>
+            </div>
             <div className="flex items-center gap-3 flex-wrap mb-4">
               <div className="text-3xl font-semibold tracking-tight num">{runDateStr}</div>
               {runTimeStr && (
