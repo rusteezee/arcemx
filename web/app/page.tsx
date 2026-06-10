@@ -112,8 +112,11 @@ export default function TodayPage() {
             so the Run Analysis result popup floats inside its card
             instead of pushing the row taller when it appears. */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="card p-7 h-[200px] flex flex-col">
+          <div className="card p-7 h-[200px] flex flex-col items-start">
             <div className="section-num mb-4">Market Mood</div>
+            {/* items-start on the card prevents flex column from stretching
+                the pill to full card width, so it sits compact at its own
+                content width. */}
             <MoodPill mood={mood} size="lg" />
             <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
               {moodOneLiner(mood, no)}
@@ -259,14 +262,25 @@ export default function TodayPage() {
 // first driver of the nifty outlook (already a number-anchored short
 // sentence per the system prompt); fall back to a generic regime line
 // when drivers are missing.
+// Two-line read on why the mood is what it is. Joins the first two
+// drivers from the model's nifty outlook (each is a number-anchored
+// short clause per the system prompt) so the card carries genuine
+// market reasoning, not just a pill label. Falls back to a regime
+// sentence with the band rule when drivers are missing.
 function moodOneLiner(mood: string, niftyOutlook: any): string {
   const drivers: string[] = Array.isArray(niftyOutlook?.drivers) ? niftyOutlook.drivers : [];
-  const first = (drivers[0] || "").trim();
-  if (first) return first.length > 140 ? first.slice(0, 137) + "..." : first;
+  const clean = drivers
+    .map((d) => (d || "").trim().replace(/\.$/, ""))
+    .filter(Boolean);
+  if (clean.length >= 2) {
+    const joined = clean.slice(0, 2).join("; ") + ".";
+    return joined.length > 200 ? joined.slice(0, 197) + "..." : joined;
+  }
+  if (clean.length === 1) return clean[0] + ".";
   const m = (mood || "").toLowerCase();
-  if (m === "bull") return "Tilt up: expecting >0.4% NIFTY close above prior session.";
-  if (m === "bear") return "Tilt down: expecting >0.4% NIFTY close below prior session.";
-  return "Mixed signals; move expected inside the ±0.4% noise band.";
+  if (m === "bull") return "Tilt up: model expects NIFTY to close >0.4% above the prior session on supportive technicals and flows.";
+  if (m === "bear") return "Tilt down: model expects NIFTY to close >0.4% below the prior session on weak technicals or risk-off flows.";
+  return "Mixed signals: model expects the move to stay inside the ±0.4% noise band; no decisive direction either way.";
 }
 
 function RunAnalysisButton() {
@@ -379,10 +393,10 @@ function RunAnalysisButton() {
       // Pinned to the card's bottom-left via absolute positioning so the
       // popup never pushes the card taller. The parent card is `relative
       // overflow-hidden` and 200px tall; this sits inside that frame.
-      <div
-        className="absolute left-7 right-7 bottom-5 text-[0.7rem] leading-snug"
-        style={{ color: fg }}
-      >
+      // Text stays muted neutral; the button border + background already
+      // carry the green / red status signal, so the message itself reads
+      // as plain informational copy.
+      <div className="absolute left-7 right-7 bottom-5 text-[0.7rem] leading-snug text-[var(--muted)]">
         {detail}
       </div>
     )}
