@@ -15,8 +15,15 @@
   uppercase.
 - Indian Rupee plus Indian commas for prices, sector ranges, and
   per-stock ranges.
-- Indices (NIFTY, Sensex) shown as plain comma-formatted numbers,
-  never with a currency prefix. They are points, not rupees.
+- Indian Rupee prefix is applied to any price-level number in prose
+  (support / resistance / target / stop / entry / level), including
+  index levels like NIFTY 23,070 -> ₹23,070. The earlier rule that
+  stripped ₹ from indices is dropped; consistent number formatting
+  across stocks and indices reads better in mixed prose than a
+  technically-pure points-vs-rupees distinction.
+- Standalone index quotes outside price-level context (e.g. the
+  Snapshot card's NIFTY chip, the Markets page heatmap) stay plain
+  comma-formatted with no ₹.
 - Card radius 22px. Logo `fill="#ffffff"`.
 
 ## Tier palette (Conviction A / B / C)
