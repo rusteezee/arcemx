@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Section } from "@/components/Section";
-import { Stat } from "@/components/Stat";
 import { MoodPill } from "@/components/MoodPill";
 import { EmptyState } from "@/components/EmptyState";
 import { sb } from "@/lib/supabase";
@@ -107,19 +106,25 @@ export default function TodayPage() {
       </div>
 
       <Section num="001 / 007" title="Snapshot" glyph="✦">
+        {/* Inline cards (not the shared Stat) so all three boxes share the
+            larger p-7 / min-h footprint without touching Stat's other
+            call sites on the accuracy page. */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="card p-5">
-            <div className="section-num mb-3">Market Mood</div>
+          <div className="card p-7 min-h-[170px]">
+            <div className="section-num mb-4">Market Mood</div>
             <MoodPill mood={mood} size="lg" />
           </div>
-          <Stat label="Confidence" value={`${conf}%`} glyph="◎" />
-          <div className="card p-5">
-            <div className="flex items-center justify-between mb-2">
-              <div className="section-num">Last Update</div>
-              <RunAnalysisButton />
+          <div className="card p-7 min-h-[170px]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="section-num">Confidence</div>
+              <span className="glyph text-sm">◎</span>
             </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="text-2xl font-semibold tracking-tight num">{runDateStr}</div>
+            <div className="text-3xl font-semibold tracking-tight num">{conf}%</div>
+          </div>
+          <div className="card p-7 min-h-[170px]">
+            <div className="section-num mb-4">Last Update</div>
+            <div className="flex items-center gap-3 flex-wrap mb-4">
+              <div className="text-3xl font-semibold tracking-tight num">{runDateStr}</div>
               {runTimeStr && (
                 <span
                   className="pill num"
@@ -133,6 +138,7 @@ export default function TodayPage() {
                 </span>
               )}
             </div>
+            <RunAnalysisButton />
           </div>
         </div>
       </Section>
@@ -250,11 +256,15 @@ function RunAnalysisButton() {
   // States: idle -> loading -> ok | error -> idle (auto-reset).
   const [state, setState] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [msg, setMsg] = useState<string | null>(null);
+  // One-line result popup under the button so the outcome is readable
+  // text, not just a border color flash.
+  const [detail, setDetail] = useState<string | null>(null);
 
   const run = async () => {
     if (state === "loading") return;
     setState("loading");
     setMsg("Queueing");
+    setDetail(null);
     try {
       const r = await fetch("/api/trigger-analysis", {
         method: "POST",
@@ -265,18 +275,26 @@ function RunAnalysisButton() {
       if (r.ok && data?.ok) {
         setState("ok");
         setMsg("Queued");
+        setDetail("Analysis queued. Fresh call with current news lands in 3-12 min; refresh the page after.");
+      } else if (r.status === 409 || data?.status === "already_running") {
+        setState("ok");
+        setMsg("Running");
+        setDetail("An analysis is already in progress. Refresh in a few minutes.");
       } else {
         setState("error");
-        setMsg(data?.error || "Error");
+        setMsg("Failed");
+        setDetail(data?.error || "Bot unreachable. Render may be waking from sleep; try again in ~30s.");
       }
     } catch {
       setState("error");
-      setMsg("Error");
+      setMsg("Failed");
+      setDetail("Network error reaching the bot. Try again in ~30s.");
     } finally {
       setTimeout(() => {
         setState("idle");
         setMsg(null);
-      }, 4000);
+        setDetail(null);
+      }, 8000);
     }
   };
 
@@ -296,6 +314,7 @@ function RunAnalysisButton() {
     state === "ok" ? "var(--gain)" : state === "error" ? "var(--loss)" : "var(--foreground)";
 
   return (
+    <div>
     <button
       type="button"
       onClick={run}
@@ -334,6 +353,15 @@ function RunAnalysisButton() {
           : "Run Analysis"}
       </span>
     </button>
+    {detail && (
+      <div
+        className="text-[0.7rem] leading-snug mt-2 max-w-[280px]"
+        style={{ color: fg }}
+      >
+        {detail}
+      </div>
+    )}
+    </div>
   );
 }
 
