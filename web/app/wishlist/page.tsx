@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { EmptyState } from "@/components/EmptyState";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
-import { formatINR } from "@/lib/utils";
+import { formatINR, polishMarketText } from "@/lib/utils";
 
 interface WishlistOutlook {
   ticker: string;
@@ -169,9 +169,9 @@ export default function WishlistPage() {
                       </td>
                       <td
                         className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                        title={outlook.key_driver}
+                        title={polishMarketText(outlook.key_driver)}
                       >
-                        {outlook.key_driver || "·"}
+                        {outlook.key_driver ? polishMarketText(outlook.key_driver) : "·"}
                       </td>
                     </>
                   ) : (

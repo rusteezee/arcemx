@@ -6,7 +6,7 @@ import { MoodPill } from "@/components/MoodPill";
 import { EmptyState } from "@/components/EmptyState";
 import { sb } from "@/lib/supabase";
 import { fetchQuote } from "@/lib/quotes";
-import { formatINR, formatNumber, formatPct } from "@/lib/utils";
+import { formatINR, formatNumber, formatPct, polishMarketText } from "@/lib/utils";
 
 // Live leaderboard universe. Matches the analyzer payload's
 // market_context indices + 10 NSE sectors so today's actual board
@@ -118,7 +118,7 @@ export default function TodayPage() {
                 the pill to full card width, so it sits compact at its own
                 content width. */}
             <MoodPill mood={mood} size="lg" />
-            <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
+            <p className="text-xs text-[var(--muted)] mt-auto leading-snug whitespace-pre-line">
               {moodOneLiner(mood, no)}
             </p>
           </div>
@@ -175,7 +175,7 @@ export default function TodayPage() {
                   {data.drivers.map((d: string, i: number) => (
                     <li key={i} className="flex gap-3">
                       <span className="glyph mt-0.5">·</span>
-                      <span>{d}</span>
+                      <span>{polishMarketText(d)}</span>
                     </li>
                   ))}
                 </ul>
@@ -262,21 +262,21 @@ export default function TodayPage() {
 // first driver of the nifty outlook (already a number-anchored short
 // sentence per the system prompt); fall back to a generic regime line
 // when drivers are missing.
-// Two-line read on why the mood is what it is. Joins the first two
+// Two-line read on why the mood is what it is. Renders the first two
 // drivers from the model's nifty outlook (each is a number-anchored
-// short clause per the system prompt) so the card carries genuine
-// market reasoning, not just a pill label. Falls back to a regime
+// short clause per the system prompt) as separate sentences, each one
+// polished by polishMarketText (capitalized first letter, Indian comma
+// grouping, ₹ prefix on price-context numbers). Falls back to a regime
 // sentence with the band rule when drivers are missing.
 function moodOneLiner(mood: string, niftyOutlook: any): string {
   const drivers: string[] = Array.isArray(niftyOutlook?.drivers) ? niftyOutlook.drivers : [];
   const clean = drivers
-    .map((d) => (d || "").trim().replace(/\.$/, ""))
+    .map((d) => (d || "").trim().replace(/[\.;,]+$/, ""))
     .filter(Boolean);
-  if (clean.length >= 2) {
-    const joined = clean.slice(0, 2).join("; ") + ".";
-    return joined.length > 200 ? joined.slice(0, 197) + "..." : joined;
+  if (clean.length) {
+    const polished = clean.slice(0, 2).map((d) => polishMarketText(d) + ".");
+    return polished.join("\n");
   }
-  if (clean.length === 1) return clean[0] + ".";
   const m = (mood || "").toLowerCase();
   if (m === "bull") return "Tilt up: model expects NIFTY to close >0.4% above the prior session on supportive technicals and flows.";
   if (m === "bear") return "Tilt down: model expects NIFTY to close >0.4% below the prior session on weak technicals or risk-off flows.";
@@ -846,9 +846,9 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
                 <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
                 <td
                   className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                  title={r.key_driver}
+                  title={polishMarketText(r.key_driver)}
                 >
-                  {r.key_driver}
+                  {polishMarketText(r.key_driver)}
                 </td>
               </tr>
             ))}
@@ -902,7 +902,7 @@ function ReasoningCard({
     <div className="card p-6 md:p-8">
       {summary && (
         <p className="text-sm md:text-[0.95rem] text-foreground leading-relaxed mb-6 max-w-3xl">
-          {summary}
+          {polishMarketText(summary)}
         </p>
       )}
       {points.length > 0 && (
@@ -912,7 +912,7 @@ function ReasoningCard({
               <div className="text-[0.7rem] uppercase tracking-wider text-[var(--muted)] mb-1.5 font-medium">
                 {REASONING_LABELS[key] || key.replace(/_/g, " ")}
               </div>
-              <p className="text-sm text-[var(--muted)] leading-relaxed">{text}</p>
+              <p className="text-sm text-[var(--muted)] leading-relaxed">{polishMarketText(text)}</p>
             </div>
           ))}
         </div>

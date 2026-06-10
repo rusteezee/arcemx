@@ -72,3 +72,40 @@ export function formatINR(input: any, withSymbol = true): string {
 export function formatNumber(input: any): string {
   return formatINR(input, false);
 }
+
+// Post-process model-emitted prose so it reads in the brand voice
+// without depending on the model getting every detail right:
+//   - First character uppercased (the model often emits lower-case
+//     openers like "price 1.2% above ...").
+//   - Bare 4+ digit integers get Indian comma grouping (23070 -> 23,070).
+//     Numbers already containing a comma or a decimal are left alone.
+//   - A "₹" prefix is added when a number sits right after a clear
+//     price-level word (support, resistance, target, stop / stop loss,
+//     entry, level). Other contexts (RSI 42, FII -2800cr, 1.2%) are
+//     untouched so we never get nonsense like "RSI ₹42".
+// Idempotent: passing already-formatted text through a second time is
+// a no-op (₹ is detected and skipped, commas already present skipped).
+export function polishMarketText(input: string | null | undefined): string {
+  if (input == null) return "";
+  let s = String(input).trim();
+  if (!s) return "";
+
+  s = s.replace(/\b(\d{4,})\b/g, (m) => {
+    const n = Number(m);
+    if (!Number.isFinite(n)) return m;
+    return n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  });
+
+  s = s.replace(
+    /\b(support|resistance|target|stop[_ ]?loss|stop|entry|level)(\s+(?:[a-z0-9_]+\s+){0,2})(\d[\d,]*(?:\.\d+)?)/gi,
+    (_full, word: string, mid: string, num: string) => {
+      const between = mid || " ";
+      // Already prefixed with ₹ somewhere in the gap? Leave it.
+      if (between.includes("₹")) return `${word}${between}${num}`;
+      return `${word}${between}₹${num}`;
+    },
+  );
+
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  return s;
+}
