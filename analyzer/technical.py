@@ -109,19 +109,54 @@ def screen_universe(tickers: list[str]) -> dict:
 
 
 def rank_candidates(signals: dict, n: int = 20) -> dict:
-    rows = []
+    """Rank the screened universe into bullish and bearish candidate lists.
+
+    The two lists are scored INDEPENDENTLY. The old implementation returned
+    the lowest-bullish rows as "bearish", which are mostly neutral names
+    with no setup at all; the LLM treats technical_bearish_top as short /
+    avoid candidates, so every entry must show a genuine breakdown setup
+    (weak RSI, MACD below signal, price under its averages, negative
+    momentum, distribution volume), not a mere absence of strength.
+    In each list a higher score means a stronger setup in that direction.
+    """
+    bull_rows = []
+    bear_rows = []
     for t, s in signals.items():
         if not s:
             continue
-        score = 0
-        if s.get("rsi") and 50 < s["rsi"] < 70: score += 2
-        if s.get("rsi") and s["rsi"] > 70: score -= 1
-        if s.get("rsi") and s["rsi"] < 30: score += 1
-        if s.get("macd") and s.get("macd_signal") and s["macd"] > s["macd_signal"]: score += 2
-        if s.get("sma20") and s.get("sma50") and s["sma20"] > s["sma50"]: score += 1
-        if s.get("chg_5d") and s["chg_5d"] > 5: score += 1
-        if s.get("chg_30d") and s["chg_30d"] > 10: score += 1
-        if s.get("vol_last") and s.get("vol_avg_20") and s["vol_last"] > 1.5 * s["vol_avg_20"]: score += 1
-        rows.append({"ticker": t, "score": score, "signals": s})
-    rows.sort(key=lambda r: r["score"], reverse=True)
-    return {"bullish": rows[:n], "bearish": rows[-n:][::-1]}
+        bull = 0
+        if s.get("rsi") and 50 < s["rsi"] < 70: bull += 2
+        if s.get("rsi") and s["rsi"] > 70: bull -= 1
+        if s.get("rsi") and s["rsi"] < 30: bull += 1
+        if s.get("macd") and s.get("macd_signal") and s["macd"] > s["macd_signal"]: bull += 2
+        if s.get("sma20") and s.get("sma50") and s["sma20"] > s["sma50"]: bull += 1
+        if s.get("chg_5d") and s["chg_5d"] > 5: bull += 1
+        if s.get("chg_30d") and s["chg_30d"] > 10: bull += 1
+        if s.get("vol_last") and s.get("vol_avg_20") and s["vol_last"] > 1.5 * s["vol_avg_20"]: bull += 1
+
+        bear = 0
+        # Weak-but-not-washed-out RSI is the shortable band; below 25 the
+        # bounce risk caps the credit to 1.
+        if s.get("rsi") and 25 <= s["rsi"] < 40: bear += 2
+        if s.get("rsi") and s["rsi"] < 25: bear += 1
+        if s.get("macd") and s.get("macd_signal") and s["macd"] < s["macd_signal"]: bear += 2
+        if s.get("last") and s.get("sma20") and s["last"] < s["sma20"]: bear += 1
+        if s.get("last") and s.get("sma50") and s["last"] < s["sma50"]: bear += 1
+        if s.get("chg_5d") and s["chg_5d"] < -3: bear += 1
+        if s.get("chg_30d") and s["chg_30d"] < -8: bear += 1
+        # Volume confirmation: above-average volume ON a down day is
+        # distribution, the bearish mirror of the bullish volume check.
+        if (s.get("vol_last") and s.get("vol_avg_20")
+                and s["vol_last"] > 1.5 * s["vol_avg_20"]
+                and s.get("chg_1d") and s["chg_1d"] < 0): bear += 1
+
+        bull_rows.append({"ticker": t, "score": bull, "signals": s})
+        bear_rows.append({"ticker": t, "score": bear, "signals": s})
+
+    bull_rows.sort(key=lambda r: r["score"], reverse=True)
+    bear_rows.sort(key=lambda r: r["score"], reverse=True)
+    # A zero bearish score means no breakdown signal fired; feeding such a
+    # name to the model as a short candidate is a no-bluff violation, so
+    # the bearish list may legitimately run shorter than n.
+    bear_rows = [r for r in bear_rows if r["score"] > 0]
+    return {"bullish": bull_rows[:n], "bearish": bear_rows[:n]}
