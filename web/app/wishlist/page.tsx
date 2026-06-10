@@ -168,8 +168,8 @@ export default function WishlistPage() {
                         {outlook.confidence ?? "·"}
                       </td>
                       <td
-                        className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                        title={polishMarketText(outlook.key_driver)}
+                        className="text-[var(--muted)] text-sm align-top leading-snug"
+                        style={{ whiteSpace: "normal" }}
                       >
                         {outlook.key_driver ? polishMarketText(outlook.key_driver) : "·"}
                       </td>

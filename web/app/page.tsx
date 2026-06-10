@@ -219,10 +219,10 @@ export default function TodayPage() {
                       <VerdictPill v={v.verdict} />
                     </td>
                     <td
-                      className="text-[var(--muted)] whitespace-nowrap overflow-hidden text-ellipsis max-w-[32rem]"
-                      title={v.reason}
+                      className="text-[var(--muted)] align-top leading-snug"
+                      style={{ whiteSpace: "normal", maxWidth: "44rem" }}
                     >
-                      {v.reason}
+                      {polishMarketText(v.reason)}
                     </td>
                     <td className="num whitespace-nowrap text-[var(--gain)]">{formatINR(v.target)}</td>
                     <td className="num whitespace-nowrap text-[var(--loss)]">{formatINR(v.stop_loss)}</td>
@@ -390,13 +390,16 @@ function RunAnalysisButton() {
       </span>
     </button>
     {detail && (
-      // Pinned to the card's bottom-left via absolute positioning so the
-      // popup never pushes the card taller. The parent card is `relative
-      // overflow-hidden` and 200px tall; this sits inside that frame.
+      // Pinned to the card's footer baseline. left/right/bottom all use
+      // the same 7-unit (28px) offset as the card's p-7 padding, so the
+      // popup's left edge, right edge, and bottom baseline land exactly
+      // where the Market Mood and Confidence one-liners sit (those are
+      // <p mt-auto> inside p-7 = 28px from card bottom). Same vertical
+      // line across all three Snapshot cards.
       // Text stays muted neutral; the button border + background already
       // carry the green / red status signal, so the message itself reads
       // as plain informational copy.
-      <div className="absolute left-7 right-7 bottom-5 text-[0.7rem] leading-snug text-[var(--muted)]">
+      <div className="absolute left-7 right-7 bottom-7 text-xs leading-snug text-[var(--muted)]">
         {detail}
       </div>
     )}
@@ -668,10 +671,10 @@ function Playground({
                     </td>
                     <td className="num whitespace-nowrap">{it.confidence ?? "·"}</td>
                     <td
-                      className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                      title={it.driver}
+                      className="text-[var(--muted)] text-sm align-top leading-snug"
+                      style={{ whiteSpace: "normal" }}
                     >
-                      {it.driver || "·"}
+                      {it.driver ? polishMarketText(it.driver) : "·"}
                     </td>
                   </tr>
                 );
@@ -845,8 +848,8 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
                 <td className="num whitespace-nowrap">{r.range ? formatINR(r.range) : "·"}</td>
                 <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
                 <td
-                  className="text-[var(--muted)] text-sm whitespace-nowrap overflow-hidden text-ellipsis"
-                  title={polishMarketText(r.key_driver)}
+                  className="text-[var(--muted)] text-sm align-top leading-snug"
+                  style={{ whiteSpace: "normal" }}
                 >
                   {polishMarketText(r.key_driver)}
                 </td>
