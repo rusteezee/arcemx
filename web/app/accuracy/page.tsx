@@ -1095,11 +1095,15 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
   // least-squares regression through the cloud. R-squared and Pearson
   // r read as "how reliably stated confidence tracks realized accuracy"
   // and live top-left like the example image.
-  const H = 560;
-  const W = 600;
-  const padL = 70;
-  const padR = 28;
-  const padT = 32;
+  // Wide canvas + no maxWidth cap so the SVG fills the card. The old
+  // 600x560 box with a 720px maxWidth letterboxed everything inside a
+  // ~1200px card. Both axes still cover 0..100 so a square plot area
+  // is preserved by the inner padding ratio (inner ~820x440).
+  const H = 540;
+  const W = 960;
+  const padL = 78;
+  const padR = 32;
+  const padT = 28;
   const padB = 72;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
@@ -1146,8 +1150,7 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
       viewBox={`0 0 ${W} ${H}`}
       width="100%"
       preserveAspectRatio="xMidYMid meet"
-      className="h-auto block mx-auto"
-      style={{ maxWidth: 720 }}
+      className="h-auto block"
     >
       {/* Gridlines */}
       {ticks.map((t) => (
@@ -1235,43 +1238,25 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
         Realized score
       </text>
 
-      {/* R-statistic block, top-left like the example. */}
+      {/* R / R-squared / n block, top-left, matching the example
+          image's "R = 0.99, p < 2.2e-16" placement. The OLS regression
+          LINE itself is intentionally NOT drawn: direction scores are
+          binary (0 / 50 / 100), so a least-squares line through them
+          slopes hard against the calibration diagonal in a way that
+          reads as a contradiction even when the stats are weak. The R
+          number does the same job honestly: weak R = stated confidence
+          doesn't track delivered hit rate; strong R = it does. */}
       {reg && (
-        <>
-          <text
-            x={padL + 10}
-            y={padT + 18}
-            fontSize={13}
-            fill="var(--foreground)"
-            fontStyle="italic"
-          >
-            R = {reg.r >= 0 ? "+" : ""}
-            {reg.r.toFixed(3)}, R² = {reg.r2.toFixed(3)}, n = {points.length}
-          </text>
-          <text
-            x={padL + 10}
-            y={padT + 36}
-            fontSize={11}
-            fill="var(--muted)"
-          >
-            Regression: realized = {reg.intercept.toFixed(1)} + {reg.slope.toFixed(2)} · stated
-          </text>
-        </>
-      )}
-
-      {/* OLS regression line in foreground colour. Solid stroke so it
-          reads next to the blue calibration diagonal. */}
-      {reg && (
-        <line
-          x1={reg.x1}
-          y1={reg.y1}
-          x2={reg.x2}
-          y2={reg.y2}
-          stroke="var(--foreground)"
-          strokeWidth={1.8}
-          opacity={0.55}
-          strokeDasharray="6 4"
-        />
+        <text
+          x={padL + 10}
+          y={padT + 20}
+          fontSize={14}
+          fill="var(--foreground)"
+          fontStyle="italic"
+        >
+          R = {reg.r >= 0 ? "+" : ""}
+          {reg.r.toFixed(3)}, R² = {reg.r2.toFixed(3)}, n = {points.length}
+        </text>
       )}
 
       {/* Dots */}
