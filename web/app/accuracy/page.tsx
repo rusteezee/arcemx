@@ -67,6 +67,25 @@ interface ScatterPoint {
   date: string;
 }
 
+// OLS slope + Pearson r + r-squared for the range cloud. Shared
+// between the RangeScatter SVG and the HTML header strip above the
+// card so both surfaces show identical numbers.
+function rangeStats(points: ScatterPoint[]): { slope: number; r: number; r2: number; n: number } | null {
+  if (points.length < 4) return null;
+  const n = points.length;
+  const sumX = points.reduce((a, p) => a + p.width, 0);
+  const sumY = points.reduce((a, p) => a + p.score, 0);
+  const sumXY = points.reduce((a, p) => a + p.width * p.score, 0);
+  const sumXX = points.reduce((a, p) => a + p.width * p.width, 0);
+  const sumYY = points.reduce((a, p) => a + p.score * p.score, 0);
+  const denom = n * sumXX - sumX * sumX;
+  if (Math.abs(denom) < 1e-6) return null;
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const rDen = Math.sqrt(denom * (n * sumYY - sumY * sumY));
+  const r = rDen > 1e-6 ? (n * sumXY - sumX * sumY) / rDen : 0;
+  return { slope, r, r2: r * r, n };
+}
+
 interface CalibPoint {
   stated: number;    // stated confidence at call time, 0-100
   realized: number;  // graded direction score for that call, 0-100
@@ -556,7 +575,25 @@ export default function AccuracyPage() {
           className="card p-6"
         >
           {rangeScatter.length >= 3 ? (
-            <RangeScatter points={rangeScatter} />
+            <>
+              {(() => {
+                const s = rangeStats(rangeScatter);
+                if (!s) return null;
+                return (
+                  <div className="mb-4">
+                    <div className="text-sm font-medium text-foreground">
+                      Trend: {s.slope >= 0 ? "+" : ""}
+                      {s.slope.toFixed(1)} score per +1% width
+                    </div>
+                    <div className="text-xs text-[var(--muted)] mt-1 num">
+                      R² = {s.r2.toFixed(3)} · r = {s.r >= 0 ? "+" : ""}
+                      {s.r.toFixed(3)} · n = {s.n}
+                    </div>
+                  </div>
+                );
+              })()}
+              <RangeScatter points={rangeScatter} />
+            </>
           ) : (
             <div
               style={{ height: 280 }}
@@ -1078,38 +1115,15 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
           can't be greater than one" stat (bounded 0..1); r carries the
           sign so the direction of the relationship is explicit. */}
       {regression && (
-        <>
-          <line
-            x1={regression.x1}
-            y1={regression.y1}
-            x2={regression.x2}
-            y2={regression.y2}
-            stroke="var(--foreground)"
-            strokeWidth={2}
-            opacity={0.7}
-          />
-          <text
-            x={padL + innerW - 6}
-            y={padT + 16}
-            textAnchor="end"
-            fontSize="12"
-            fill="var(--foreground)"
-            opacity={0.85}
-          >
-            Trend: {regression.slope >= 0 ? "+" : ""}
-            {regression.slope.toFixed(1)} score per +1% width
-          </text>
-          <text
-            x={padL + innerW - 6}
-            y={padT + 34}
-            textAnchor="end"
-            fontSize="12"
-            fill="var(--muted)"
-          >
-            R² = {regression.r2.toFixed(3)}  ·  r = {regression.r >= 0 ? "+" : ""}
-            {regression.r.toFixed(3)}  ·  n = {points.length}
-          </text>
-        </>
+        <line
+          x1={regression.x1}
+          y1={regression.y1}
+          x2={regression.x2}
+          y2={regression.y2}
+          stroke="var(--foreground)"
+          strokeWidth={2}
+          opacity={0.7}
+        />
       )}
 
       {/* Points. Larger and fully opaque to match the example's clean
