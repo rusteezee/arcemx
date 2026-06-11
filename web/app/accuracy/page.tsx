@@ -40,7 +40,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   short_pick_A_7d: "Short Picks · Tier A (7d)",
   short_pick_B_7d: "Short Picks · Tier B (7d)",
   short_pick_C_7d: "Short Picks · Tier C (7d)",
-  insight_quality: "Reasoning Quality",
+  insight_quality: "Insight Quality",
 };
 
 const WINDOWS = [7, 30, 90];
@@ -113,7 +113,6 @@ function calibPearson(points: CalibPoint[]): { r: number; r2: number; n: number 
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
-  const [iqTrend, setIqTrend] = useState<{ date: string; value: number }[]>([]);
   const [rangeScatter, setRangeScatter] = useState<ScatterPoint[]>([]);
   const [calibScatter, setCalibScatter] = useState<CalibPoint[]>([]);
   const [calibration, setCalibration] = useState<Calibration | null>(null);
@@ -229,55 +228,6 @@ export default function AccuracyPage() {
       });
       setTrend(points);
 
-      // ----- Insight quality trend (per analysis date, rolling-5 mean) -----
-      // insight_quality is scored age=0 (same day), so the line shows up the
-      // fastest of any dim. Smaller K than direction trend (5 vs 10) because
-      // text quality moves more slowly than direction noise.
-      const { data: iqRows } = await sb
-        .from("prediction_scores")
-        .select("score,analysis_id")
-        .eq("dimension", "insight_quality")
-        .limit(400);
-      // runAtById was built from direction_1d ids only. insight_quality is
-      // scored same-day while direction waits for the session close, so the
-      // newest analyses exist ONLY here; without this top-up fetch they
-      // silently vanish from the IQ trend (today always missing).
-      const iqMissingIds = Array.from(
-        new Set(
-          (iqRows || [])
-            .map((r: any) => r.analysis_id)
-            .filter((x: any) => x != null && !runAtById.has(x))
-        )
-      );
-      if (iqMissingIds.length) {
-        const { data: extraRows } = await sb
-          .from("analysis")
-          .select("id,run_at")
-          .in("id", iqMissingIds);
-        for (const a of (extraRows || []) as any[]) {
-          if (a?.id != null && a?.run_at) runAtById.set(a.id, a.run_at);
-        }
-      }
-      const iqByDate = new Map<string, number[]>();
-      for (const r of (iqRows || []) as any[]) {
-        const runAt = runAtById.get(r.analysis_id);
-        if (!runAt || typeof r.score !== "number") continue;
-        const d = String(runAt).slice(0, 10);
-        const arr = iqByDate.get(d) ?? [];
-        arr.push(r.score);
-        iqByDate.set(d, arr);
-      }
-      const iqDaily = Array.from(iqByDate.entries())
-        .map(([date, arr]) => ({ date, score: arr.reduce((a, b) => a + b, 0) / arr.length }))
-        .sort((a, b) => (a.date < b.date ? -1 : 1));
-      const IQ_K = 5;
-      const iqPoints = iqDaily.map((d, i) => {
-        const slice = iqDaily.slice(Math.max(0, i - IQ_K + 1), i + 1);
-        const mean = slice.reduce((a, b) => a + b.score, 0) / slice.length;
-        return { date: d.date, value: Math.round(mean * 10) / 10 };
-      });
-      setIqTrend(iqPoints);
-
       // ----- Range tightness vs hit rate scatter -----
       // Each scored range_1d row carries the predicted [lo, hi] band. Plot
       // band width % vs the binary hit score (100 = close inside, 0 = miss).
@@ -367,7 +317,7 @@ export default function AccuracyPage() {
         </p>
       </div>
 
-      <Section num={calibration ? "001 / 009" : "001 / 008"} title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 008" : "001 / 007"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -388,7 +338,7 @@ export default function AccuracyPage() {
 
       {calibration && (
         <Section
-          num="002 / 009"
+          num="002 / 008"
           title="Confidence Calibration"
           glyph="◉"
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
@@ -413,7 +363,7 @@ export default function AccuracyPage() {
       )}
 
       <Section
-        num={calibration ? "003 / 009" : "002 / 008"}
+        num={calibration ? "003 / 008" : "002 / 007"}
         title="New Dimensions"
         glyph="◉"
         description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
@@ -436,7 +386,7 @@ export default function AccuracyPage() {
         </div>
       </Section>
 
-      <Section num={calibration ? "004 / 009" : "003 / 008"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
+      <Section num={calibration ? "004 / 008" : "003 / 007"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -470,45 +420,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "005 / 009" : "004 / 008"}
-        title="Insight Quality Trend"
-        glyph="⬡"
-        description="Rolling 5-prediction average of the reasoning_breakdown auditor score. Number-density + payload citations - banned hedges. Climbs as the model anchors more in data and stops hedging."
-      >
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
-          className="card p-6"
-        >
-          {iqTrend.length >= 3 ? (
-            <LineChart
-              data={iqTrend}
-              height={260}
-              color="var(--foreground)"
-              valueLabel="Insight Quality"
-              yTickFormatter={(v) => `${Math.round(v)}`}
-              valueFormatter={(v) => `${v.toFixed(1)}`}
-            />
-          ) : (
-            <div
-              style={{ height: 260 }}
-              className="flex flex-col items-center justify-center text-center gap-2"
-            >
-              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
-              <p className="text-sm text-[var(--muted)]">
-                Collecting data. Trend appears once at least 3 sessions are scored.
-              </p>
-              <p className="text-xs text-[var(--muted)]">
-                {iqTrend.length} scored so far.
-              </p>
-            </div>
-          )}
-        </motion.div>
-      </Section>
-
-      <Section
-        num={calibration ? "006 / 009" : "005 / 008"}
+        num={calibration ? "005 / 008" : "004 / 007"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
         description="X-axis: predicted band width as percent of midpoint. Y-axis: grader score 0-100 (tight hit nears 100, miss collapses below 40). Useful cluster sits top-left: tight bands that still hit. The trend line falling left-to-right means width is buying score; a flat or rising line means the engine is calibrated."
@@ -557,7 +469,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "007 / 009" : "006 / 008"}
+        num={calibration ? "006 / 008" : "005 / 007"}
         title="Confidence vs Realized Accuracy"
         glyph="◎"
         description="Each dot is one direction call. X-axis: confidence stated when the call was made. Y-axis: graded score for that day. Both axes 0-100, so the diagonal line is perfect calibration (stated equals delivered). Dots above the line read as underconfident; dots below as overconfident. R is the Pearson correlation; tight to 1 = stated confidence reliably tracks realized hit rate."
@@ -606,7 +518,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "008 / 009" : "007 / 008"}
+        num={calibration ? "007 / 008" : "006 / 007"}
         title="Conviction Tier Performance"
         glyph="◉"
         description="Stratified pick alpha by conviction label. A-tier alpha should exceed B; B should exceed C. Flat results across tiers means the labels carry no signal and the prompt needs tightening."
@@ -648,7 +560,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "009 / 009" : "008 / 008"}
+        num={calibration ? "008 / 008" : "007 / 007"}
         title="Reading These Numbers Honestly"
         glyph="◆"
         description="Where the data is now, what the percentages can and cannot tell you yet, and the milestones each dimension has to clear before a reading becomes a conclusion instead of a directional signal."
