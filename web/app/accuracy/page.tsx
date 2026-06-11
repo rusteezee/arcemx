@@ -802,12 +802,16 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
   // miss). Horizontal gridlines at 0/25/50/75/100, vertical gridlines
   // at each x tick, and a least-squares regression line carry the read
   // the way the user's example chart does.
-  const H = 360;
-  const W = 760;
-  const padL = 64;
-  const padR = 24;
-  const padT = 24;
-  const padB = 64;
+  // Fill the card. SVG scales width 100% on render so what controls the
+  // visible size is the viewBox aspect ratio plus the explicit height.
+  // Old 760x360 left ~40% empty space inside the surrounding card; this
+  // sizing brings the plot area up to where the example chart sits.
+  const H = 520;
+  const W = 980;
+  const padL = 78;
+  const padR = 32;
+  const padT = 28;
+  const padB = 78;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
@@ -832,20 +836,32 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
     Math.round(f * niceMaxX * 100) / 100,
   );
 
-  // Linear least-squares regression line. Useful even on partly-binary
-  // outcomes: slope reads as "score lost per extra 1% band width". If
-  // slope is near zero, width is not buying the engine any hit rate.
-  let regression: { x1: number; y1: number; x2: number; y2: number; slope: number } | null = null;
+  // Linear least-squares regression line + Pearson correlation. Slope
+  // reads as "score moved per +1% width"; r and r-squared measure how
+  // tightly the cloud hugs the line. r-squared is bounded 0..1 (the
+  // "correlation can't be greater than one" the user asked for); r is
+  // signed -1..+1 so the sign agrees with the slope.
+  let regression: {
+    x1: number; y1: number; x2: number; y2: number;
+    slope: number; r: number; r2: number;
+  } | null = null;
   if (points.length >= 4) {
     const n = points.length;
     const sumX = points.reduce((a, p) => a + p.width, 0);
     const sumY = points.reduce((a, p) => a + p.score, 0);
     const sumXY = points.reduce((a, p) => a + p.width * p.score, 0);
     const sumXX = points.reduce((a, p) => a + p.width * p.width, 0);
+    const sumYY = points.reduce((a, p) => a + p.score * p.score, 0);
     const denom = n * sumXX - sumX * sumX;
     if (Math.abs(denom) > 1e-6) {
       const slope = (n * sumXY - sumX * sumY) / denom;
       const intercept = (sumY - slope * sumX) / n;
+      // Pearson r. Guarded against a zero-variance y (every score
+      // identical, would mean the cloud is a flat line and r is
+      // undefined; fall back to 0 then).
+      const rDenom = Math.sqrt(denom * (n * sumYY - sumY * sumY));
+      const r = rDenom > 1e-6 ? (n * sumXY - sumX * sumY) / rDenom : 0;
+      const r2 = r * r;
       const yAtZero = intercept;
       const yAtMax = intercept + slope * niceMaxX;
       // Clamp inside the [0, 100] window so the line never sails off
@@ -857,12 +873,19 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
         x2: xScale(niceMaxX),
         y2: yScale(clamp(yAtMax)),
         slope,
+        r,
+        r2,
       };
     }
   }
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet">
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      preserveAspectRatio="xMidYMid meet"
+      className="h-auto block"
+    >
       {/* Horizontal gridlines at every y tick. Lighter than the axis
           line so the eye still picks the axis out. */}
       {yTicks.map((t) => (
@@ -950,8 +973,10 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
         Score
       </text>
 
-      {/* Regression line. Solid, foreground colour so it reads as the
-          headline trend (the example chart's green diagonal). */}
+      {/* Regression line + statistics. Solid foreground stroke so it
+          reads as the headline trend. R-squared is the "correlation
+          can't be greater than one" stat (bounded 0..1); r carries the
+          sign so the direction of the relationship is explicit. */}
       {regression && (
         <>
           <line
@@ -960,18 +985,29 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
             x2={regression.x2}
             y2={regression.y2}
             stroke="var(--foreground)"
-            strokeWidth={1.8}
-            opacity={0.55}
+            strokeWidth={2}
+            opacity={0.7}
           />
           <text
-            x={padL + innerW - 4}
-            y={padT + 14}
+            x={padL + innerW - 6}
+            y={padT + 16}
             textAnchor="end"
-            fontSize="11"
-            fill="var(--muted)"
+            fontSize="12"
+            fill="var(--foreground)"
+            opacity={0.85}
           >
             Trend: {regression.slope >= 0 ? "+" : ""}
             {regression.slope.toFixed(1)} score per +1% width
+          </text>
+          <text
+            x={padL + innerW - 6}
+            y={padT + 34}
+            textAnchor="end"
+            fontSize="12"
+            fill="var(--muted)"
+          >
+            R² = {regression.r2.toFixed(3)}  ·  r = {regression.r >= 0 ? "+" : ""}
+            {regression.r.toFixed(3)}  ·  n = {points.length}
           </text>
         </>
       )}
@@ -983,7 +1019,7 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
           key={i}
           cx={xScale(p.width)}
           cy={yScale(p.score)}
-          r="5"
+          r="6"
           fill={p.score >= 50 ? "var(--gain)" : "var(--loss)"}
         >
           <title>{`${p.date}: width ${p.width}%, score ${p.score}`}</title>
