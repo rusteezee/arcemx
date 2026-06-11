@@ -1247,16 +1247,25 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
           number does the same job honestly: weak R = stated confidence
           doesn't track delivered hit rate; strong R = it does. */}
       {reg && (
-        <text
-          x={padL + 10}
-          y={padT + 20}
-          fontSize={14}
-          fill="var(--foreground)"
-          fontStyle="italic"
-        >
-          R = {reg.r >= 0 ? "+" : ""}
-          {reg.r.toFixed(3)}, R² = {reg.r2.toFixed(3)}, n = {points.length}
-        </text>
+        <>
+          <text
+            x={padL + 10}
+            y={padT + 20}
+            fontSize={14}
+            fill="var(--foreground)"
+            fontStyle="italic"
+          >
+            R² = {reg.r2.toFixed(3)}, n = {points.length}
+          </text>
+          <text
+            x={padL + 10}
+            y={padT + 38}
+            fontSize={11}
+            fill="var(--muted)"
+          >
+            0 = stated confidence ignores reality, 1 = perfectly tracks it
+          </text>
+        </>
       )}
 
       {/* Dots */}
