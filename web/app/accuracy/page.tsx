@@ -1255,7 +1255,8 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
             fill="var(--foreground)"
             fontStyle="italic"
           >
-            R² = {reg.r2.toFixed(3)}, n = {points.length}
+            R = {reg.r >= 0 ? "+" : ""}
+            {reg.r.toFixed(3)}, R² = {reg.r2.toFixed(3)}, n = {points.length}
           </text>
           <text
             x={padL + 10}
@@ -1263,7 +1264,7 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
             fontSize={11}
             fill="var(--muted)"
           >
-            0 = stated confidence ignores reality, 1 = perfectly tracks it
+            R: -1 to +1, sign shows direction · R²: 0 to 1, strength of fit
           </text>
         </>
       )}
