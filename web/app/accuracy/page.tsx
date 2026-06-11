@@ -503,7 +503,7 @@ export default function AccuracyPage() {
         num={calibration ? "007 / 009" : "006 / 008"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
-        description="X-axis: predicted band width as percent of midpoint. Y-axis: hit (100) or miss (0) for that day. The useful cluster is top-left: tight bands that still hit. A wide right column means the engine bought hit rate with width. that's range inflation, not skill."
+        description="X-axis: predicted band width as percent of midpoint. Y-axis: grader score 0-100 (tight hit nears 100, miss collapses below 40). Useful cluster sits top-left: tight bands that still hit. The trend line falling left-to-right means width is buying score; a flat or rising line means the engine is calibrated."
       >
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -796,69 +796,136 @@ export default function AccuracyPage() {
 }
 
 function RangeScatter({ points }: { points: ScatterPoint[] }) {
-  // Inline SVG scatter so we do not pull a second chart library. X = band
-  // width %, Y = score (0 or 100 for interval grader). Quadrant guides at
-  // x=1% (tight/wide split) and y=50 (hit/miss split) frame the useful
-  // top-left quadrant.
-  const H = 320;
-  const W = 720;
+  // Inline SVG scatter so we do not pull a second chart library.
+  // X = band width % of midpoint, Y = grader score 0-100 (continuous:
+  // grade_range returns 100 - width_penalty on a hit and 0-30 on a
+  // miss). Horizontal gridlines at 0/25/50/75/100, vertical gridlines
+  // at each x tick, and a least-squares regression line carry the read
+  // the way the user's example chart does.
+  const H = 360;
+  const W = 760;
   const padL = 64;
   const padR = 24;
-  const padT = 20;
-  const padB = 60;
+  const padT = 24;
+  const padB = 64;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
-  const maxX = Math.max(2, ...points.map((p) => p.width));
-  const xScale = (x: number) => padL + (Math.min(x, maxX) / maxX) * innerW;
+  // Round the upper x bound up to a clean number so ticks read as 0%
+  // / 0.5% / 1% / ... instead of an awkward "2.36%".
+  const rawMax = Math.max(2, ...points.map((p) => p.width));
+  const niceMaxX = (() => {
+    if (rawMax <= 1) return 1;
+    if (rawMax <= 2) return 2;
+    if (rawMax <= 3) return 3;
+    if (rawMax <= 5) return Math.ceil(rawMax);
+    return Math.ceil(rawMax / 2) * 2;
+  })();
+  const xScale = (x: number) =>
+    padL + (Math.min(Math.max(x, 0), niceMaxX) / niceMaxX) * innerW;
   // y range 0-100; invert because SVG y grows downward
   const yScale = (y: number) => padT + innerH - (y / 100) * innerH;
 
-  // Build a non-overlapping x tick set. Skip 0 if the first interior tick
-  // would land within 24px of the y-axis labels.
-  const midTick = Math.round(maxX * 0.5 * 10) / 10;
-  const lastTick = Math.round(maxX * 10) / 10;
-  const xTicks = [0, midTick, lastTick].filter(
-    (v, i, arr) => arr.indexOf(v) === i,
+  const yTicks = [0, 25, 50, 75, 100];
+  // Five x ticks evenly across the range: 0, 25%, 50%, 75%, 100% of niceMaxX
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((f) =>
+    Math.round(f * niceMaxX * 100) / 100,
   );
+
+  // Linear least-squares regression line. Useful even on partly-binary
+  // outcomes: slope reads as "score lost per extra 1% band width". If
+  // slope is near zero, width is not buying the engine any hit rate.
+  let regression: { x1: number; y1: number; x2: number; y2: number; slope: number } | null = null;
+  if (points.length >= 4) {
+    const n = points.length;
+    const sumX = points.reduce((a, p) => a + p.width, 0);
+    const sumY = points.reduce((a, p) => a + p.score, 0);
+    const sumXY = points.reduce((a, p) => a + p.width * p.score, 0);
+    const sumXX = points.reduce((a, p) => a + p.width * p.width, 0);
+    const denom = n * sumXX - sumX * sumX;
+    if (Math.abs(denom) > 1e-6) {
+      const slope = (n * sumXY - sumX * sumY) / denom;
+      const intercept = (sumY - slope * sumX) / n;
+      const yAtZero = intercept;
+      const yAtMax = intercept + slope * niceMaxX;
+      // Clamp inside the [0, 100] window so the line never sails off
+      // the plot area when the slope is steep.
+      const clamp = (v: number) => Math.max(0, Math.min(100, v));
+      regression = {
+        x1: xScale(0),
+        y1: yScale(clamp(yAtZero)),
+        x2: xScale(niceMaxX),
+        y2: yScale(clamp(yAtMax)),
+        slope,
+      };
+    }
+  }
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet">
-      {/* axis lines */}
+      {/* Horizontal gridlines at every y tick. Lighter than the axis
+          line so the eye still picks the axis out. */}
+      {yTicks.map((t) => (
+        <line
+          key={`gh-${t}`}
+          x1={padL}
+          x2={padL + innerW}
+          y1={yScale(t)}
+          y2={yScale(t)}
+          stroke="var(--border)"
+          strokeOpacity={t === 0 ? 1 : 0.35}
+          strokeDasharray={t === 0 ? "" : "2 4"}
+        />
+      ))}
+      {/* Vertical gridlines at every x tick. Skip the leftmost so it
+          does not double-paint the y-axis line. */}
+      {xTicks.map((t, i) =>
+        i === 0 ? null : (
+          <line
+            key={`gv-${i}`}
+            x1={xScale(t)}
+            x2={xScale(t)}
+            y1={padT}
+            y2={padT + innerH}
+            stroke="var(--border)"
+            strokeOpacity={0.35}
+            strokeDasharray="2 4"
+          />
+        ),
+      )}
+      {/* y axis */}
       <line x1={padL} y1={padT} x2={padL} y2={padT + innerH} stroke="var(--border)" />
-      <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="var(--border)" />
-      {/* quadrant guides */}
-      <line
-        x1={xScale(Math.min(1.0, maxX))}
-        y1={padT}
-        x2={xScale(Math.min(1.0, maxX))}
-        y2={padT + innerH}
-        stroke="var(--muted)"
-        strokeDasharray="3 4"
-        opacity="0.45"
-      />
+      {/* x axis sits at y=0 already covered by the y=0 gridline above */}
+
+      {/* Hit/miss split at y=50, drawn brighter than the regression so
+          the useful "top half" still reads at a glance. */}
       <line
         x1={padL}
         y1={yScale(50)}
         x2={padL + innerW}
         y2={yScale(50)}
         stroke="var(--muted)"
-        strokeDasharray="3 4"
-        opacity="0.45"
+        strokeDasharray="4 4"
+        opacity="0.55"
       />
-      {/* y ticks 0/50/100 */}
-      {[0, 50, 100].map((t) => (
-        <g key={t}>
-          <text x={padL - 12} y={yScale(t) + 4} textAnchor="end" fontSize="11" fill="var(--muted)">
-            {t}
-          </text>
-        </g>
+
+      {/* y tick labels */}
+      {yTicks.map((t) => (
+        <text
+          key={`yl-${t}`}
+          x={padL - 12}
+          y={yScale(t) + 4}
+          textAnchor="end"
+          fontSize="11"
+          fill="var(--muted)"
+        >
+          {t}
+        </text>
       ))}
-      {/* x ticks. Push labels further below the axis to clear the axis-line
-          and leave room for the axis caption below. */}
+      {/* x tick labels */}
       {xTicks.map((t, i) => (
         <text
-          key={i}
+          key={`xl-${i}`}
           x={xScale(t)}
           y={padT + innerH + 22}
           textAnchor="middle"
@@ -868,12 +935,10 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
           {t}%
         </text>
       ))}
-      {/* x-axis caption sits well clear of the tick labels. */}
-      <text x={padL + innerW / 2} y={H - 12} textAnchor="middle" fontSize="11" fill="var(--muted)">
+      {/* axis captions */}
+      <text x={padL + innerW / 2} y={H - 14} textAnchor="middle" fontSize="11" fill="var(--muted)">
         Band width (% of midpoint)
       </text>
-      {/* y-axis caption. Anchor at the vertical middle of the plot, x sits
-          left of the tick numbers so the rotated text does not collide. */}
       <text
         x={18}
         y={padT + innerH / 2}
@@ -884,15 +949,42 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
       >
         Score
       </text>
-      {/* points */}
+
+      {/* Regression line. Solid, foreground colour so it reads as the
+          headline trend (the example chart's green diagonal). */}
+      {regression && (
+        <>
+          <line
+            x1={regression.x1}
+            y1={regression.y1}
+            x2={regression.x2}
+            y2={regression.y2}
+            stroke="var(--foreground)"
+            strokeWidth={1.8}
+            opacity={0.55}
+          />
+          <text
+            x={padL + innerW - 4}
+            y={padT + 14}
+            textAnchor="end"
+            fontSize="11"
+            fill="var(--muted)"
+          >
+            Trend: {regression.slope >= 0 ? "+" : ""}
+            {regression.slope.toFixed(1)} score per +1% width
+          </text>
+        </>
+      )}
+
+      {/* Points. Larger and fully opaque to match the example's clean
+          dot density. */}
       {points.map((p, i) => (
         <circle
           key={i}
           cx={xScale(p.width)}
           cy={yScale(p.score)}
-          r="4"
+          r="5"
           fill={p.score >= 50 ? "var(--gain)" : "var(--loss)"}
-          opacity="0.75"
         >
           <title>{`${p.date}: width ${p.width}%, score ${p.score}`}</title>
         </circle>
