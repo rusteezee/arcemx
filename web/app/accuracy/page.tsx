@@ -66,11 +66,18 @@ interface ScatterPoint {
   date: string;
 }
 
+interface CalibPoint {
+  stated: number;    // stated confidence at call time, 0-100
+  realized: number;  // graded direction score for that call, 0-100
+  date: string;
+}
+
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
   const [iqTrend, setIqTrend] = useState<{ date: string; value: number }[]>([]);
   const [rangeScatter, setRangeScatter] = useState<ScatterPoint[]>([]);
+  const [calibScatter, setCalibScatter] = useState<CalibPoint[]>([]);
   const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -141,6 +148,24 @@ export default function AccuracyPage() {
           n: calPairs.length,
         });
       }
+
+      // Confidence calibration scatter. Each scored direction call
+      // pairs the confidence stated when the call was made with the
+      // grader score it landed. Both axes are 0-100 so a y=x diagonal
+      // = perfect calibration; dots above the diagonal read as
+      // underconfident, dots below as overconfident.
+      const cPts: CalibPoint[] = [];
+      for (const r of calPairs as any[]) {
+        const stated = confById.get(r.analysis_id);
+        if (typeof stated !== "number") continue;
+        const runAt = runAtById.get(r.analysis_id);
+        cPts.push({
+          stated,
+          realized: r.score,
+          date: runAt ? String(runAt).slice(0, 10) : "",
+        });
+      }
+      setCalibScatter(cPts);
 
       // Collapse to one score per prediction date (average if a day has more
       // than one), then walk forward applying a trailing rolling mean so the
@@ -304,7 +329,7 @@ export default function AccuracyPage() {
         </p>
       </div>
 
-      <Section num={calibration ? "001 / 009" : "001 / 008"} title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 010" : "001 / 009"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -325,7 +350,7 @@ export default function AccuracyPage() {
 
       {calibration && (
         <Section
-          num="002 / 009"
+          num="002 / 010"
           title="Confidence Calibration"
           glyph="◉"
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
@@ -350,7 +375,7 @@ export default function AccuracyPage() {
       )}
 
       <Section
-        num={calibration ? "003 / 009" : "002 / 008"}
+        num={calibration ? "003 / 010" : "002 / 009"}
         title="New Dimensions"
         glyph="◉"
         description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
@@ -373,7 +398,7 @@ export default function AccuracyPage() {
         </div>
       </Section>
 
-      <Section num={calibration ? "004 / 009" : "003 / 008"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
+      <Section num={calibration ? "004 / 010" : "003 / 009"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -428,7 +453,7 @@ export default function AccuracyPage() {
         </motion.div>
       </Section>
 
-      <Section num={calibration ? "005 / 009" : "004 / 008"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
+      <Section num={calibration ? "005 / 010" : "004 / 009"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -462,7 +487,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "006 / 009" : "005 / 008"}
+        num={calibration ? "006 / 010" : "005 / 009"}
         title="Insight Quality Trend"
         glyph="⬡"
         description="Rolling 5-prediction average of the reasoning_breakdown auditor score. Number-density + payload citations - banned hedges. Climbs as the model anchors more in data and stops hedging."
@@ -500,7 +525,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "007 / 009" : "006 / 008"}
+        num={calibration ? "007 / 010" : "006 / 009"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
         description="X-axis: predicted band width as percent of midpoint. Y-axis: grader score 0-100 (tight hit nears 100, miss collapses below 40). Useful cluster sits top-left: tight bands that still hit. The trend line falling left-to-right means width is buying score; a flat or rising line means the engine is calibrated."
@@ -531,7 +556,39 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "008 / 009" : "007 / 008"}
+        num={calibration ? "008 / 010" : "007 / 009"}
+        title="Confidence vs Realized Accuracy"
+        glyph="◎"
+        description="Each dot is one direction call. X-axis: confidence stated when the call was made. Y-axis: graded score for that day. Both axes 0-100, so the diagonal line is perfect calibration (stated equals delivered). Dots above the line read as underconfident; dots below as overconfident. R is the Pearson correlation; tight to 1 = stated confidence reliably tracks realized hit rate."
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.26 }}
+          className="card p-6"
+        >
+          {calibScatter.length >= 4 ? (
+            <CalibScatter points={calibScatter} />
+          ) : (
+            <div
+              style={{ height: 280 }}
+              className="flex flex-col items-center justify-center text-center gap-2"
+            >
+              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+              <p className="text-sm text-[var(--muted)]">
+                Collecting data. Scatter appears once at least 4 direction calls with stated
+                confidence are scored.
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {calibScatter.length} scored so far.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      </Section>
+
+      <Section
+        num={calibration ? "009 / 010" : "008 / 009"}
         title="Conviction Tier Performance"
         glyph="◉"
         description="Stratified pick alpha by conviction label. A-tier alpha should exceed B; B should exceed C. Flat results across tiers means the labels carry no signal and the prompt needs tightening."
@@ -573,7 +630,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "009 / 009" : "008 / 008"}
+        num={calibration ? "010 / 010" : "009 / 009"}
         title="Reading These Numbers Honestly"
         glyph="◆"
         description="Where the data is now, what the percentages can and cannot tell you yet, and the milestones each dimension has to clear before a reading becomes a conclusion instead of a directional signal."
@@ -1023,6 +1080,211 @@ function RangeScatter({ points }: { points: ScatterPoint[] }) {
           fill={p.score >= 50 ? "var(--gain)" : "var(--loss)"}
         >
           <title>{`${p.date}: width ${p.width}%, score ${p.score}`}</title>
+        </circle>
+      ))}
+    </svg>
+  );
+}
+
+function CalibScatter({ points }: { points: CalibPoint[] }) {
+  // Confidence calibration scatter. Both axes are 0-100, so the y=x
+  // diagonal is the perfect-calibration reference: a dot lands ON the
+  // line when stated confidence exactly matches realized score. Above
+  // the line = underconfident, below = overconfident. The blue stroke
+  // is that reference line; the foreground stroke is the actual
+  // least-squares regression through the cloud. R-squared and Pearson
+  // r read as "how reliably stated confidence tracks realized accuracy"
+  // and live top-left like the example image.
+  const H = 560;
+  const W = 600;
+  const padL = 70;
+  const padR = 28;
+  const padT = 32;
+  const padB = 72;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const xScale = (x: number) => padL + (Math.max(0, Math.min(100, x)) / 100) * innerW;
+  const yScale = (y: number) => padT + innerH - (Math.max(0, Math.min(100, y)) / 100) * innerH;
+
+  const ticks = [0, 20, 40, 60, 80, 100];
+
+  // OLS regression + Pearson r over (stated, realized).
+  let reg: {
+    x1: number; y1: number; x2: number; y2: number;
+    slope: number; intercept: number; r: number; r2: number;
+  } | null = null;
+  if (points.length >= 4) {
+    const n = points.length;
+    const sumX = points.reduce((a, p) => a + p.stated, 0);
+    const sumY = points.reduce((a, p) => a + p.realized, 0);
+    const sumXY = points.reduce((a, p) => a + p.stated * p.realized, 0);
+    const sumXX = points.reduce((a, p) => a + p.stated * p.stated, 0);
+    const sumYY = points.reduce((a, p) => a + p.realized * p.realized, 0);
+    const denom = n * sumXX - sumX * sumX;
+    if (Math.abs(denom) > 1e-6) {
+      const slope = (n * sumXY - sumX * sumY) / denom;
+      const intercept = (sumY - slope * sumX) / n;
+      const rDen = Math.sqrt(denom * (n * sumYY - sumY * sumY));
+      const r = rDen > 1e-6 ? (n * sumXY - sumX * sumY) / rDen : 0;
+      const clamp = (v: number) => Math.max(0, Math.min(100, v));
+      reg = {
+        x1: xScale(0),
+        y1: yScale(clamp(intercept)),
+        x2: xScale(100),
+        y2: yScale(clamp(intercept + slope * 100)),
+        slope,
+        intercept,
+        r,
+        r2: r * r,
+      };
+    }
+  }
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      preserveAspectRatio="xMidYMid meet"
+      className="h-auto block mx-auto"
+      style={{ maxWidth: 720 }}
+    >
+      {/* Gridlines */}
+      {ticks.map((t) => (
+        <g key={`grid-${t}`}>
+          <line
+            x1={padL}
+            x2={padL + innerW}
+            y1={yScale(t)}
+            y2={yScale(t)}
+            stroke="var(--border)"
+            strokeOpacity={t === 0 ? 1 : 0.32}
+            strokeDasharray={t === 0 ? "" : "2 4"}
+          />
+          {t !== 0 && (
+            <line
+              x1={xScale(t)}
+              x2={xScale(t)}
+              y1={padT}
+              y2={padT + innerH}
+              stroke="var(--border)"
+              strokeOpacity={0.32}
+              strokeDasharray="2 4"
+            />
+          )}
+        </g>
+      ))}
+      {/* y axis spine */}
+      <line x1={padL} y1={padT} x2={padL} y2={padT + innerH} stroke="var(--border)" />
+
+      {/* y = x perfect-calibration diagonal. Drawn under the dots so
+          the dots read on top of it, like the example image. */}
+      <line
+        x1={xScale(0)}
+        y1={yScale(0)}
+        x2={xScale(100)}
+        y2={yScale(100)}
+        stroke="#3b82f6"
+        strokeWidth={2}
+        opacity={0.85}
+      />
+
+      {/* Axis tick labels */}
+      {ticks.map((t) => (
+        <text
+          key={`yl-${t}`}
+          x={padL - 12}
+          y={yScale(t) + 4}
+          textAnchor="end"
+          fontSize={12}
+          fill="var(--muted)"
+        >
+          {t}
+        </text>
+      ))}
+      {ticks.map((t) => (
+        <text
+          key={`xl-${t}`}
+          x={xScale(t)}
+          y={padT + innerH + 22}
+          textAnchor="middle"
+          fontSize={12}
+          fill="var(--muted)"
+        >
+          {t}
+        </text>
+      ))}
+      {/* Axis captions */}
+      <text
+        x={padL + innerW / 2}
+        y={H - 14}
+        textAnchor="middle"
+        fontSize={12}
+        fill="var(--muted)"
+      >
+        Stated confidence
+      </text>
+      <text
+        x={18}
+        y={padT + innerH / 2}
+        textAnchor="middle"
+        fontSize={12}
+        fill="var(--muted)"
+        transform={`rotate(-90 18 ${padT + innerH / 2})`}
+      >
+        Realized score
+      </text>
+
+      {/* R-statistic block, top-left like the example. */}
+      {reg && (
+        <>
+          <text
+            x={padL + 10}
+            y={padT + 18}
+            fontSize={13}
+            fill="var(--foreground)"
+            fontStyle="italic"
+          >
+            R = {reg.r >= 0 ? "+" : ""}
+            {reg.r.toFixed(3)}, R² = {reg.r2.toFixed(3)}, n = {points.length}
+          </text>
+          <text
+            x={padL + 10}
+            y={padT + 36}
+            fontSize={11}
+            fill="var(--muted)"
+          >
+            Regression: realized = {reg.intercept.toFixed(1)} + {reg.slope.toFixed(2)} · stated
+          </text>
+        </>
+      )}
+
+      {/* OLS regression line in foreground colour. Solid stroke so it
+          reads next to the blue calibration diagonal. */}
+      {reg && (
+        <line
+          x1={reg.x1}
+          y1={reg.y1}
+          x2={reg.x2}
+          y2={reg.y2}
+          stroke="var(--foreground)"
+          strokeWidth={1.8}
+          opacity={0.55}
+          strokeDasharray="6 4"
+        />
+      )}
+
+      {/* Dots */}
+      {points.map((p, i) => (
+        <circle
+          key={i}
+          cx={xScale(p.stated)}
+          cy={yScale(p.realized)}
+          r={5}
+          fill="var(--foreground)"
+          opacity={0.75}
+        >
+          <title>{`${p.date}: stated ${p.stated}, realized ${p.realized}`}</title>
         </circle>
       ))}
     </svg>
