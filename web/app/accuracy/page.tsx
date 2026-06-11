@@ -117,6 +117,10 @@ export default function AccuracyPage() {
   const [calibScatter, setCalibScatter] = useState<CalibPoint[]>([]);
   const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [loading, setLoading] = useState(true);
+  // Per-dimension status grid window. Backed by accuracy_summary's
+  // window_days column; the grader computes 7 / 30 / 90 / 180 / 365 /
+  // 1095 / 1825 / 99999 (max). Each button maps to one of those.
+  const [perDimWindow, setPerDimWindow] = useState<number>(30);
 
   useEffect(() => {
     (async () => {
@@ -678,16 +682,49 @@ export default function AccuracyPage() {
               dense table row so each card reads as a discrete data
               point and the maturity ladder is visible at a glance. */}
           <div className="card p-5">
-            <div className="section-num mb-1">Per-Dimension Status</div>
-            <p className="text-sm text-[var(--muted)] leading-relaxed mb-4">
-              Current 30-day sample size per dimension, plus where each
-              sits on the maturity ladder. A dimension with 4 scored
-              sessions cannot be compared to one with 50. the smaller-n
-              hit rate is a guess, not a measurement.
-            </p>
+            <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+              <div>
+                <div className="section-num mb-1">Per-Dimension Status</div>
+                <p className="text-sm text-[var(--muted)] leading-relaxed">
+                  Sample size per dimension within the selected window,
+                  plus where each sits on the maturity ladder. A dimension
+                  with 4 scored sessions cannot be compared to one with
+                  50. the smaller-n hit rate is a guess, not a measurement.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1 shrink-0">
+                {([
+                  { label: "1W", days: 7 },
+                  { label: "1M", days: 30 },
+                  { label: "3M", days: 90 },
+                  { label: "6M", days: 180 },
+                  { label: "1Y", days: 365 },
+                  { label: "3Y", days: 1095 },
+                  { label: "5Y", days: 1825 },
+                  { label: "MAX", days: 99999 },
+                ] as const).map(({ label, days }) => {
+                  const active = perDimWindow === days;
+                  return (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => setPerDimWindow(days)}
+                      className="text-xs font-medium tracking-wide rounded-full px-3 py-1 border transition-colors"
+                      style={{
+                        borderColor: active ? "var(--foreground)" : "var(--border)",
+                        background: active ? "var(--foreground)" : "transparent",
+                        color: active ? "var(--background)" : "var(--muted)",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {Object.keys(DIMENSION_LABELS).map((dim) => {
-                const r = summary.find((s) => s.window_days === 30 && s.dimension === dim);
+                const r = summary.find((s) => s.window_days === perDimWindow && s.dimension === dim);
                 const n = r?.sample_size ?? 0;
                 if (n === 0) return null;
                 const acc = r?.accuracy_pct;
@@ -715,7 +752,15 @@ export default function AccuracyPage() {
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-2xl font-semibold num">{n}</span>
                       <span className="text-[10px] text-[var(--muted)] tracking-wider uppercase">
-                        scored 30d
+                        scored {
+                          perDimWindow === 7 ? "1W" :
+                          perDimWindow === 30 ? "1M" :
+                          perDimWindow === 90 ? "3M" :
+                          perDimWindow === 180 ? "6M" :
+                          perDimWindow === 365 ? "1Y" :
+                          perDimWindow === 1095 ? "3Y" :
+                          perDimWindow === 1825 ? "5Y" : "MAX"
+                        }
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2">

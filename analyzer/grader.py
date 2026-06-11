@@ -1066,7 +1066,7 @@ def grade_all(lookback_days: int = 90):
     print("Done grading.")
 
 
-def compute_summaries(windows=(7, 30, 90)):
+def compute_summaries(windows=(7, 30, 90, 180, 365, 1095, 1825, 99999)):
     """Compute accuracy summaries per dimension per window.
 
     Windowed by the prediction's run_at (when the call was MADE), NOT by
