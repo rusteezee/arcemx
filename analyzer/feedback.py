@@ -146,9 +146,14 @@ def build_feedback() -> dict | None:
             f"When signals align you may raise confidence."
         )
 
+    # Range discipline: NEVER settle. A hit band must tighten the next
+    # day, every day, until it starts missing; only a miss buys back
+    # width. The window-average rule pressures the trend; the
+    # yesterday-specific rule pressures the very next call with the
+    # exact width it must beat.
     for dim, label in (("range_1d", "NIFTY range"), ("sensex_range_1d", "Sensex range")):
         it = dim_map.get(dim)
-        if not it or (it.get("sample_size", 0) < 5):
+        if not it or (it.get("sample_size", 0) < 3):
             continue
         acc = it.get("accuracy_pct") or 0
         width = (it.get("bias") or {}).get("avg_band_width_pct")
@@ -157,13 +162,58 @@ def build_feedback() -> dict | None:
             rules.append(
                 f"{label} hits {acc:.0f}% at an average band width of {width:.2f}%. "
                 f"That band is too loose to be useful. Tighten toward {tighter:.2f}% "
-                f"width while keeping the close inside it."
+                f"width while keeping the close inside it. Do NOT repeat "
+                f"{width:.2f}%; a hit at the same width is a wasted day of learning."
+            )
+        elif acc >= 70 and isinstance(width, (int, float)):
+            tighter = round(width * 0.85, 2)
+            rules.append(
+                f"{label} hits {acc:.0f}% at an average band width of {width:.2f}%. "
+                f"Good containment earns a tighter test: bring the band toward "
+                f"{tighter:.2f}% width. Never settle at a width that keeps hitting."
             )
         elif acc < 50:
             rules.append(
                 f"{label} only contains the close {acc:.0f}% of the time. Widen the band "
                 f"OR justify a tight band with an explicit, strong signal."
             )
+
+    # Yesterday-specific range pressure: if the latest graded band
+    # contained the close, today's band MUST be narrower than it.
+    for dim, label, rule_label in (
+            ("range_1d", "^NSEI", "NIFTY"),
+            ("sensex_range_1d", "^BSESN", "Sensex")):
+        try:
+            last = sb.table("prediction_scores").select(
+                "score,predicted,notes"
+            ).eq("dimension", dim).order("id", desc=True).limit(1).execute().data or []
+        except Exception:
+            last = []
+        if not last:
+            continue
+        row = last[0]
+        score = row.get("score")
+        rng = (row.get("predicted") or {}).get("range")
+        if (not isinstance(score, (int, float)) or score < 80
+                or not isinstance(rng, (list, tuple)) or len(rng) < 2):
+            continue
+        try:
+            lo, hi = float(rng[0]), float(rng[1])
+        except (TypeError, ValueError):
+            continue
+        mid = (lo + hi) / 2
+        if mid <= 0 or hi <= lo:
+            continue
+        w_pct = round((hi - lo) / mid * 100, 2)
+        target = round(w_pct * 0.85, 2)
+        rules.append(
+            f"Your latest graded {rule_label} band {lo:.0f}-{hi:.0f} "
+            f"({w_pct:.2f}% wide) CONTAINED the close (score {score:.0f}). "
+            f"Mandatory: today's {rule_label} band must be NARROWER than "
+            f"{w_pct:.2f}% of midpoint; target {target:.2f}% or tighter. The only "
+            f"acceptable reason to widen is an explicit volatility-expansion "
+            f"signal (event day, VIX or ATR up >10%), and you must cite it."
+        )
 
     for dim, label in (("short_pick_7d", "Short picks 7d"),
                        ("short_pick_30d", "Short picks 30d")):
@@ -198,7 +248,11 @@ def build_feedback() -> dict | None:
             "This is your scored track record, graded brutally against real outcomes. "
             "Obey the corrective_rules. Make your `confidence` reflect your realized "
             "direction accuracy, not optimism. Give the NARROWEST range you can defend "
-            "with signal, not a safe wide band. Learn from the specific recent_misses."
+            "with signal, not a safe wide band. RANGE DOCTRINE: a band that contained "
+            "yesterday's close MUST be tighter today; never repeat a width after a hit. "
+            "Keep tightening every hit until a band misses, then widen one notch, not "
+            "back to the old comfort width. A wide band that always hits teaches "
+            "nothing. Learn from the specific recent_misses."
         ),
     }
 

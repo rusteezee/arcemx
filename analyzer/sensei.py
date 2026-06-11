@@ -107,9 +107,23 @@ LANGUAGE DISCIPLINE (binding, identical to morning prompt):
 - Banned filler: "given the setup", "in the near term", "going forward", "amid global cues",
   "in light of", "broadly", "generally", "overall". Cut them. State the specific signal.
 - Numbers are your only currency. If you cannot cite one, do not include the item.
+- PLAIN ENGLISH ONLY in every prose field (call, evidence, actual, gap, root_cause prose,
+  key_insights, tomorrow_watch, calibration_note, tier comments). NEVER write internal
+  dimension keys or underscore tokens like direction_1d, sector_dir_1d, range_1d,
+  wishlist_dir_1d, grader_results, what_worked. Write the human name instead:
+  "NIFTY 1-day direction", "sector direction calls", "the NIFTY range call",
+  "wishlist direction calls". The "dimension" JSON field is the ONLY place a raw
+  key may appear. A reader who has never seen the codebase must understand every
+  sentence.
 - Be brutally honest. Confidence at 55 delivering 60% direction is healthy calibration.
   Confidence at 80 delivering 55% is overconfidence. surface it. The next-day analyst
   reads this; lying to them breaks the entire feedback loop.
+- RANGE DISCIPLINE (binding): when a range call CONTAINED the close (score >= 80),
+  say so and state the band width vs the actual move (e.g. "band 1.2% wide, close
+  moved 0.3%; band must tighten tomorrow"). A wide band that always hits is a
+  useless prediction. When range accuracy is high, key_insights MUST include one
+  item demanding a tighter band with the specific current width and target width.
+  Never praise a hit on a loose band. Never settle.
 
 If a dimension has no graded result yet (5d/7d/20d/30d/60d/180d horizons), do NOT
 fabricate. Either skip the item or include it under what_missed with root_cause
@@ -217,23 +231,42 @@ def _calibration(sb) -> list[dict]:
     return list(seen.values())
 
 
+def _last_completed_close_utc() -> datetime:
+    """Most recent 15:30 IST (10:00 UTC) session close that has already
+    completed AND settled (15 min buffer, matching _session_bounds).
+
+    Steps back one calendar day at a time until the close moment is in
+    the past, so a run at 01:38 IST resolves to YESTERDAY's close, not
+    today's future close. That midnight rollover is exactly how the
+    11/06 ghost row happened: a post-midnight manual trigger treated
+    "today" as the close date of a session that had not even opened.
+    Weekends/holidays are fine: the cutoff is only used to pick which
+    analysis to retrospect; _session_bounds resolves the actual traded
+    session from real bars.
+    """
+    now = datetime.now(timezone.utc)
+    candidate = datetime(now.year, now.month, now.day, 10, 0,
+                         tzinfo=timezone.utc)
+    while now < candidate + timedelta(minutes=15):
+        candidate -= timedelta(days=1)
+    return candidate
+
+
 def _resolve_analysis(sb, analysis_id: int | None) -> dict:
     """Pick the analysis to retrospect on.
 
-    NOT simply the latest row: an analysis run AFTER today's 15:30 IST
-    close targets TOMORROW's session, so retrospecting it today finds
-    zero graded 1d dims and produces a data-thin note. The morning call
-    for today's session is the latest analysis whose run_at is BEFORE
-    today's close (10:00 UTC). Fall back to the absolute latest only
-    when no pre-close row exists (e.g. first day of usage).
+    NOT simply the latest row: an analysis run AFTER a session close
+    targets the NEXT session, so retrospecting it before that session
+    completes finds zero graded 1d dims and produces a data-thin note.
+    The correct subject is the latest analysis whose run_at precedes
+    the most recent COMPLETED close, at any hour of day. Fall back to
+    the absolute latest only when no such row exists (first day).
     """
     if analysis_id is not None:
         r = sb.table("analysis").select("id,run_at,raw_json").eq(
             "id", analysis_id).single().execute()
         return r.data
-    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-    close_utc = datetime(ist_now.year, ist_now.month, ist_now.day,
-                         10, 0, tzinfo=timezone.utc)
+    close_utc = _last_completed_close_utc()
     r = sb.table("analysis").select("id,run_at,raw_json").lt(
         "run_at", close_utc.isoformat()).order(
         "run_at", desc=True).limit(1).execute()
@@ -286,12 +319,8 @@ def synthesize(payload: dict, model_name: str | None = None) -> dict:
     return _parse_json(resp)
 
 
-def save(result: dict, analysis_id: int) -> None:
+def save(result: dict, analysis_id: int, close_date: str) -> None:
     sb = _sb()
-    # IST close date. Sensei runs at 20:00 IST so today's IST date is the
-    # market close date the retrospective covers.
-    ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-    close_date = ist_now.date().isoformat()
     sb.table("sensei_eod").upsert({
         # run_at explicitly set: the column default only applies on
         # INSERT, so an upsert that overwrites an earlier same-day row
@@ -333,11 +362,28 @@ def run(analysis_id: int | None = None) -> dict:
 
     payload = build_payload(analysis_id)
     aid = payload["morning_analysis_id"]
+
+    # The close date the retrospective covers is the analysis's TARGET
+    # session (first session whose close follows its run_at), never the
+    # wall-clock date at save time. _session_bounds also refuses while
+    # the target session is still in flight or unsettled, which makes
+    # any-hour manual triggers safe: a 01:38 IST click can no longer
+    # mint a row for a session that has not traded.
+    a_run_at = datetime.fromisoformat(
+        str(payload["morning_run_at"]).replace("Z", "+00:00"))
+    bounds = _session_bounds("^NSEI", a_run_at)
+    if not bounds:
+        msg = (f"analysis {aid} targets a session that has not closed or "
+               f"settled yet; refusing to write a data-thin retrospective")
+        print(f"Sensei: {msg}")
+        return {"error": msg, "analysis_id": aid}
+    close_date = bounds[2] if isinstance(bounds[2], str) else str(bounds[2])
+
     result = synthesize(payload)
     if "error" in result:
         print(f"Sensei synthesis error: {result.get('error')}")
         return result
-    save(result, aid)
+    save(result, aid, close_date)
     return result
 
 

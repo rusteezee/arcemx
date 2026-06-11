@@ -184,8 +184,8 @@ export function Nav() {
 
   const modeConfig: Record<SyncMode, { endpoint: string; idleLabel: (ts: string | null) => string }> = {
     indmoney: { endpoint: "/api/sync",            idleLabel: (ts) => timeAgo(ts) },
-    sensei:   { endpoint: "/api/trigger-sensei",  idleLabel: () => "Sync Sensei" },
-    grader:   { endpoint: "/api/trigger-grader",  idleLabel: () => "Sync Grader" },
+    sensei:   { endpoint: "/api/trigger-sensei",  idleLabel: () => "Sensei" },
+    grader:   { endpoint: "/api/trigger-grader",  idleLabel: () => "Grader" },
   };
   const cfg = modeConfig[mode];
 
@@ -241,6 +241,12 @@ export function Nav() {
         // nav reflects what the user is actually waiting for.
         setSyncMsg(mode === "indmoney" ? "Synced" : "Queued");
         if (mode === "indmoney") fetchLastSync();
+        // Tell the page underneath that a background job was queued so
+        // it can poll its own table and refresh content when the new
+        // row lands (Sensei page listens for mode "sensei").
+        window.dispatchEvent(
+          new CustomEvent("arcemx:sync-queued", { detail: { mode } })
+        );
       } else if (res.cold) {
         // Still cold after a retry: not a real failure, just a slow wake.
         setSyncState("error");

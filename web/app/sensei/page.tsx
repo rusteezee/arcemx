@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import { Section } from "@/components/Section";
 import { EmptyState } from "@/components/EmptyState";
 import { Calculator } from "@/components/Calculator";
 import { PortfolioScorecard } from "@/components/PortfolioScorecard";
 import { sb } from "@/lib/supabase";
+import { polishMarketText } from "@/lib/utils";
 
 interface SenseiRow {
   id: number;
@@ -60,6 +60,23 @@ const DIM_LABEL: Record<string, string> = {
   short_pick_B_7d: "Short Picks · Tier B (7d)",
   short_pick_C_7d: "Short Picks · Tier C (7d)",
   insight_quality: "Reasoning Quality",
+  // Shorthand variants the model sometimes writes in prose.
+  sector_direction_1d: "Sectors Direction (1d)",
+  wishlist_dir_1d: "Wishlist Direction (1d)",
+  wishlist_range_1d: "Wishlist Range (1d)",
+  holding_dir_1d: "Holdings Direction (1d)",
+  holding_range_1d: "Holdings Range (1d)",
+};
+
+// Root-cause codes from the Sensei schema, humanized.
+const ROOT_CAUSE_LABEL: Record<string, string> = {
+  regime_shift: "Regime shift",
+  flow_surprise: "Flow surprise",
+  news_catalyst: "News catalyst",
+  technical_break: "Technical break",
+  overconfidence: "Overconfidence",
+  data_thin: "Not enough data yet",
+  model_noise: "Model noise",
 };
 
 function humaniseDim(d: any): string {
@@ -69,6 +86,34 @@ function humaniseDim(d: any): string {
   return d
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Strip backend identifiers out of model prose so every sentence reads
+// as plain English. Older Sensei rows (and occasional new ones despite
+// the prompt ban) embed raw tokens like "direction_1d 100.0" or
+// "technical_break" mid-sentence. Replace every known dimension key and
+// root-cause code with its human label, then de-underscore anything
+// left, then run the standard market-text polish (capitalize, Indian
+// commas, ₹ on price levels).
+function humaniseText(s: any): string {
+  if (typeof s !== "string" || !s) return "·";
+  let out = s;
+  // Longest keys first so "sensex_direction_1d" is consumed whole
+  // before the shorter "direction_1d" substring can mangle it.
+  const dimEntries = Object.entries(DIM_LABEL).sort(
+    (a, b) => b[0].length - a[0].length
+  );
+  for (const [key, label] of dimEntries) {
+    out = out.split(key).join(label);
+  }
+  for (const [key, label] of Object.entries(ROOT_CAUSE_LABEL)) {
+    out = out.split(key).join(label);
+  }
+  // Any leftover snake_case token: spaces instead of underscores.
+  out = out.replace(/\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g, (m) =>
+    m.replace(/_/g, " ")
+  );
+  return polishMarketText(out);
 }
 
 function fmtDate(iso: string | null): string {
@@ -82,36 +127,80 @@ function fmtDate(iso: string | null): string {
 export default function SenseiPage() {
   const [row, setRow] = useState<SenseiRow | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const rowRef = useRef<SenseiRow | null>(null);
+  rowRef.current = row;
+
+  const fetchLatest = async (): Promise<SenseiRow | null> => {
+    const { data } = await sb
+      .from("sensei_eod")
+      .select(
+        "id,run_at,analysis_id,market_close_date,model_used,raw_json,what_worked,what_missed,conviction_review,key_insights,tomorrow_watch,calibration_note,insight_quality_avg"
+      )
+      .order("market_close_date", { ascending: false })
+      .limit(1);
+    return ((data || [])[0] as SenseiRow) || null;
+  };
 
   useEffect(() => {
     (async () => {
-      const { data } = await sb
-        .from("sensei_eod")
-        .select(
-          "id,run_at,analysis_id,market_close_date,model_used,raw_json,what_worked,what_missed,conviction_review,key_insights,tomorrow_watch,calibration_note,insight_quality_avg"
-        )
-        .order("market_close_date", { ascending: false })
-        .limit(1);
-      setRow(((data || [])[0] as SenseiRow) || null);
+      setRow(await fetchLatest());
       setLoading(false);
     })();
   }, []);
 
+  // When the nav queues a Sensei run (202 from the bot), poll for the
+  // fresh row and swap it in the moment it lands. The synthesis takes
+  // 1-5 minutes; without this the user clicks Sync, sees "Queued", and
+  // nothing on the page ever changes until a manual reload.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const onQueued = (e: Event) => {
+      const mode = (e as CustomEvent).detail?.mode;
+      if (mode !== "sensei") return;
+      const baseline = rowRef.current?.run_at
+        ? new Date(rowRef.current.run_at).getTime()
+        : 0;
+      const deadline = Date.now() + 20 * 60 * 1000;
+      setRefreshing(true);
+      const poll = async () => {
+        if (cancelled) return;
+        const latest = await fetchLatest();
+        const ts = latest?.run_at ? new Date(latest.run_at).getTime() : 0;
+        if (latest && ts > baseline) {
+          setRow(latest);
+          setRefreshing(false);
+          return;
+        }
+        if (Date.now() < deadline) {
+          timer = setTimeout(poll, 15_000);
+        } else {
+          setRefreshing(false);
+        }
+      };
+      timer = setTimeout(poll, 15_000);
+    };
+
+    window.addEventListener("arcemx:sync-queued", onQueued);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("arcemx:sync-queued", onQueued);
+    };
+  }, []);
+
   if (!loading && !row) {
     return (
-      <motion.main
-        initial={{ opacity: 0, y: 18 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-        className="mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-24"
-      >
+      <>
         <div className="mb-12">
           <div className="section-num mb-2">000 · Sensei</div>
           <h1 className="headline mb-3">
-            Yesterday's <span className="italic">Verdict.</span>
+            Yesterday&apos;s <span className="italic">Verdict.</span>
           </h1>
           <p className="sub-headline max-w-2xl">
-            End-of-day synthesis lands here once Sensei runs against today's morning call and the grader's scores.
+            End-of-day synthesis lands here once Sensei runs against today&apos;s morning call and the grader&apos;s scores.
           </p>
         </div>
         <EmptyState
@@ -136,7 +225,7 @@ export default function SenseiPage() {
         >
           <PortfolioScorecard />
         </Section>
-      </motion.main>
+      </>
     );
   }
 
@@ -144,32 +233,36 @@ export default function SenseiPage() {
   const conv = row.conviction_review || {};
 
   return (
-    <motion.main
-      initial={{ opacity: 0, y: 18 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-      className="mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-24"
-    >
+    <>
       <header className="mb-10">
         <div>
           <div className="section-num mb-2">000 · Sensei</div>
           <h1 className="headline mb-3">
-            Yesterday's <span className="italic">Verdict.</span>
+            Yesterday&apos;s <span className="italic">Verdict.</span>
           </h1>
           <p className="sub-headline mt-2 max-w-2xl">
-            End-of-day synthesis over today's morning call, actual closes, and graded scores.
-            Tomorrow's morning call reads this before forecasting. Trigger a fresh run from the
+            End-of-day synthesis over today&apos;s morning call, actual closes, and graded scores.
+            Tomorrow&apos;s morning call reads this before forecasting. Trigger a fresh run from the
             nav sync button at the top right.
           </p>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
-          <span>Close date: {row.market_close_date}</span>
+          <span>Close date: {fmtDate(row.market_close_date)}</span>
           <span>·</span>
           <span>Synthesised: {fmtDate(row.run_at)}</span>
           {typeof row.insight_quality_avg === "number" && (
             <>
               <span>·</span>
               <span>Reasoning quality: {row.insight_quality_avg}</span>
+            </>
+          )}
+          {refreshing && (
+            <>
+              <span>·</span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block size-2 rounded-full bg-[var(--gain)] animate-pulse" />
+                Synthesizing a fresh retrospective
+              </span>
             </>
           )}
         </div>
@@ -183,7 +276,9 @@ export default function SenseiPage() {
       >
         <div className="card p-5">
           <p className="text-base leading-relaxed">
-            {row.calibration_note || "No verdict returned for today's session."}
+            {row.calibration_note
+              ? humaniseText(row.calibration_note)
+              : "No verdict returned for today's session."}
           </p>
         </div>
       </Section>
@@ -215,14 +310,14 @@ export default function SenseiPage() {
                 {row.what_worked.map((w: any, i: number) => (
                   <tr key={i} className="align-top">
                     <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                      {w.call}
+                      {humaniseText(w.call)}
                     </td>
                     <td className="align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {humaniseDim(w.dimension)}
                     </td>
                     <td className="num align-top">{w.score_pct ?? "·"}</td>
-                    <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }} title={w.evidence}>
-                      {w.evidence}
+                    <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                      {humaniseText(w.evidence)}
                     </td>
                   </tr>
                 ))}
@@ -230,7 +325,10 @@ export default function SenseiPage() {
             </table>
           </div>
         ) : (
-          <EmptyState title="No graded wins yet today." hint="" />
+          <EmptyState
+            title="No graded wins for this session yet."
+            hint="Populates after the evening grader pass scores the day's call."
+          />
         )}
       </Section>
 
@@ -263,7 +361,7 @@ export default function SenseiPage() {
                 {row.what_missed.map((m: any, i: number) => (
                   <tr key={i} className="align-top">
                     <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                      {m.call}
+                      {humaniseText(m.call)}
                     </td>
                     <td className="align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
                       {humaniseDim(m.dimension)}
@@ -275,7 +373,7 @@ export default function SenseiPage() {
                       {m.gap ?? "·"}
                     </td>
                     <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                      {m.root_cause || "·"}
+                      {m.root_cause ? humaniseText(m.root_cause) : "·"}
                     </td>
                   </tr>
                 ))}
@@ -283,7 +381,10 @@ export default function SenseiPage() {
             </table>
           </div>
         ) : (
-          <EmptyState title="No graded misses today." hint="" />
+          <EmptyState
+            title="No graded misses for this session yet."
+            hint="Populates after the evening grader pass scores the day's call."
+          />
         )}
       </Section>
 
@@ -311,7 +412,7 @@ export default function SenseiPage() {
                   {(t.n_hits ?? "·")} / {(t.n_picks ?? "·")}
                 </div>
                 <p className="text-sm text-[var(--muted)] leading-relaxed">
-                  {t.comment || "No picks at this tier today."}
+                  {t.comment ? humaniseText(t.comment) : "No picks at this tier today."}
                 </p>
               </div>
             );
@@ -329,7 +430,7 @@ export default function SenseiPage() {
           <div className="card p-5">
             <ul className="list-disc pl-6 space-y-2.5 text-sm leading-relaxed">
               {row.key_insights.map((s: string, i: number) => (
-                <li key={i}>{s}</li>
+                <li key={i}>{humaniseText(s)}</li>
               ))}
             </ul>
           </div>
@@ -348,7 +449,7 @@ export default function SenseiPage() {
           <div className="card p-5">
             <ul className="list-disc pl-6 space-y-2.5 text-sm leading-relaxed">
               {row.tomorrow_watch.map((s: string, i: number) => (
-                <li key={i}>{s}</li>
+                <li key={i}>{humaniseText(s)}</li>
               ))}
             </ul>
           </div>
@@ -374,7 +475,6 @@ export default function SenseiPage() {
       >
         <PortfolioScorecard />
       </Section>
-
-    </motion.main>
+    </>
   );
 }
