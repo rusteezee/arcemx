@@ -1,9 +1,12 @@
 """Aggregate all signals → LLM → save analysis row."""
 import os
 import json
-import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pandas as pd
+import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -20,6 +23,127 @@ from analyzer.news_digest import build_news_digest
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _ticker_fundamentals(info: dict) -> dict:
+    """Distil yfinance Ticker.info into the small subset the LLM
+    actually reasons over. info has ~150 fields; most are noise
+    (timezone, exchange code, business summary text). Keep only the
+    valuation, growth, profitability, and leverage anchors the
+    morning prompt needs to ground per-stock predictions."""
+    def _g(k):
+        v = info.get(k)
+        return v if isinstance(v, (int, float)) and v == v else None
+    mcap = _g("marketCap")
+    return {
+        "pe_trailing": _g("trailingPE"),
+        "pe_forward": _g("forwardPE"),
+        "peg": _g("pegRatio"),
+        "pb": _g("priceToBook"),
+        "ps": _g("priceToSalesTrailing12Months"),
+        "roe_pct": (_g("returnOnEquity") or 0) * 100 if _g("returnOnEquity") is not None else None,
+        "roa_pct": (_g("returnOnAssets") or 0) * 100 if _g("returnOnAssets") is not None else None,
+        "profit_margin_pct": (_g("profitMargins") or 0) * 100 if _g("profitMargins") is not None else None,
+        "op_margin_pct": (_g("operatingMargins") or 0) * 100 if _g("operatingMargins") is not None else None,
+        "gross_margin_pct": (_g("grossMargins") or 0) * 100 if _g("grossMargins") is not None else None,
+        "debt_to_equity": _g("debtToEquity"),
+        "current_ratio": _g("currentRatio"),
+        "quick_ratio": _g("quickRatio"),
+        "revenue_growth_yoy_pct": (_g("revenueGrowth") or 0) * 100 if _g("revenueGrowth") is not None else None,
+        "earnings_growth_yoy_pct": (_g("earningsGrowth") or 0) * 100 if _g("earningsGrowth") is not None else None,
+        "earnings_growth_qoq_pct": (_g("earningsQuarterlyGrowth") or 0) * 100 if _g("earningsQuarterlyGrowth") is not None else None,
+        "dividend_yield_pct": (_g("dividendYield") or 0) * 100 if _g("dividendYield") is not None else None,
+        "payout_ratio_pct": (_g("payoutRatio") or 0) * 100 if _g("payoutRatio") is not None else None,
+        "beta": _g("beta"),
+        "market_cap_cr": round(mcap / 1e7, 0) if mcap else None,
+        "avg_volume_10d": _g("averageVolume10days"),
+        "short_pct_float": (_g("shortPercentOfFloat") or 0) * 100 if _g("shortPercentOfFloat") is not None else None,
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+    }
+
+
+def _ticker_news(news: list) -> list:
+    """Normalise yfinance Ticker.news across SDK versions. yfinance
+    0.2.40+ wraps each item in {content: {...}}; older versions return
+    flat {title, publisher, providerPublishTime, ...}. Keep the top 5
+    most-recent stories per ticker, title + publisher + iso publish
+    date only; the LLM only needs the headline signal, not links."""
+    out = []
+    for item in (news or [])[:8]:
+        if not isinstance(item, dict):
+            continue
+        c = item.get("content") if isinstance(item.get("content"), dict) else item
+        title = c.get("title") or item.get("title")
+        if not title:
+            continue
+        prov = c.get("provider")
+        if isinstance(prov, dict):
+            publisher = prov.get("displayName")
+        else:
+            publisher = c.get("publisher") or item.get("publisher")
+        pub_raw = (c.get("pubDate") or c.get("displayTime")
+                   or item.get("providerPublishTime"))
+        published_at = None
+        if isinstance(pub_raw, (int, float)):
+            try:
+                published_at = datetime.utcfromtimestamp(pub_raw).isoformat()
+            except (OSError, ValueError):
+                published_at = None
+        elif isinstance(pub_raw, str):
+            published_at = pub_raw
+        out.append({
+            "title": title,
+            "publisher": publisher,
+            "published_at": published_at,
+        })
+        if len(out) >= 5:
+            break
+    return out
+
+
+def _fetch_ticker_enrichment(ticker: str) -> tuple[str, dict]:
+    """Per-ticker fundamentals + news pull. Returns the ticker plus a
+    {fundamentals, news} dict. Soft-fails: yfinance can 429, 404 on
+    illiquid Indian symbols, or hang; we never let one bad ticker take
+    down the whole morning pipeline."""
+    out = {"fundamentals": None, "news": []}
+    try:
+        t = yf.Ticker(ticker)
+        try:
+            info = t.info or {}
+        except Exception:
+            info = {}
+        if info:
+            out["fundamentals"] = _ticker_fundamentals(info)
+        try:
+            news = t.news or []
+        except Exception:
+            news = []
+        if news:
+            out["news"] = _ticker_news(news)
+    except Exception as e:
+        out["error"] = str(e)[:120]
+    return ticker, out
+
+
+def _fetch_enrichment(tickers: list[str]) -> dict:
+    """Fan-out per-ticker info + news. yfinance Ticker.info is
+    ~2-3s blocking, so 15 tickers serially is 30-45s. A small
+    thread pool collapses wall-time to ~5s while staying well
+    under Yahoo's rate-limit threshold."""
+    if not tickers:
+        return {}
+    enr: dict = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futs = {pool.submit(_fetch_ticker_enrichment, t): t for t in tickers}
+        for f in as_completed(futs):
+            try:
+                tk, payload = f.result(timeout=20)
+                enr[tk] = payload
+            except Exception as e:
+                enr[futs[f]] = {"fundamentals": None, "news": [], "error": str(e)[:120]}
+    return enr
 
 
 def build_payload() -> dict:
@@ -103,6 +227,7 @@ def build_payload() -> dict:
     print("User holdings + wishlist...")
     holdings, wishlist, prior_call = [], [], None
     holding_technicals, wishlist_technicals = {}, {}
+    holding_enrichment, wishlist_enrichment = {}, {}
     if url and key:
         sb = create_client(url, key)
         h = sb.table("portfolio").select("ticker,qty,avg_buy_price").execute()
@@ -173,6 +298,33 @@ def build_payload() -> dict:
                       f"wishlist={len(wishlist_technicals)}")
             except Exception as e:
                 print(f"focus technicals fail: {e}")
+
+        # Per-stock fundamentals + per-ticker news for holdings +
+        # wishlist. yfinance Ticker.info gives valuation (P/E, P/B),
+        # growth (revenue/earnings YoY+QoQ), profitability (ROE,
+        # margins), leverage (D/E, current ratio), and beta;
+        # Ticker.news gives 5 most-recent stories per stock. Both are
+        # free. Fan out with a small thread pool so 15 tickers do not
+        # serially burn 30-45s of wall time.
+        holding_enrichment: dict = {}
+        wishlist_enrichment: dict = {}
+        holding_set = {_norm(h["ticker"]) for h in holdings if h.get("ticker")}
+        wishlist_set = {_norm(t) for t in wishlist}
+        all_focus = sorted(holding_set | wishlist_set)
+        if all_focus:
+            print(f"Fetching per-ticker fundamentals + news for {len(all_focus)} names...")
+            try:
+                enr = _fetch_enrichment(all_focus)
+                for tk, payload in enr.items():
+                    if tk in holding_set:
+                        holding_enrichment[tk] = payload
+                    if tk in wishlist_set:
+                        wishlist_enrichment[tk] = payload
+                n_fund = sum(1 for v in enr.values() if v.get("fundamentals"))
+                n_news = sum(1 for v in enr.values() if v.get("news"))
+                print(f"  fundamentals on {n_fund}/{len(all_focus)}, news on {n_news}/{len(all_focus)}")
+            except Exception as e:
+                print(f"per-ticker enrichment fail: {e}")
         # Prior analysis for self-context
         try:
             prev = sb.table("analysis").select("run_at,market_mood,raw_json").order(
@@ -230,6 +382,10 @@ def build_payload() -> dict:
         "user_wishlist": wishlist,
         "holding_technicals": holding_technicals,
         "wishlist_technicals": wishlist_technicals,
+        "holding_fundamentals": {tk: v.get("fundamentals") for tk, v in holding_enrichment.items() if v.get("fundamentals")},
+        "wishlist_fundamentals": {tk: v.get("fundamentals") for tk, v in wishlist_enrichment.items() if v.get("fundamentals")},
+        "holding_news": {tk: v.get("news") for tk, v in holding_enrichment.items() if v.get("news")},
+        "wishlist_news": {tk: v.get("news") for tk, v in wishlist_enrichment.items() if v.get("news")},
         "prior_call": prior_call,
         "technical_bullish_top": ranked["bullish"],
         "technical_bearish_top": ranked["bearish"],

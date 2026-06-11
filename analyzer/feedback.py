@@ -215,6 +215,79 @@ def build_feedback() -> dict | None:
             f"signal (event day, VIX or ATR up >10%), and you must cite it."
         )
 
+    # Per-stock + per-sector range pressure: every band that contained
+    # its close yesterday must tighten today. The grader stores raw
+    # per-element results inside actual.results on the aggregated row,
+    # so one Supabase fetch per dim returns every name's score + width
+    # from yesterday's call. Build one corrective rule per dim listing
+    # each name that hit (>=80) with its specific yesterday width and
+    # a target narrower width. Same widen-only-on-cited-vol-event escape
+    # hatch as the index rules. Without this, only NIFTY and Sensex
+    # bands got tightening pressure; sectors and individual stocks felt
+    # zero learning loop on width.
+    for dim, scope_label, key_field in (
+            ("sector_range_1d", "sector", "sector"),
+            ("holding_outlook_range_1d", "holding", "ticker"),
+            ("wishlist_outlook_range_1d", "wishlist", "ticker")):
+        try:
+            last = sb.table("prediction_scores").select(
+                "actual"
+            ).eq("dimension", dim).order("id", desc=True).limit(1).execute().data or []
+        except Exception:
+            last = []
+        if not last:
+            continue
+        results = ((last[0].get("actual") or {}).get("results")) or []
+        if not isinstance(results, list) or not results:
+            continue
+        tight_specs: list[str] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            r_score = item.get("range_score")
+            rng = item.get("range")
+            name = item.get(key_field)
+            if (not isinstance(r_score, (int, float)) or r_score < 80
+                    or not name):
+                continue
+            if isinstance(rng, str):
+                try:
+                    parts = [float(p.strip()) for p in rng.split("-") if p.strip()]
+                    if len(parts) < 2:
+                        continue
+                    lo, hi = parts[0], parts[1]
+                except (TypeError, ValueError):
+                    continue
+            elif isinstance(rng, (list, tuple)) and len(rng) >= 2:
+                try:
+                    lo, hi = float(rng[0]), float(rng[1])
+                except (TypeError, ValueError):
+                    continue
+            else:
+                continue
+            mid = (lo + hi) / 2
+            if mid <= 0 or hi <= lo:
+                continue
+            w_pct = (hi - lo) / mid * 100
+            target = w_pct * 0.85
+            tight_specs.append(
+                f"{name} band {lo:.2f}-{hi:.2f} ({w_pct:.2f}% wide, "
+                f"score {r_score:.0f}) -> target <= {target:.2f}%"
+            )
+        if not tight_specs:
+            continue
+        # Cap to 8 names so a long list (e.g. 13 sectors) does not
+        # crowd out the rest of the corrective_rules block.
+        capped = tight_specs[:8]
+        more = (f" plus {len(tight_specs) - len(capped)} more names that hit"
+                if len(tight_specs) > len(capped) else "")
+        rules.append(
+            f"Per-{scope_label} range doctrine: every band below contained "
+            f"yesterday's close. Each one's band today MUST be narrower than "
+            f"the listed width unless you cite an explicit vol-expansion event "
+            f"on that name (earnings, news, sector shock). " + "; ".join(capped) + more
+        )
+
     for dim, label in (("short_pick_7d", "Short picks 7d"),
                        ("short_pick_30d", "Short picks 30d")):
         acc, n = _acc(dim)

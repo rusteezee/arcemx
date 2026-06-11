@@ -123,12 +123,27 @@ wishlist_signals.
   only with concrete signal.
 - key_driver: ONE line, must cite AT LEAST TWO concrete numbers from the per-stock
   technicals block (RSI, MACD state, vs SMA20/50/200, support_20d, resistance_20d,
-  expected_daily_move_pct, atr_14). Example: "RSI 58 + MACD bullish + 0.8% above
-  SMA20, resistance_20d 350 is the cap."
+  expected_daily_move_pct, atr_14). When the per-stock fundamentals or news block
+  carries a relevant anchor for the next-day move (an earnings beat in the last 24h,
+  a major recommendation change, a debt/equity at extreme, a forward P/E re-rate),
+  cite ONE number from there too instead of repeating two technicals; the model
+  catalyst plus a technical confirmation reads as a stronger thesis than two
+  indicator readings alone. Example: "RSI 58 + MACD bullish + 0.8% above SMA20,
+  resistance_20d 350 is the cap." Or: "Earnings YoY +24% headline + RSI 61,
+  resistance_20d 1180 is the cap."
 - If a holding or wishlist stock is missing from the technical context (no signal
   block emitted), OMIT IT ENTIRELY from holding_outlooks_1d / wishlist_outlooks_1d.
   Do NOT emit placeholder rows with range "0-0" or confidence 0. Silently
   skipping is correct; fabricating a data-thin row is a no-bluff violation.
+
+holding_fundamentals[TICKER] and wishlist_fundamentals[TICKER] carry yfinance
+valuation, growth, profitability, leverage, and beta when available. holding_news
+[TICKER] and wishlist_news[TICKER] carry the 5 most-recent headlines per stock
+(title + publisher + published_at). USE THEM. A stock with earnings_growth_qoq_pct
+above +20 and a positive headline in holding_news today is a different next-day
+setup than one with a debt_to_equity above 200 and a negative headline; ranges
+and directions must reflect that. Never invent fundamentals or news that are not
+in the payload. If the block is empty for a ticker, fall back to technicals only.
 
 market_context.sectors gives next-day technical posture for 10 NSE sectors (BANK,
 IT, AUTO, PHARMA, FMCG, ENERGY, METAL, REALTY, MEDIA, FINSERV). For EVERY sector
@@ -527,8 +542,17 @@ def _chain(primary: str | None) -> list[str]:
 # malformed tail. news_recent goes first since news_digest already
 # carries that signal in distilled form.
 _PAYLOAD_DROP_ORDER = (
+    # Cheapest first (already-distilled news lives in news_digest), then
+    # ambient signal, then per-ticker enrichments (wishlist before
+    # holdings since holdings are the user's actual money), then the
+    # broader technical screen. self_feedback, sensei_yesterday,
+    # market_context, holding/wishlist technicals, and prior_call are
+    # never droppable: lose them and the reasoning loop collapses.
     "news_recent", "reddit_hot", "google_trends", "indices",
+    "wishlist_news", "wishlist_fundamentals",
+    "holding_news",
     "technical_bearish_top", "technical_bullish_top",
+    "holding_fundamentals",
 )
 
 
