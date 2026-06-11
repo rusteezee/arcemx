@@ -65,6 +65,14 @@
 
 * { border-color: var(--border); }
 
+/* Reserve the scrollbar gutter at all times. Without this, any moment
+   where the document briefly fits the viewport (route transition, a
+   page still fetching its data) drops the 10px scrollbar, widens the
+   viewport, and shifts the centered nav + content horizontally; the
+   bar then reappears when content lands and everything shifts back.
+   That back-and-forth read as "jitter" when entering data-heavy pages. */
+html { scrollbar-gutter: stable; }
+
 body {
   background: var(--background);
   color: var(--foreground);

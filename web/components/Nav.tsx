@@ -362,11 +362,11 @@ export function Nav() {
                 "text-[0.72rem] font-medium",
                 "size-9 justify-center sm:size-auto sm:px-2.5 sm:py-[5px]",
                 // Fixed width across every route so the whole nav bar
-                // never resizes when the user moves between INDmoney
-                // (short labels like "1m ago" / "Synced") and Sensei /
-                // Grader (longer "Sync Sensei" / "Sync Grader") routes.
-                // 124px is the widest label so it accommodates all modes.
-                "sm:w-[124px]",
+                // never resizes between modes. Labels are all short now
+                // ("Sensei", "Grader", "Just now", "Syncing"), so 96px
+                // fits the widest without the dead space the old 124px
+                // (sized for "Sync Sensei") left around them.
+                "sm:w-[96px]",
                 syncing ? "opacity-80 border-border" : "hover:bg-[var(--muted-bg)]",
                 "disabled:cursor-not-allowed",
                 syncState === "ok" &&

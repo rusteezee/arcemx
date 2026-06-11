@@ -191,46 +191,22 @@ export default function SenseiPage() {
     };
   }, []);
 
-  if (!loading && !row) {
-    return (
-      <>
-        <div className="mb-12">
-          <div className="section-num mb-2">000 · Sensei</div>
-          <h1 className="headline mb-3">
-            Yesterday&apos;s <span className="italic">Verdict.</span>
-          </h1>
-          <p className="sub-headline max-w-2xl">
-            End-of-day synthesis lands here once Sensei runs against today&apos;s morning call and the grader&apos;s scores.
-          </p>
-        </div>
-        <EmptyState
-          title="No Sensei retrospective yet."
-          hint="Sensei runs at 8:00 PM IST Mon-Fri after market close and the grader pass. First row lands after today's session is reviewed."
-        />
-
-        <Section
-          num="001 / 002"
-          title="Sensei's Calculator"
-          glyph="✦"
-          description="Even without today's retrospective, the deterministic allocation prefilter is available. Tell Sensei the amount, horizon, risk appetite, and the universe filter."
-        >
-          <Calculator />
-        </Section>
-
-        <Section
-          num="002 / 002"
-          title="Portfolio Scorecard"
-          glyph="◉"
-          description="Score on your current holdings. Sector spread, single-name risk, momentum vs NIFTY, drawdown, edge."
-        >
-          <PortfolioScorecard />
-        </Section>
-      </>
-    );
-  }
-
-  if (!row) return null;
-  const conv = row.conviction_review || {};
+  // Single render path at all times. This page used to return `null`
+  // while its first fetch was in flight: the document collapsed to just
+  // nav + footer, the scrollbar vanished, the viewport widened, and the
+  // whole UI shifted sideways before snapping back when data landed.
+  // It was also the only page whose content mounted AFTER the route
+  // transition finished, so it popped in with no entry animation.
+  // Rendering the full shell immediately (quiet static placeholders in
+  // the data sections, no skeleton shimmer) keeps the height stable and
+  // lets the shared PageTransition animate real content like every
+  // other page.
+  const conv = row?.conviction_review || {};
+  const pending = (
+    <div className="card p-5">
+      <p className="text-sm text-[var(--muted)]">Loading the latest retrospective.</p>
+    </div>
+  );
 
   return (
     <>
@@ -247,10 +223,10 @@ export default function SenseiPage() {
           </p>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
-          <span>Close date: {fmtDate(row.market_close_date)}</span>
+          <span>Close date: {row ? fmtDate(row.market_close_date) : "·"}</span>
           <span>·</span>
-          <span>Synthesised: {fmtDate(row.run_at)}</span>
-          {typeof row.insight_quality_avg === "number" && (
+          <span>Synthesised: {row ? fmtDate(row.run_at) : "·"}</span>
+          {typeof row?.insight_quality_avg === "number" && (
             <>
               <span>·</span>
               <span>Reasoning quality: {row.insight_quality_avg}</span>
@@ -274,13 +250,17 @@ export default function SenseiPage() {
         glyph="◈"
         description="One-line verdict on whether stated confidence matched delivered accuracy. Strict, no softening."
       >
-        <div className="card p-5">
-          <p className="text-base leading-relaxed">
-            {row.calibration_note
-              ? humaniseText(row.calibration_note)
-              : "No verdict returned for today's session."}
-          </p>
-        </div>
+        {loading ? (
+          pending
+        ) : (
+          <div className="card p-5">
+            <p className="text-base leading-relaxed">
+              {row?.calibration_note
+                ? humaniseText(row.calibration_note)
+                : "No verdict returned for today's session."}
+            </p>
+          </div>
+        )}
       </Section>
 
       <Section
@@ -289,7 +269,9 @@ export default function SenseiPage() {
         glyph="◉"
         description="Calls that hit. Evidence column shows the numbers behind each win. Treat as a checklist of what to repeat tomorrow."
       >
-        {row.what_worked && row.what_worked.length > 0 ? (
+        {loading ? (
+          pending
+        ) : row?.what_worked && row.what_worked.length > 0 ? (
           <div className="card overflow-hidden">
             <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
               <colgroup>
@@ -338,7 +320,9 @@ export default function SenseiPage() {
         glyph="◉"
         description="Calls that broke. Root Cause column says why. Read every row before the next session opens."
       >
-        {row.what_missed && row.what_missed.length > 0 ? (
+        {loading ? (
+          pending
+        ) : row?.what_missed && row.what_missed.length > 0 ? (
           <div className="card overflow-hidden">
             <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
               <colgroup>
@@ -394,6 +378,9 @@ export default function SenseiPage() {
         glyph="◉"
         description="Did A / B / C labels track actual performance? Inflated tiers will surface here."
       >
+        {loading ? (
+          pending
+        ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {([
             { key: "tier_A", label: "A", pill: "pill-gain" },
@@ -418,6 +405,7 @@ export default function SenseiPage() {
             );
           })}
         </div>
+        )}
       </Section>
 
       <Section
@@ -426,7 +414,9 @@ export default function SenseiPage() {
         glyph="◉"
         description="Sensei's strict reads of today's data. Every bullet cites at least two concrete numbers. No vibe takes."
       >
-        {row.key_insights && row.key_insights.length > 0 ? (
+        {loading ? (
+          pending
+        ) : row?.key_insights && row.key_insights.length > 0 ? (
           <div className="card p-5">
             <ul className="list-disc pl-6 space-y-2.5 text-sm leading-relaxed">
               {row.key_insights.map((s: string, i: number) => (
@@ -445,7 +435,9 @@ export default function SenseiPage() {
         glyph="⬡"
         description="Specific levels and events to track at next open. These are the things Sensei wants you to flag before tomorrow's session begins."
       >
-        {row.tomorrow_watch && row.tomorrow_watch.length > 0 ? (
+        {loading ? (
+          pending
+        ) : row?.tomorrow_watch && row.tomorrow_watch.length > 0 ? (
           <div className="card p-5">
             <ul className="list-disc pl-6 space-y-2.5 text-sm leading-relaxed">
               {row.tomorrow_watch.map((s: string, i: number) => (
