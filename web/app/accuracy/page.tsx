@@ -72,6 +72,24 @@ interface CalibPoint {
   date: string;
 }
 
+// Pearson r over a (stated, realized) cloud. Shared between the
+// CalibScatter SVG geometry and the HTML header strip rendered above
+// the card, so both surfaces always agree on the numbers shown.
+function calibPearson(points: CalibPoint[]): { r: number; r2: number; n: number } | null {
+  if (points.length < 4) return null;
+  const n = points.length;
+  const sumX = points.reduce((a, p) => a + p.stated, 0);
+  const sumY = points.reduce((a, p) => a + p.realized, 0);
+  const sumXY = points.reduce((a, p) => a + p.stated * p.realized, 0);
+  const sumXX = points.reduce((a, p) => a + p.stated * p.stated, 0);
+  const sumYY = points.reduce((a, p) => a + p.realized * p.realized, 0);
+  const denom = n * sumXX - sumX * sumX;
+  const rDen = Math.sqrt(denom * (n * sumYY - sumY * sumY));
+  if (!Number.isFinite(rDen) || rDen < 1e-6) return null;
+  const r = (n * sumXY - sumX * sumY) / rDen;
+  return { r, r2: r * r, n };
+}
+
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
@@ -568,7 +586,24 @@ export default function AccuracyPage() {
           className="card p-6"
         >
           {calibScatter.length >= 4 ? (
-            <CalibScatter points={calibScatter} />
+            <>
+              {(() => {
+                const stat = calibPearson(calibScatter);
+                if (!stat) return null;
+                return (
+                  <div className="mb-4">
+                    <div className="text-sm italic font-medium text-foreground">
+                      R = {stat.r >= 0 ? "+" : ""}
+                      {stat.r.toFixed(3)}, R² = {stat.r2.toFixed(3)}, n = {stat.n}
+                    </div>
+                    <div className="text-xs text-[var(--muted)] mt-1">
+                      R: -1 to +1, sign shows direction · R²: 0 to 1, strength of fit
+                    </div>
+                  </div>
+                );
+              })()}
+              <CalibScatter points={calibScatter} />
+            </>
           ) : (
             <div
               style={{ height: 280 }}
@@ -1113,37 +1148,9 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
 
   const ticks = [0, 20, 40, 60, 80, 100];
 
-  // OLS regression + Pearson r over (stated, realized).
-  let reg: {
-    x1: number; y1: number; x2: number; y2: number;
-    slope: number; intercept: number; r: number; r2: number;
-  } | null = null;
-  if (points.length >= 4) {
-    const n = points.length;
-    const sumX = points.reduce((a, p) => a + p.stated, 0);
-    const sumY = points.reduce((a, p) => a + p.realized, 0);
-    const sumXY = points.reduce((a, p) => a + p.stated * p.realized, 0);
-    const sumXX = points.reduce((a, p) => a + p.stated * p.stated, 0);
-    const sumYY = points.reduce((a, p) => a + p.realized * p.realized, 0);
-    const denom = n * sumXX - sumX * sumX;
-    if (Math.abs(denom) > 1e-6) {
-      const slope = (n * sumXY - sumX * sumY) / denom;
-      const intercept = (sumY - slope * sumX) / n;
-      const rDen = Math.sqrt(denom * (n * sumYY - sumY * sumY));
-      const r = rDen > 1e-6 ? (n * sumXY - sumX * sumY) / rDen : 0;
-      const clamp = (v: number) => Math.max(0, Math.min(100, v));
-      reg = {
-        x1: xScale(0),
-        y1: yScale(clamp(intercept)),
-        x2: xScale(100),
-        y2: yScale(clamp(intercept + slope * 100)),
-        slope,
-        intercept,
-        r,
-        r2: r * r,
-      };
-    }
-  }
+  // R / R-squared / n now live in an HTML strip above this chart
+  // (rendered by the parent section) so the numbers stay crisp at any
+  // zoom and the SVG carries only geometry.
 
   return (
     <svg
@@ -1246,28 +1253,10 @@ function CalibScatter({ points }: { points: CalibPoint[] }) {
           reads as a contradiction even when the stats are weak. The R
           number does the same job honestly: weak R = stated confidence
           doesn't track delivered hit rate; strong R = it does. */}
-      {reg && (
-        <>
-          <text
-            x={padL + 10}
-            y={padT + 20}
-            fontSize={14}
-            fill="var(--foreground)"
-            fontStyle="italic"
-          >
-            R = {reg.r >= 0 ? "+" : ""}
-            {reg.r.toFixed(3)}, R² = {reg.r2.toFixed(3)}, n = {points.length}
-          </text>
-          <text
-            x={padL + 10}
-            y={padT + 38}
-            fontSize={11}
-            fill="var(--muted)"
-          >
-            R: -1 to +1, sign shows direction · R²: 0 to 1, strength of fit
-          </text>
-        </>
-      )}
+      {/* R / R-squared / n now live in an HTML strip above the SVG so
+          the legend renders crisply at any zoom and matches the rest
+          of the page typography. The diagonal calibration line +
+          dots are the only thing inside the SVG now. */}
 
       {/* Dots */}
       {points.map((p, i) => (
