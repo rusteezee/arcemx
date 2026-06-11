@@ -33,6 +33,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   wishlist_outlook_range_1d: "Wishlist Range (1d)",
   sector_dir_1d: "Sectors Direction (1d)",
   sector_range_1d: "Sectors Range (1d)",
+  stock_range_1d: "Stock Range (1d)",
   index_pair_1d: "NIFTY vs BankNifty (1d)",
   cap_pair_1d: "NIFTY vs Midcap 150 (1d)",
   fii_flow_1d: "FII Cash Flow Direction (1d)",
@@ -779,57 +780,64 @@ export default function AccuracyPage() {
             </table>
           </div>
 
-          {/* 4. Per-dim status. which dims have crossed which thresholds */}
-          <div className="card overflow-hidden">
-            <div className="p-5 pb-2">
-              <div className="section-num mb-1">Per-Dimension Status</div>
-              <p className="text-sm text-[var(--muted)] leading-relaxed">
-                Current 30-day sample size per dimension, plus where each
-                sits on the maturity ladder. A dimension with 4 scored
-                sessions cannot be compared to one with 50. the smaller-n
-                hit rate is a guess, not a measurement.
-              </p>
+          {/* 4. Per-dim status. one box per dimension instead of a
+              dense table row so each card reads as a discrete data
+              point and the maturity ladder is visible at a glance. */}
+          <div className="card p-5">
+            <div className="section-num mb-1">Per-Dimension Status</div>
+            <p className="text-sm text-[var(--muted)] leading-relaxed mb-4">
+              Current 30-day sample size per dimension, plus where each
+              sits on the maturity ladder. A dimension with 4 scored
+              sessions cannot be compared to one with 50. the smaller-n
+              hit rate is a guess, not a measurement.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {Object.keys(DIMENSION_LABELS).map((dim) => {
+                const r = summary.find((s) => s.window_days === 30 && s.dimension === dim);
+                const n = r?.sample_size ?? 0;
+                if (n === 0) return null;
+                const acc = r?.accuracy_pct;
+                const status =
+                  n < 10
+                    ? { label: "Cold start", cls: "pill-warn", accent: "var(--warn)" }
+                    : n < 30
+                    ? { label: "Building", cls: "pill-warn", accent: "var(--warn)" }
+                    : n < 100
+                    ? { label: "Settling", cls: "pill-mid", accent: "var(--mid)" }
+                    : n < 300
+                    ? { label: "Stable", cls: "pill-gain", accent: "var(--gain)" }
+                    : { label: "Regime-aware", cls: "pill-gain", accent: "var(--gain)" };
+                return (
+                  <div
+                    key={dim}
+                    className="rounded-2xl border border-border p-4 flex flex-col gap-2 transition-colors hover:bg-[var(--muted-bg)]"
+                    style={{
+                      borderColor: `color-mix(in srgb, ${status.accent} 35%, var(--border))`,
+                    }}
+                  >
+                    <div className="text-xs text-[var(--muted)] tracking-wide uppercase leading-tight">
+                      {DIMENSION_LABELS[dim]}
+                    </div>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-2xl font-semibold num">{n}</span>
+                      <span className="text-[10px] text-[var(--muted)] tracking-wider uppercase">
+                        scored 30d
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`pill ${status.cls}`} style={{ fontSize: 11 }}>
+                        {status.label}
+                      </span>
+                      {typeof acc === "number" && (
+                        <span className="text-xs num text-[var(--muted)]">
+                          {acc.toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
-              <colgroup>
-                <col style={{ width: "44%" }} />
-                <col style={{ width: "20%" }} />
-                <col />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Dimension</th>
-                  <th>Scored · 30d</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.keys(DIMENSION_LABELS).map((dim) => {
-                  const r = summary.find((s) => s.window_days === 30 && s.dimension === dim);
-                  const n = r?.sample_size ?? 0;
-                  if (n === 0) return null;
-                  const status =
-                    n < 10
-                      ? { label: "Cold start", cls: "pill-warn" }
-                      : n < 30
-                      ? { label: "Building", cls: "pill-warn" }
-                      : n < 100
-                      ? { label: "Settling", cls: "pill-mid" }
-                      : n < 300
-                      ? { label: "Stable", cls: "pill-gain" }
-                      : { label: "Regime-aware", cls: "pill-gain" };
-                  return (
-                    <tr key={dim}>
-                      <td className="font-medium">{DIMENSION_LABELS[dim]}</td>
-                      <td className="num">{n}</td>
-                      <td>
-                        <span className={`pill ${status.cls}`}>{status.label}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
 
           {/* 5. Decision rules. when to act, when to wait */}

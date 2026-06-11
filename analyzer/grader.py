@@ -970,6 +970,14 @@ def grade_all(lookback_days: int = 90):
             # for NIFTY, so per-stock results sit on the same scale as the
             # index dims. Aggregated to one (avg_dir, avg_range) sample per
             # prediction-day per dim, matching how compute_summaries dedups.
+            #
+            # combined_stock_results collects EVERY per-stock range score
+            # from holdings + wishlist so a single rolled-up stock_range_1d
+            # dim can be upserted once all groups are processed. This is
+            # the new "Stock Range (1d)" dim on the accuracy page: it
+            # tracks stock-level range discipline as one number per day,
+            # independent of which group each ticker belongs to.
+            combined_stock_results: list[dict] = []
             for src_key, dir_dim, range_dim, label in (
                 ("holding_outlooks_1d", "holding_outlook_dir_1d",
                  "holding_outlook_range_1d", "holding"),
@@ -999,14 +1007,19 @@ def grade_all(lookback_days: int = 90):
                     if rng:
                         rscore, rdelta = grade_range(rng, next_close)
                         range_scores.append(rscore)
-                    results.append({
+                    stock_row = {
                         "ticker": tk,
                         "direction": o.get("direction"),
                         "range": o.get("range"),
                         "actual_pct": round(delta, 2),
                         "dir_score": dscore,
                         "range_score": rscore,
-                    })
+                    }
+                    results.append(stock_row)
+                    if rscore is not None:
+                        combined_stock_results.append({
+                            "group": label, **stock_row
+                        })
                 if dir_scores:
                     avg_d = sum(dir_scores) / len(dir_scores)
                     _upsert_score(sb, aid, dir_dim, 1,
@@ -1023,6 +1036,28 @@ def grade_all(lookback_days: int = 90):
                                                 for r in results]},
                                   {"results": results}, avg_r, 0,
                                   notes=f"avg per-{label} 1d range across {len(range_scores)} names")
+
+            # ----- Combined stock-level range discipline (1d) -----
+            # New rolled-up dim that averages every per-stock range score
+            # from holdings + wishlist into ONE per-analysis sample. Lets
+            # the accuracy page surface "is the model tight on individual
+            # stock bands" as a single trackable line, independent of
+            # which group each ticker belongs to. holding_outlook_range_1d
+            # and wishlist_outlook_range_1d remain as the per-group split;
+            # this dim is the union.
+            if combined_stock_results:
+                cs_scores = [r["range_score"] for r in combined_stock_results
+                             if isinstance(r.get("range_score"), (int, float))]
+                if cs_scores:
+                    avg_cs = sum(cs_scores) / len(cs_scores)
+                    _upsert_score(sb, aid, "stock_range_1d", 1,
+                                  {"outlooks": [{"ticker": r["ticker"],
+                                                 "group": r["group"],
+                                                 "range": r["range"]}
+                                                for r in combined_stock_results]},
+                                  {"results": combined_stock_results},
+                                  avg_cs, 0,
+                                  notes=f"avg per-stock 1d range across {len(cs_scores)} names (holdings + wishlist combined)")
 
             print(f"  graded analysis {aid} ({age}d old)")
         except Exception as e:
