@@ -367,7 +367,7 @@ export default function AccuracyPage() {
         </p>
       </div>
 
-      <Section num={calibration ? "001 / 010" : "001 / 009"} title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 009" : "001 / 008"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -388,7 +388,7 @@ export default function AccuracyPage() {
 
       {calibration && (
         <Section
-          num="002 / 010"
+          num="002 / 009"
           title="Confidence Calibration"
           glyph="◉"
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
@@ -413,7 +413,7 @@ export default function AccuracyPage() {
       )}
 
       <Section
-        num={calibration ? "003 / 010" : "002 / 009"}
+        num={calibration ? "003 / 009" : "002 / 008"}
         title="New Dimensions"
         glyph="◉"
         description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
@@ -436,62 +436,7 @@ export default function AccuracyPage() {
         </div>
       </Section>
 
-      <Section num={calibration ? "004 / 010" : "003 / 009"} title="By Dimension" glyph="◈" description="How each prediction type performs across windows.">
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.08 }}
-          className="card overflow-hidden"
-        >
-          <table className="data" style={{ tableLayout: "fixed" }}>
-            <colgroup>
-              <col style={{ width: "30%" }} />
-              <col style={{ width: "23%" }} />
-              <col style={{ width: "23%" }} />
-              <col style={{ width: "24%" }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>Dimension</th>
-                <th>7d</th>
-                <th>30d</th>
-                <th>90d</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.keys(DIMENSION_LABELS).map((dim) => {
-                const byWindow: Record<number, any> = {};
-                summary.filter((s) => s.dimension === dim).forEach((s) => {
-                  byWindow[s.window_days] = s;
-                });
-                if (WINDOWS.every((w) => !byWindow[w])) return null;
-                return (
-                  <tr key={dim}>
-                    <td className="font-medium">{DIMENSION_LABELS[dim]}</td>
-                    {WINDOWS.map((w) => {
-                      const s = byWindow[w];
-                      if (!s) {
-                        return <td key={w} className="text-[var(--muted)]">·</td>;
-                      }
-                      const acc = s.accuracy_pct || 0;
-                      return (
-                        <td key={w} className="num font-medium">
-                          {acc.toFixed(1)}%{" "}
-                          <span className="text-[var(--muted)] font-normal text-xs">
-                            ({s.sample_size})
-                          </span>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </motion.div>
-      </Section>
-
-      <Section num={calibration ? "005 / 010" : "004 / 009"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
+      <Section num={calibration ? "004 / 009" : "003 / 008"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -525,7 +470,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "006 / 010" : "005 / 009"}
+        num={calibration ? "005 / 009" : "004 / 008"}
         title="Insight Quality Trend"
         glyph="⬡"
         description="Rolling 5-prediction average of the reasoning_breakdown auditor score. Number-density + payload citations - banned hedges. Climbs as the model anchors more in data and stops hedging."
@@ -563,7 +508,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "007 / 010" : "006 / 009"}
+        num={calibration ? "006 / 009" : "005 / 008"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
         description="X-axis: predicted band width as percent of midpoint. Y-axis: grader score 0-100 (tight hit nears 100, miss collapses below 40). Useful cluster sits top-left: tight bands that still hit. The trend line falling left-to-right means width is buying score; a flat or rising line means the engine is calibrated."
@@ -612,7 +557,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "008 / 010" : "007 / 009"}
+        num={calibration ? "007 / 009" : "006 / 008"}
         title="Confidence vs Realized Accuracy"
         glyph="◎"
         description="Each dot is one direction call. X-axis: confidence stated when the call was made. Y-axis: graded score for that day. Both axes 0-100, so the diagonal line is perfect calibration (stated equals delivered). Dots above the line read as underconfident; dots below as overconfident. R is the Pearson correlation; tight to 1 = stated confidence reliably tracks realized hit rate."
@@ -661,7 +606,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "009 / 010" : "008 / 009"}
+        num={calibration ? "008 / 009" : "007 / 008"}
         title="Conviction Tier Performance"
         glyph="◉"
         description="Stratified pick alpha by conviction label. A-tier alpha should exceed B; B should exceed C. Flat results across tiers means the labels carry no signal and the prompt needs tightening."
@@ -703,7 +648,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "010 / 010" : "009 / 009"}
+        num={calibration ? "009 / 009" : "008 / 008"}
         title="Reading These Numbers Honestly"
         glyph="◆"
         description="Where the data is now, what the percentages can and cannot tell you yet, and the milestones each dimension has to clear before a reading becomes a conclusion instead of a directional signal."
