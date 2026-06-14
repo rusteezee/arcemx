@@ -458,6 +458,38 @@ _BG_TASKS: set = set()
 _JOB_RUNNING: set = set()
 
 
+def _acquire_dispatch_lock(name: str, ttl_seconds: int = 600) -> None:
+    """Add a job name to _JOB_RUNNING and schedule auto-release after TTL.
+
+    Used by the HTTP trigger GH-dispatch SUCCESS paths. Before this helper,
+    the in-process fallback path was the only one wiring up the lock
+    (within _bg_<job>'s finally), so a successful GH dispatch returned
+    without ever marking the job as running. Two rapid clicks then fired
+    two workflow_dispatch events, FORCE_RUN=true bypassed run_if_stale,
+    and the 50-req/day OpenRouter free quota burned twice. Same pattern
+    that caused the 42-44 in-process incident, just on the GH side.
+
+    Auto-release matters because GH workflows do not call back; if we
+    only added the name, the lock would persist until the next bot
+    restart and every subsequent click for the rest of the day would
+    409. TTL covers the typical GH workflow runtime (analysis ~5-7 min,
+    grader ~1-2 min, sensei ~3-5 min) with headroom. After TTL the lock
+    is released and a legitimate retry succeeds.
+    """
+    import asyncio as _asyncio
+    _JOB_RUNNING.add(name)
+
+    async def _release_later():
+        try:
+            await _asyncio.sleep(ttl_seconds)
+        finally:
+            _JOB_RUNNING.discard(name)
+
+    task = _asyncio.create_task(_release_later())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+
 async def _start_health_server(port: int):
     """HTTP server for Render port scan + /trigger/sync webhook."""
     # Shut down the stub HTTP server first so we can rebind the same port.
@@ -528,6 +560,7 @@ async def _start_health_server(port: int):
                         gh_ok, gh_detail = await _dispatch_github_workflow(
                             "daily_analysis.yml")
                         if gh_ok:
+                            _acquire_dispatch_lock("analysis", ttl_seconds=600)
                             result["analysis"] = "queued"
                             result["analysis_via"] = "github"
                         else:
@@ -626,6 +659,7 @@ async def _start_health_server(port: int):
                             inputs={"analysis_id": aid_int} if aid_int is not None else None,
                         )
                         if gh_ok:
+                            _acquire_dispatch_lock("sensei", ttl_seconds=600)
                             out = _json.dumps({
                                 "ok": True, "job": "sensei", "status": "queued",
                                 "via": "github", "analysis_id": aid_int,
@@ -688,6 +722,7 @@ async def _start_health_server(port: int):
                     # rejects the dispatch. Same pattern as scheduled_*.
                     gh_ok, gh_detail = await _dispatch_github_workflow("daily_grader.yml")
                     if gh_ok:
+                        _acquire_dispatch_lock("grader", ttl_seconds=600)
                         out = _json.dumps({
                             "ok": True, "job": "grader", "status": "queued",
                             "via": "github", "lookback_days": lookback_int,
@@ -856,6 +891,7 @@ async def _start_health_server(port: int):
                     # PAT env vars are unset.
                     gh_ok, gh_detail = await _dispatch_github_workflow("daily_analysis.yml")
                     if gh_ok:
+                        _acquire_dispatch_lock("analysis", ttl_seconds=600)
                         out = _json.dumps({
                             "ok": True, "job": "analysis", "status": "queued",
                             "via": "github",
@@ -1022,9 +1058,13 @@ async def scheduled_grader():
     grader is idempotent so both writing to accuracy_summary /
     prediction_scores is safe. Falls back to in-process when
     GH_TOKEN/GH_REPO are unset."""
+    if "grader" in _JOB_RUNNING:
+        print("Scheduled grader: already running, skip")
+        return
     print("Scheduled grader: dispatching GH workflow...")
     ok, detail = await _dispatch_github_workflow("daily_grader.yml")
     if ok:
+        _acquire_dispatch_lock("grader", ttl_seconds=600)
         print(f"  {detail}")
         return
     print(f"  {detail}; falling back to in-process run")
@@ -1044,9 +1084,13 @@ async def scheduled_sensei():
     Actions; the workflow self-grades before synthesizing so ordering
     against scheduled_grader is irrelevant. Falls back in-process when
     the GH PAT env vars are missing."""
+    if "sensei" in _JOB_RUNNING:
+        print("Scheduled Sensei: already running, skip")
+        return
     print("Scheduled Sensei: dispatching GH workflow...")
     ok, detail = await _dispatch_github_workflow("sensei_eod.yml")
     if ok:
+        _acquire_dispatch_lock("sensei", ttl_seconds=600)
         print(f"  {detail}")
         return
     print(f"  {detail}; falling back to in-process run")
@@ -1077,11 +1121,19 @@ async def scheduled_analysis():
         print("Scheduled analysis: already running, skip")
         return
     _JOB_RUNNING.add("analysis")
+    held_for_gh = False
     try:
         print("Scheduled analysis: dispatching GH workflow...")
         ok, detail = await _dispatch_github_workflow("daily_analysis.yml")
         if ok:
             print(f"  {detail}")
+            # Promote the lock from "held while dispatch runs" to
+            # "held for the full GH workflow runtime" so a same-minute
+            # click on /trigger/analysis or the next cron fire cannot
+            # queue a duplicate run. The TTL-release helper handles
+            # the discard; suppress the finally-clause discard below.
+            _acquire_dispatch_lock("analysis", ttl_seconds=600)
+            held_for_gh = True
             # GH workflow handles Telegram push itself on completion.
             return
         print(f"  {detail}; falling back to in-process run")
@@ -1099,7 +1151,8 @@ async def scheduled_analysis():
     except Exception as e:
         print(f"Scheduled analysis failed: {e}")
     finally:
-        _JOB_RUNNING.discard("analysis")
+        if not held_for_gh:
+            _JOB_RUNNING.discard("analysis")
 
 
 async def _startup_catchup():
