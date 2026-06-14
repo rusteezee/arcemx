@@ -170,3 +170,20 @@ create table if not exists portfolio_score_runs (
     error text
 );
 create index if not exists idx_portfolio_score_runs_status on portfolio_score_runs(status, run_at desc);
+
+
+-- Ticker enrichment cache. The morning aggregator now pulls yfinance
+-- Ticker.info (24 distilled fundamental fields) + Ticker.news (top 5
+-- headlines) for every holding and wishlist name. Doing that fan-out on
+-- every Render restart blew the bot past the 512 MB free-tier ceiling
+-- on 12/06/2026. This table is a 24-hour cache: one row per ticker with
+-- the trimmed fundamentals + news; the fetcher reads first and only
+-- hits yfinance for tickers whose row is missing or stale (>24h).
+-- Restart spam no longer means re-fetch spam.
+create table if not exists ticker_enrichment (
+    ticker text primary key,
+    fundamentals jsonb,
+    news jsonb,
+    updated_at timestamptz default now()
+);
+create index if not exists idx_ticker_enrichment_updated on ticker_enrichment(updated_at desc);

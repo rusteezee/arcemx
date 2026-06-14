@@ -1,4 +1,5 @@
 """Aggregate all signals → LLM → save analysis row."""
+import gc
 import os
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -106,7 +107,9 @@ def _fetch_ticker_enrichment(ticker: str) -> tuple[str, dict]:
     """Per-ticker fundamentals + news pull. Returns the ticker plus a
     {fundamentals, news} dict. Soft-fails: yfinance can 429, 404 on
     illiquid Indian symbols, or hang; we never let one bad ticker take
-    down the whole morning pipeline."""
+    down the whole morning pipeline. Distils Ticker.info immediately
+    and `del`s the raw dict so the ~1 MB blob does not linger; gc
+    after each ticker keeps the per-thread heap from accumulating."""
     out = {"fundamentals": None, "news": []}
     try:
         t = yf.Ticker(ticker)
@@ -116,33 +119,106 @@ def _fetch_ticker_enrichment(ticker: str) -> tuple[str, dict]:
             info = {}
         if info:
             out["fundamentals"] = _ticker_fundamentals(info)
+        del info
         try:
             news = t.news or []
         except Exception:
             news = []
         if news:
             out["news"] = _ticker_news(news)
+        del news
+        del t
+        gc.collect()
     except Exception as e:
         out["error"] = str(e)[:120]
     return ticker, out
 
 
-def _fetch_enrichment(tickers: list[str]) -> dict:
-    """Fan-out per-ticker info + news. yfinance Ticker.info is
-    ~2-3s blocking, so 15 tickers serially is 30-45s. A small
-    thread pool collapses wall-time to ~5s while staying well
-    under Yahoo's rate-limit threshold."""
+# How long a cached enrichment row stays fresh. Fundamentals (P/E,
+# margins, growth) are quarterly anchors and tolerate a day of
+# staleness easily; news headlines lose freshness faster but the model
+# already gets the broad-market news_digest tail. 24h hits the right
+# balance for a once-daily 8:30 IST call.
+_ENRICHMENT_TTL_HOURS = 24
+
+
+def _read_enrichment_cache(sb, tickers: list[str]) -> dict:
+    """Return {ticker: {fundamentals, news}} for every ticker whose
+    cache row exists AND was updated within the TTL. Soft-fails on a
+    missing table (catches the bootstrap window before db/schema.sql is
+    applied) and on every Supabase transient: returns {} so callers
+    treat it as "nothing cached" and refetch."""
+    try:
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(hours=_ENRICHMENT_TTL_HOURS)).isoformat()
+        res = sb.table("ticker_enrichment").select(
+            "ticker,fundamentals,news,updated_at"
+        ).in_("ticker", tickers).gte("updated_at", cutoff).execute().data or []
+        return {
+            r["ticker"]: {
+                "fundamentals": r.get("fundamentals"),
+                "news": r.get("news") or [],
+            }
+            for r in res
+        }
+    except Exception as e:
+        print(f"  enrichment cache read skip: {str(e)[:120]}")
+        return {}
+
+
+def _write_enrichment_cache(sb, fresh: dict) -> None:
+    """Upsert freshly fetched enrichment rows. Soft-fails on a missing
+    table (the next morning run will retry); never lets a cache write
+    failure block payload assembly."""
+    if not fresh:
+        return
+    rows = [
+        {
+            "ticker": tk,
+            "fundamentals": v.get("fundamentals"),
+            "news": v.get("news") or [],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        for tk, v in fresh.items()
+    ]
+    try:
+        sb.table("ticker_enrichment").upsert(rows, on_conflict="ticker").execute()
+    except Exception as e:
+        print(f"  enrichment cache write skip: {str(e)[:120]}")
+
+
+def _fetch_enrichment(tickers: list[str], sb=None) -> dict:
+    """Per-ticker fundamentals + news with a 24h Supabase cache. Reads
+    cache first, fans out yfinance only for tickers missing or stale,
+    upserts the fresh ones. Render free tier (512 MB) was OOM-killed
+    by the original 6-worker uncached fan-out on every restart; now
+    the second restart of the day re-fetches almost nothing. Worker
+    pool dropped 6 -> 3 to cap simultaneous Ticker.info heap usage."""
     if not tickers:
         return {}
     enr: dict = {}
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futs = {pool.submit(_fetch_ticker_enrichment, t): t for t in tickers}
+    missing = list(tickers)
+    if sb is not None:
+        cached = _read_enrichment_cache(sb, tickers)
+        if cached:
+            print(f"  enrichment cache hit on {len(cached)}/{len(tickers)} tickers")
+            enr.update(cached)
+            missing = [t for t in tickers if t not in cached]
+    if not missing:
+        return enr
+    fresh: dict = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futs = {pool.submit(_fetch_ticker_enrichment, t): t for t in missing}
         for f in as_completed(futs):
             try:
                 tk, payload = f.result(timeout=20)
-                enr[tk] = payload
+                fresh[tk] = payload
             except Exception as e:
-                enr[futs[f]] = {"fundamentals": None, "news": [], "error": str(e)[:120]}
+                fresh[futs[f]] = {"fundamentals": None, "news": [], "error": str(e)[:120]}
+    if sb is not None:
+        _write_enrichment_cache(sb, fresh)
+    enr.update(fresh)
+    gc.collect()
     return enr
 
 
@@ -153,6 +229,12 @@ def build_payload() -> dict:
     print("Screening technicals...")
     signals = screen_universe(universe)
     ranked = rank_candidates(signals, n=15)
+    # Release the universe-wide signals dict + yfinance candle frames
+    # before the heavier per-stock enrichment fan-out runs. On Render's
+    # 512 MB free tier this is the difference between staying alive and
+    # an OOM-kill during the 8:30 cron.
+    del signals, universe
+    gc.collect()
 
     print("Fetching news (live + DB lookback)...")
     # Live pull (latest possible)
@@ -314,7 +396,7 @@ def build_payload() -> dict:
         if all_focus:
             print(f"Fetching per-ticker fundamentals + news for {len(all_focus)} names...")
             try:
-                enr = _fetch_enrichment(all_focus)
+                enr = _fetch_enrichment(all_focus, sb=sb)
                 for tk, payload in enr.items():
                     if tk in holding_set:
                         holding_enrichment[tk] = payload
@@ -323,8 +405,10 @@ def build_payload() -> dict:
                 n_fund = sum(1 for v in enr.values() if v.get("fundamentals"))
                 n_news = sum(1 for v in enr.values() if v.get("news"))
                 print(f"  fundamentals on {n_fund}/{len(all_focus)}, news on {n_news}/{len(all_focus)}")
+                del enr
             except Exception as e:
                 print(f"per-ticker enrichment fail: {e}")
+            gc.collect()
         # Prior analysis for self-context
         try:
             prev = sb.table("analysis").select("run_at,market_mood,raw_json").order(
