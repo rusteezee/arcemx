@@ -1,0 +1,23 @@
+# Phase 1 RAG embedding dependencies. Installed ONLY in GH Actions
+# runners (daily_grader.yml, daily_analysis.yml) -- NOT on Render.
+# The bot's 512 MB free-tier dyno cannot load torch + transformers;
+# all embedding generation + similarity retrieval lives off the dyno
+# inside GH-hosted runners (~7 GB RAM, free).
+#
+# Callers in analyzer/embed.py guard `from sentence_transformers
+# import SentenceTransformer` with a try/except so when this file is
+# absent (Render in-process fallback path) the code degrades to Phase
+# 0 score-based exemplar selection instead of crashing.
+
+# CPU-only torch wheel keeps the install at ~200 MB instead of 800 MB.
+# Pinned to the wheel index so GPU CUDA wheels are never pulled in.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+
+# sentence-transformers handles the model load + tokenizer + pooling.
+# 3.x is the current stable line with native Qwen3 support.
+sentence-transformers>=3.3.0
+
+# transformers comes as a sentence-transformers dep; pin only to keep
+# resolves stable across cache hits.
+transformers>=4.46.0
