@@ -82,6 +82,78 @@ def sb():
 DISCLAIMER = "\n\n_Not SEBI-registered advice. Educational only. DYOR._"
 
 
+# GitHub Actions workflow dispatch. Render free tier is 512 MB; the
+# in-process aggregator + sensei + grader fan-outs pushed the dyno past
+# the ceiling on 12/06/2026, triggering an OOM-restart. Offloading the
+# heavy work to a GitHub-hosted runner (~7 GB RAM, free) keeps the bot
+# itself a thin scheduler + Telegram router. The bot now fires
+# workflow_dispatch instead of importing analyzer modules.
+#
+# Required env vars on Render:
+#   GH_TOKEN  - fine-grained PAT with Actions: write on this repo
+#   GH_REPO   - "rusteezee/arcemx"
+# When either is missing _dispatch_github_workflow returns False and the
+# caller falls back to the in-process path (same code as before this
+# patch), so the bot keeps working unchanged if the token is unset.
+GH_API_BASE = "https://api.github.com"
+
+
+async def _dispatch_github_workflow(
+    workflow_filename: str,
+    inputs: dict | None = None,
+    ref: str = "master",
+) -> tuple[bool, str]:
+    """POST /repos/{owner}/{repo}/actions/workflows/{file}/dispatches.
+
+    Returns (success, detail). Soft-fails on missing env vars, network
+    errors, or non-204 responses; the detail string explains the miss
+    so callers can log it. Uses urllib in a thread to avoid pulling
+    aiohttp just for this; the bot already runs async via the Telegram
+    long-poll loop so a blocking call inside run_in_executor is safe.
+    """
+    token = os.getenv("GH_TOKEN")
+    repo = os.getenv("GH_REPO")
+    if not token or not repo:
+        return False, "GH_TOKEN or GH_REPO missing"
+    url = f"{GH_API_BASE}/repos/{repo}/actions/workflows/{workflow_filename}/dispatches"
+    body = {"ref": ref}
+    if inputs:
+        # Workflow dispatch inputs are all strings on the API; coerce
+        # ints + bools to their string form so the YAML side parses
+        # them back without surprises.
+        body["inputs"] = {k: str(v) for k, v in inputs.items() if v is not None}
+    data = json.dumps(body).encode()
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+        "User-Agent": "arcemx-bot/1.0",
+    }
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+
+    def _post():
+        req = _ureq.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with _ureq.urlopen(req, timeout=15) as r:
+                return r.status, r.read().decode("utf-8", "replace")
+        except _uerr.HTTPError as e:
+            try:
+                err = e.read().decode("utf-8", "replace")
+            except Exception:
+                err = str(e)
+            return e.code, err
+        except Exception as e:
+            return -1, str(e)
+
+    loop = asyncio.get_event_loop()
+    status, payload = await loop.run_in_executor(None, _post)
+    if status == 204:
+        return True, f"dispatched {workflow_filename}"
+    return False, f"GH dispatch {workflow_filename} failed: {status} {payload[:200]}"
+
+
 def normalize_ticker(t: str) -> str:
     t = t.upper().strip()
     if not t.endswith(".NS") and not t.startswith("^") and "." not in t:
@@ -451,38 +523,43 @@ async def _start_health_server(port: int):
                         # LLM run is already going, don't queue a second.
                         result["analysis"] = "already_running"
                     elif refresh_analysis:
-                        try:
-                            from analyzer.aggregator import run as run_analysis
-                            import asyncio as _asyncio
-
-                            # OpenRouter migration: there is no separate
-                            # lite/primary tier anymore; LITE_MODEL is an
-                            # alias for PRIMARY_MODEL kept for back-compat,
-                            # and OpenRouter's server-side fallback chain
-                            # absorbs rate-limit spikes that previously
-                            # justified a second tier.
-                            from analyzer.llm_router import LITE_MODEL as _LITE
-                            async def _bg_analysis():
-                                try:
-                                    print("Background analysis starting...")
-                                    loop = _asyncio.get_event_loop()
-                                    await loop.run_in_executor(None, lambda: run_analysis(model_name=_LITE))
-                                    print("Background analysis refresh complete")
-                                except Exception as bgerr:
-                                    import traceback
-                                    print(f"Background analysis failed: {bgerr}")
-                                    traceback.print_exc()
-                                finally:
-                                    _JOB_RUNNING.discard("analysis")
-
-                            _JOB_RUNNING.add("analysis")
-                            task = _asyncio.create_task(_bg_analysis())
-                            _BG_TASKS.add(task)
-                            task.add_done_callback(_BG_TASKS.discard)
+                        # Bundled /trigger/sync: INDmoney refresh runs
+                        # locally (cheap, ~2s), analysis offloads to GH.
+                        gh_ok, gh_detail = await _dispatch_github_workflow(
+                            "daily_analysis.yml")
+                        if gh_ok:
                             result["analysis"] = "queued"
-                        except Exception as ae:
-                            _JOB_RUNNING.discard("analysis")
-                            result["analysis_error"] = str(ae)
+                            result["analysis_via"] = "github"
+                        else:
+                            print(f"  /trigger/sync analysis dispatch: {gh_detail}; falling back in-process")
+                            try:
+                                from analyzer.aggregator import run as run_analysis
+                                import asyncio as _asyncio
+
+                                from analyzer.llm_router import LITE_MODEL as _LITE
+
+                                async def _bg_analysis():
+                                    try:
+                                        print("Background analysis starting...")
+                                        loop = _asyncio.get_event_loop()
+                                        await loop.run_in_executor(None, lambda: run_analysis(model_name=_LITE))
+                                        print("Background analysis refresh complete")
+                                    except Exception as bgerr:
+                                        import traceback
+                                        print(f"Background analysis failed: {bgerr}")
+                                        traceback.print_exc()
+                                    finally:
+                                        _JOB_RUNNING.discard("analysis")
+
+                                _JOB_RUNNING.add("analysis")
+                                task = _asyncio.create_task(_bg_analysis())
+                                _BG_TASKS.add(task)
+                                task.add_done_callback(_BG_TASKS.discard)
+                                result["analysis"] = "queued"
+                                result["analysis_via"] = "in_process"
+                            except Exception as ae:
+                                _JOB_RUNNING.discard("analysis")
+                                result["analysis_error"] = str(ae)
                     out = _json.dumps({"ok": True, **result}).encode()
                     status_line = b"HTTP/1.1 200 OK\r\n"
                 except Exception as e:
@@ -538,36 +615,54 @@ async def _start_health_server(port: int):
                         }).encode()
                         status_line = b"HTTP/1.1 409 Conflict\r\n"
                     else:
-                        try:
-                            from analyzer.sensei import run as run_sensei
-                            import asyncio as _asyncio
-
-                            async def _bg_sensei():
-                                try:
-                                    print(f"Background Sensei starting (analysis_id={aid_int})...")
-                                    loop = _asyncio.get_event_loop()
-                                    await loop.run_in_executor(None, lambda: run_sensei(aid_int))
-                                    print("Background Sensei complete")
-                                except Exception as bgerr:
-                                    import traceback
-                                    print(f"Background Sensei failed: {bgerr}")
-                                    traceback.print_exc()
-                                finally:
-                                    _JOB_RUNNING.discard("sensei")
-
-                            _JOB_RUNNING.add("sensei")
-                            task = _asyncio.create_task(_bg_sensei())
-                            _BG_TASKS.add(task)
-                            task.add_done_callback(_BG_TASKS.discard)
+                        # Fire GH workflow first; fall back to in-process
+                        # when GH_TOKEN/GH_REPO are missing or the
+                        # dispatch fails. This is the same pattern as
+                        # scheduled_sensei and keeps the Render dyno from
+                        # holding pandas + yfinance + the full sensei
+                        # synthesis at once.
+                        gh_ok, gh_detail = await _dispatch_github_workflow(
+                            "sensei_eod.yml",
+                            inputs={"analysis_id": aid_int} if aid_int is not None else None,
+                        )
+                        if gh_ok:
                             out = _json.dumps({
                                 "ok": True, "job": "sensei", "status": "queued",
-                                "analysis_id": aid_int,
+                                "via": "github", "analysis_id": aid_int,
                             }).encode()
                             status_line = b"HTTP/1.1 202 Accepted\r\n"
-                        except Exception as e:
-                            _JOB_RUNNING.discard("sensei")
-                            out = _json.dumps({"ok": False, "job": "sensei", "error": str(e)}).encode()
-                            status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+                        else:
+                            print(f"  /trigger/sensei: {gh_detail}; falling back in-process")
+                            try:
+                                from analyzer.sensei import run as run_sensei
+                                import asyncio as _asyncio
+
+                                async def _bg_sensei():
+                                    try:
+                                        print(f"Background Sensei starting (analysis_id={aid_int})...")
+                                        loop = _asyncio.get_event_loop()
+                                        await loop.run_in_executor(None, lambda: run_sensei(aid_int))
+                                        print("Background Sensei complete")
+                                    except Exception as bgerr:
+                                        import traceback
+                                        print(f"Background Sensei failed: {bgerr}")
+                                        traceback.print_exc()
+                                    finally:
+                                        _JOB_RUNNING.discard("sensei")
+
+                                _JOB_RUNNING.add("sensei")
+                                task = _asyncio.create_task(_bg_sensei())
+                                _BG_TASKS.add(task)
+                                task.add_done_callback(_BG_TASKS.discard)
+                                out = _json.dumps({
+                                    "ok": True, "job": "sensei", "status": "queued",
+                                    "via": "in_process", "analysis_id": aid_int,
+                                }).encode()
+                                status_line = b"HTTP/1.1 202 Accepted\r\n"
+                            except Exception as e:
+                                _JOB_RUNNING.discard("sensei")
+                                out = _json.dumps({"ok": False, "job": "sensei", "error": str(e)}).encode()
+                                status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
                 else:  # /trigger/grader
                     lookback = payload.get("lookback_days", 90)
                     try:
@@ -588,38 +683,50 @@ async def _start_health_server(port: int):
                             b"Connection: close\r\n\r\n" + out
                         )
                         writer.write(resp); await writer.drain(); return
-                    try:
-                        from analyzer.grader import grade_all, compute_summaries
-                        import asyncio as _asyncio
-
-                        async def _bg_grader():
-                            try:
-                                print(f"Background grader starting (lookback={lookback_int}d)...")
-                                loop = _asyncio.get_event_loop()
-                                await loop.run_in_executor(
-                                    None, lambda: grade_all(lookback_days=lookback_int))
-                                await loop.run_in_executor(None, compute_summaries)
-                                print("Background grader complete")
-                            except Exception as bgerr:
-                                import traceback
-                                print(f"Background grader failed: {bgerr}")
-                                traceback.print_exc()
-                            finally:
-                                _JOB_RUNNING.discard("grader")
-
-                        _JOB_RUNNING.add("grader")
-                        task = _asyncio.create_task(_bg_grader())
-                        _BG_TASKS.add(task)
-                        task.add_done_callback(_BG_TASKS.discard)
+                    # Try GH workflow_dispatch first; fall back to
+                    # in-process when the PAT is missing or the API
+                    # rejects the dispatch. Same pattern as scheduled_*.
+                    gh_ok, gh_detail = await _dispatch_github_workflow("daily_grader.yml")
+                    if gh_ok:
                         out = _json.dumps({
                             "ok": True, "job": "grader", "status": "queued",
-                            "lookback_days": lookback_int,
+                            "via": "github", "lookback_days": lookback_int,
                         }).encode()
                         status_line = b"HTTP/1.1 202 Accepted\r\n"
-                    except Exception as e:
-                        _JOB_RUNNING.discard("grader")
-                        out = _json.dumps({"ok": False, "job": "grader", "error": str(e)}).encode()
-                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+                    else:
+                        print(f"  /trigger/grader: {gh_detail}; falling back in-process")
+                        try:
+                            from analyzer.grader import grade_all, compute_summaries
+                            import asyncio as _asyncio
+
+                            async def _bg_grader():
+                                try:
+                                    print(f"Background grader starting (lookback={lookback_int}d)...")
+                                    loop = _asyncio.get_event_loop()
+                                    await loop.run_in_executor(
+                                        None, lambda: grade_all(lookback_days=lookback_int))
+                                    await loop.run_in_executor(None, compute_summaries)
+                                    print("Background grader complete")
+                                except Exception as bgerr:
+                                    import traceback
+                                    print(f"Background grader failed: {bgerr}")
+                                    traceback.print_exc()
+                                finally:
+                                    _JOB_RUNNING.discard("grader")
+
+                            _JOB_RUNNING.add("grader")
+                            task = _asyncio.create_task(_bg_grader())
+                            _BG_TASKS.add(task)
+                            task.add_done_callback(_BG_TASKS.discard)
+                            out = _json.dumps({
+                                "ok": True, "job": "grader", "status": "queued",
+                                "via": "in_process", "lookback_days": lookback_int,
+                            }).encode()
+                            status_line = b"HTTP/1.1 202 Accepted\r\n"
+                        except Exception as e:
+                            _JOB_RUNNING.discard("grader")
+                            out = _json.dumps({"ok": False, "job": "grader", "error": str(e)}).encode()
+                            status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
 
                 resp = (
                     status_line +
@@ -742,39 +849,54 @@ async def _start_health_server(port: int):
                     }).encode()
                     status_line = b"HTTP/1.1 409 Conflict\r\n"
                 else:
-                    try:
-                        from analyzer.aggregator import run as run_analysis
-                        from analyzer.llm_router import LITE_MODEL as _LITE
-                        import asyncio as _asyncio
-
-                        async def _bg_analysis_solo():
-                            try:
-                                print("Background analysis (solo) starting...")
-                                loop = _asyncio.get_event_loop()
-                                await loop.run_in_executor(
-                                    None, lambda: run_analysis(model_name=_LITE))
-                                print("Background analysis (solo) complete")
-                            except Exception as bgerr:
-                                import traceback
-                                print(f"Background analysis (solo) failed: {bgerr}")
-                                traceback.print_exc()
-                            finally:
-                                _JOB_RUNNING.discard("analysis")
-
-                        _JOB_RUNNING.add("analysis")
-                        task = _asyncio.create_task(_bg_analysis_solo())
-                        _BG_TASKS.add(task)
-                        task.add_done_callback(_BG_TASKS.discard)
+                    # Dispatch the GH workflow first. It carries its own
+                    # FORCE_RUN env (true on workflow_dispatch) so an
+                    # ad-hoc trigger bypasses the run_if_stale guard the
+                    # scheduled cron uses. Falls back in-process when the
+                    # PAT env vars are unset.
+                    gh_ok, gh_detail = await _dispatch_github_workflow("daily_analysis.yml")
+                    if gh_ok:
                         out = _json.dumps({
                             "ok": True, "job": "analysis", "status": "queued",
+                            "via": "github",
                         }).encode()
                         status_line = b"HTTP/1.1 202 Accepted\r\n"
-                    except Exception as e:
-                        _JOB_RUNNING.discard("analysis")
-                        out = _json.dumps({
-                            "ok": False, "job": "analysis", "error": str(e),
-                        }).encode()
-                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+                    else:
+                        print(f"  /trigger/analysis: {gh_detail}; falling back in-process")
+                        try:
+                            from analyzer.aggregator import run as run_analysis
+                            from analyzer.llm_router import LITE_MODEL as _LITE
+                            import asyncio as _asyncio
+
+                            async def _bg_analysis_solo():
+                                try:
+                                    print("Background analysis (solo) starting...")
+                                    loop = _asyncio.get_event_loop()
+                                    await loop.run_in_executor(
+                                        None, lambda: run_analysis(model_name=_LITE))
+                                    print("Background analysis (solo) complete")
+                                except Exception as bgerr:
+                                    import traceback
+                                    print(f"Background analysis (solo) failed: {bgerr}")
+                                    traceback.print_exc()
+                                finally:
+                                    _JOB_RUNNING.discard("analysis")
+
+                            _JOB_RUNNING.add("analysis")
+                            task = _asyncio.create_task(_bg_analysis_solo())
+                            _BG_TASKS.add(task)
+                            task.add_done_callback(_BG_TASKS.discard)
+                            out = _json.dumps({
+                                "ok": True, "job": "analysis", "status": "queued",
+                                "via": "in_process",
+                            }).encode()
+                            status_line = b"HTTP/1.1 202 Accepted\r\n"
+                        except Exception as e:
+                            _JOB_RUNNING.discard("analysis")
+                            out = _json.dumps({
+                                "ok": False, "job": "analysis", "error": str(e),
+                            }).encode()
+                            status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
 
                 resp = (
                     status_line +
@@ -892,16 +1014,22 @@ async def _start_health_server(port: int):
 
 
 async def scheduled_grader():
-    """Redundant grader trigger from inside the bot. The GitHub Actions
-    cron at 17:00 IST is the primary scheduler, but the free tier
-    occasionally delays jobs by 10-60+ minutes under load. The bot is
-    kept warm by cron-job.org pings so this in-process schedule fires
-    reliably even when the GH cron drifts. Both writing to the same
-    accuracy_summary / prediction_scores tables is safe; the grader is
-    idempotent and dedups by analysis_id + dimension."""
+    """Grader trigger from the bot's APScheduler. Now dispatches the
+    daily_grader.yml workflow on GH Actions instead of running the
+    grader in-process; pandas + yfinance + the full prediction_scores
+    sweep tripped the Render 512 MB ceiling on 12/06/2026. The GH
+    workflow's own 17:00 IST cron stays the redundancy layer; the
+    grader is idempotent so both writing to accuracy_summary /
+    prediction_scores is safe. Falls back to in-process when
+    GH_TOKEN/GH_REPO are unset."""
+    print("Scheduled grader: dispatching GH workflow...")
+    ok, detail = await _dispatch_github_workflow("daily_grader.yml")
+    if ok:
+        print(f"  {detail}")
+        return
+    print(f"  {detail}; falling back to in-process run")
     import asyncio as _asyncio
     try:
-        print("In-bot scheduled grader starting...")
         from analyzer.grader import grade_all, compute_summaries
         loop = _asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: grade_all(lookback_days=90))
@@ -912,12 +1040,18 @@ async def scheduled_grader():
 
 
 async def scheduled_sensei():
-    """Redundant Sensei EOD synthesis trigger. Mirrors scheduled_grader:
-    GH cron is primary, this is a fallback in case Actions queue lag
-    pushes the 20:00 IST run beyond a useful window."""
+    """Sensei EOD synthesis trigger. Dispatches sensei_eod.yml on GH
+    Actions; the workflow self-grades before synthesizing so ordering
+    against scheduled_grader is irrelevant. Falls back in-process when
+    the GH PAT env vars are missing."""
+    print("Scheduled Sensei: dispatching GH workflow...")
+    ok, detail = await _dispatch_github_workflow("sensei_eod.yml")
+    if ok:
+        print(f"  {detail}")
+        return
+    print(f"  {detail}; falling back to in-process run")
     import asyncio as _asyncio
     try:
-        print("In-bot scheduled Sensei starting...")
         from analyzer.sensei import run as run_sensei
         loop = _asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: run_sensei(None))
@@ -927,21 +1061,31 @@ async def scheduled_sensei():
 
 
 async def scheduled_analysis():
-    """PRIMARY 08:30 IST weekday morning analysis, in-bot. GitHub's
-    free-tier cron has fired hours late (3h50m drift observed) and on
-    10 June 2026 did not fire at all, so the bot owns the morning run
-    and the GH workflow becomes the 08:43 IST fallback. run_if_stale
-    guards both directions: whoever fires second sees a fresh analysis
-    row and exits without burning a second LLM call. On a successful
-    run the daily Telegram call is pushed from here, which previously
-    only happened when the GH workflow ran."""
-    import asyncio as _asyncio
+    """PRIMARY 08:30 IST weekday morning analysis. Now fires a GitHub
+    Actions workflow_dispatch on daily_analysis.yml instead of running
+    the aggregator in-process; the runner builds the payload, calls the
+    LLM, saves the row, and pushes Telegram itself (the workflow's
+    Push-to-Telegram step gated on outputs.ran). Falls back to the
+    in-process path if GH_TOKEN/GH_REPO are unset so the bot still
+    works without the GH PAT configured.
+
+    The GH workflow's own scheduled 08:43 IST trigger plus its
+    run_if_stale guard keeps double-firing safe: whichever runner
+    completes second sees a fresh analysis row and exits without
+    burning a second LLM call."""
     if "analysis" in _JOB_RUNNING:
-        print("In-bot scheduled analysis: already running, skip")
+        print("Scheduled analysis: already running, skip")
         return
     _JOB_RUNNING.add("analysis")
     try:
-        print("In-bot scheduled analysis starting...")
+        print("Scheduled analysis: dispatching GH workflow...")
+        ok, detail = await _dispatch_github_workflow("daily_analysis.yml")
+        if ok:
+            print(f"  {detail}")
+            # GH workflow handles Telegram push itself on completion.
+            return
+        print(f"  {detail}; falling back to in-process run")
+        import asyncio as _asyncio
         from analyzer.aggregator import run_if_stale
         loop = _asyncio.get_event_loop()
         result = await loop.run_in_executor(
@@ -952,9 +1096,8 @@ async def scheduled_analysis():
                 await _push_daily()
             except Exception as pe:
                 print(f"Telegram push after analysis failed: {pe}")
-        print("In-bot scheduled analysis complete.")
     except Exception as e:
-        print(f"In-bot scheduled analysis failed: {e}")
+        print(f"Scheduled analysis failed: {e}")
     finally:
         _JOB_RUNNING.discard("analysis")
 
