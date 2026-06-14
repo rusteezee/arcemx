@@ -187,3 +187,53 @@ create table if not exists ticker_enrichment (
     updated_at timestamptz default now()
 );
 create index if not exists idx_ticker_enrichment_updated on ticker_enrichment(updated_at desc);
+
+
+-- sync_log: per-attempt audit row written by fetchers.indmoney_mcp on every
+-- pull. The dashboard reads the latest ok=true row for the "last update"
+-- timestamp in the nav. Created out of band in an earlier session; documented
+-- here so a fresh rebuild does not silently break the indicator.
+create table if not exists sync_log (
+    id bigserial primary key,
+    user_id text not null default 'default',
+    ts timestamptz default now(),
+    ok boolean not null default false,
+    source text,
+    detail jsonb
+);
+create index if not exists idx_sync_log_user_ts on sync_log(user_id, ts desc);
+
+
+-- Row Level Security. Defense uniformity: anon (browser, NEXT_PUBLIC) gets
+-- SELECT on the tables the dashboard reads, nothing else. Service role
+-- (bot + GH crons) bypasses RLS so writes keep working unchanged. No INSERT
+-- /UPDATE/DELETE policies anywhere => the only write path is service role.
+-- Re-runnable: all statements idempotent.
+alter table prices               enable row level security;
+alter table news                 enable row level security;
+alter table trends               enable row level security;
+alter table analysis             enable row level security;
+alter table portfolio            enable row level security;
+alter table wishlist             enable row level security;
+alter table transactions         enable row level security;
+alter table prediction_scores    enable row level security;
+alter table accuracy_summary     enable row level security;
+alter table sensei_eod           enable row level security;
+alter table calculator_runs      enable row level security;
+alter table portfolio_score_runs enable row level security;
+alter table ticker_enrichment    enable row level security;
+alter table sync_log             enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'prices','analysis','portfolio','wishlist','transactions',
+    'prediction_scores','accuracy_summary','sensei_eod',
+    'calculator_runs','portfolio_score_runs','sync_log'
+  ] loop
+    execute format('drop policy if exists "anon read" on %I', t);
+    execute format('create policy "anon read" on %I for select to anon using (true)', t);
+  end loop;
+end$$;
+-- No anon policy on: news, trends, ticker_enrichment (fully blocked).
