@@ -29,19 +29,40 @@ ROOT = Path(__file__).resolve().parents[1]
 def _ticker_fundamentals(info: dict) -> dict:
     """Distil yfinance Ticker.info into the small subset the LLM
     actually reasons over. info has ~150 fields; most are noise
-    (timezone, exchange code, business summary text). Keep only the
-    valuation, growth, profitability, and leverage anchors the
-    morning prompt needs to ground per-stock predictions."""
+    (timezone, exchange code, business summary text). Keep the
+    valuation, growth, profitability, leverage anchors PLUS the
+    analyst-consensus / 52-week / EV / holder fields that Yahoo
+    already returns inside the same .info blob (zero extra API
+    cost). Earlier passes discarded these alongside the noise; they
+    are high-signal for a next-day call grounded in price levels
+    and analyst dispersion."""
     def _g(k):
         v = info.get(k)
         return v if isinstance(v, (int, float)) and v == v else None
     mcap = _g("marketCap")
+    last = _g("regularMarketPrice") or _g("currentPrice")
+    hi52 = _g("fiftyTwoWeekHigh")
+    lo52 = _g("fiftyTwoWeekLow")
+    target_mean = _g("targetMeanPrice")
+    # Position within the 52w range as 0..100 (last == low -> 0, last
+    # == high -> 100). Single number replaces three for the prompt and
+    # the model handles "near 52w high" reasoning cleanly.
+    range_pos = None
+    if last is not None and hi52 is not None and lo52 is not None and hi52 > lo52:
+        range_pos = round(((last - lo52) / (hi52 - lo52)) * 100, 1)
+    # Upside vs analyst mean target as percent. Negative = price above
+    # consensus target. Captures both magnitude and direction.
+    analyst_upside_pct = None
+    if last is not None and target_mean is not None and last > 0:
+        analyst_upside_pct = round(((target_mean - last) / last) * 100, 1)
     return {
         "pe_trailing": _g("trailingPE"),
         "pe_forward": _g("forwardPE"),
         "peg": _g("pegRatio"),
         "pb": _g("priceToBook"),
         "ps": _g("priceToSalesTrailing12Months"),
+        "ev_to_ebitda": _g("enterpriseToEbitda"),
+        "ev_to_revenue": _g("enterpriseToRevenue"),
         "roe_pct": (_g("returnOnEquity") or 0) * 100 if _g("returnOnEquity") is not None else None,
         "roa_pct": (_g("returnOnAssets") or 0) * 100 if _g("returnOnAssets") is not None else None,
         "profit_margin_pct": (_g("profitMargins") or 0) * 100 if _g("profitMargins") is not None else None,
@@ -59,9 +80,88 @@ def _ticker_fundamentals(info: dict) -> dict:
         "market_cap_cr": round(mcap / 1e7, 0) if mcap else None,
         "avg_volume_10d": _g("averageVolume10days"),
         "short_pct_float": (_g("shortPercentOfFloat") or 0) * 100 if _g("shortPercentOfFloat") is not None else None,
+        # 52-week price anchors. range_pos collapses three numbers into
+        # one for the prompt; raw hi/lo kept for cases where the model
+        # needs the absolute levels.
+        "wk52_high": hi52,
+        "wk52_low": lo52,
+        "wk52_range_pos_pct": range_pos,
+        # Analyst consensus from the .info dict that was already fetched
+        # and discarded. recommendationKey is the qualitative
+        # ("buy"/"hold"/"sell"); recommendationMean is the 1-5 numeric
+        # (1=strong_buy, 5=strong_sell). target_mean + upside complete
+        # the picture.
+        "analyst_target_mean": target_mean,
+        "analyst_target_low": _g("targetLowPrice"),
+        "analyst_target_high": _g("targetHighPrice"),
+        "analyst_upside_pct": analyst_upside_pct,
+        "analyst_recommendation": info.get("recommendationKey"),
+        "analyst_recommendation_mean": _g("recommendationMean"),
+        "analyst_count": _g("numberOfAnalystOpinions"),
+        # Holder breakdown from .info. Full Holders tab would need
+        # extra API calls; these two are zero-cost.
+        "held_pct_institutions": (_g("heldPercentInstitutions") or 0) * 100 if _g("heldPercentInstitutions") is not None else None,
+        "held_pct_insiders": (_g("heldPercentInsiders") or 0) * 100 if _g("heldPercentInsiders") is not None else None,
         "sector": info.get("sector"),
         "industry": info.get("industry"),
     }
+
+
+def _ticker_calendar(t) -> dict:
+    """Pull Ticker.calendar for next earnings + ex-dividend dates.
+    Soft-fails on every yfinance shape variant (returns dict on newer
+    SDKs, DataFrame on older, AttributeError if unsupported). The
+    next-earnings flag is decisive for a next-day call: a holding
+    that reports tomorrow has a fundamentally different risk profile
+    than one whose earnings are 80 days out, and the model was
+    previously blind to it."""
+    out: dict = {}
+    try:
+        cal = t.calendar
+    except Exception:
+        return out
+    if cal is None:
+        return out
+    try:
+        # Newer yfinance: dict with 'Earnings Date' as a list of date
+        # objects (the reporting window) and 'Ex-Dividend Date' as a
+        # single date.
+        if isinstance(cal, dict):
+            ed = cal.get("Earnings Date") or cal.get("earningsDate")
+            if isinstance(ed, (list, tuple)) and ed:
+                first = ed[0]
+                if hasattr(first, "isoformat"):
+                    out["next_earnings_date"] = first.isoformat()[:10]
+                else:
+                    out["next_earnings_date"] = str(first)[:10]
+            elif ed:
+                if hasattr(ed, "isoformat"):
+                    out["next_earnings_date"] = ed.isoformat()[:10]
+                else:
+                    out["next_earnings_date"] = str(ed)[:10]
+            ex = cal.get("Ex-Dividend Date") or cal.get("exDividendDate")
+            if ex:
+                if hasattr(ex, "isoformat"):
+                    out["ex_dividend_date"] = ex.isoformat()[:10]
+                else:
+                    out["ex_dividend_date"] = str(ex)[:10]
+        else:
+            # Older yfinance: DataFrame with columns named after the
+            # dates. Skip — the dict form covers every recent version.
+            pass
+    except Exception:
+        pass
+    # Days-to-earnings is the field the model will reason over most
+    # often, derive it here so the prompt does not have to date-math.
+    ned = out.get("next_earnings_date")
+    if ned:
+        try:
+            d = datetime.fromisoformat(ned).date()
+            days = (d - datetime.now(timezone.utc).date()).days
+            out["days_to_earnings"] = days
+        except Exception:
+            pass
+    return out
 
 
 def _ticker_news(news: list) -> list:
@@ -127,6 +227,16 @@ def _fetch_ticker_enrichment(ticker: str) -> tuple[str, dict]:
         if news:
             out["news"] = _ticker_news(news)
         del news
+        # Calendar (next earnings + ex-dividend). Folded into the same
+        # fundamentals jsonb so the cache schema stays as-is (ticker,
+        # fundamentals, news, updated_at). Adds ~2-3 keys, negligible
+        # token cost, but earnings proximity is a decisive next-day
+        # signal the model previously had no view of.
+        cal = _ticker_calendar(t)
+        if cal:
+            if out["fundamentals"] is None:
+                out["fundamentals"] = {}
+            out["fundamentals"].update(cal)
         del t
         gc.collect()
     except Exception as e:
