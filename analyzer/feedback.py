@@ -67,6 +67,165 @@ def _direction_history(sb) -> list[dict]:
     return items
 
 
+def _retrieve_exemplars_by_similarity(sb, dim: str, k: int = 6) -> list[dict]:
+    """Phase 1 RAG: retrieve the k past graded calls most similar to
+    TODAY's tape state, return compact exemplars annotated with
+    similarity. Replaces the score-filter-by-recency selection
+    (_mine_exemplars) when sentence-transformers is available.
+
+    Soft-fails to Phase 0 (_mine_exemplars) when:
+      - sentence-transformers / torch is not installed (Render
+        in-process fallback path)
+      - prediction_embeddings is empty (pre-backfill)
+      - yfinance cannot synthesise today's feature vector
+      - match_exemplars RPC errors
+
+    Bot's in-process fallback path therefore always works, just in
+    degraded Phase 0 mode rather than Phase 1.
+    """
+    try:
+        from analyzer.embed import (
+            encode, features_to_text, _yf_features_on_date,
+        )
+    except ImportError as e:
+        print(f"  retrieve_exemplars: sentence-transformers absent; falling back to Phase 0: {str(e)[:120]}")
+        return _mine_exemplars(sb, dim, n_each=3)
+
+    # Build today's feature vector. Same shape as the backfill /
+    # incremental embed; we synthesise stated_mood + stated_confidence
+    # from the LATEST analysis row (the model's most-recent stated
+    # view is closest to today's setup) and recompute tape state at
+    # today's date via yfinance. Cheaper than a per-dim retrieval
+    # rebuild since the same query vector serves every dim.
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        latest = sb.table("analysis").select("raw_json,run_at").order(
+            "run_at", desc=True).limit(1).execute().data or []
+        feat = {}
+        if latest:
+            raw = latest[0].get("raw_json") or {}
+            mood = raw.get("market_mood")
+            if mood:
+                feat["stated_mood"] = str(mood).lower()
+            conf = raw.get("confidence")
+            if isinstance(conf, (int, float)):
+                feat["stated_confidence"] = round(float(conf), 1)
+            nifty = raw.get("nifty_outlook") or {}
+            if isinstance(nifty, dict):
+                direction = nifty.get("direction")
+                if direction:
+                    feat["stated_call"] = str(direction).lower()
+        feat.update(_yf_features_on_date(_dt.now(_tz.utc).date()))
+        text = features_to_text(feat)
+    except Exception as e:
+        print(f"  retrieve_exemplars: today-features build failed; falling back: {str(e)[:120]}")
+        return _mine_exemplars(sb, dim, n_each=3)
+
+    try:
+        vec = encode([text])[0]
+    except Exception as e:
+        print(f"  retrieve_exemplars: encode failed; falling back: {str(e)[:120]}")
+        return _mine_exemplars(sb, dim, n_each=3)
+
+    try:
+        res = sb.rpc("match_exemplars", {
+            "query_embedding": vec,
+            "dim": dim,
+            "match_count": max(k * 2, 12),  # pull extra so we can stratify wins / losses below
+        }).execute().data or []
+    except Exception as e:
+        print(f"  retrieve_exemplars: RPC failed; falling back: {str(e)[:120]}")
+        return _mine_exemplars(sb, dim, n_each=3)
+
+    if not res:
+        return _mine_exemplars(sb, dim, n_each=3)
+
+    # Pull the per-row predicted / actual / run_at + raw_json (mood,
+    # confidence) so the compact dicts we emit carry the same fields
+    # Phase 0 was emitting; the model's prompt parser does not need
+    # changing.
+    aids = list({int(r["analysis_id"]) for r in res if r.get("analysis_id") is not None})
+    pred_by_key: dict[tuple[int, str], dict] = {}
+    if aids:
+        try:
+            pr = sb.table("prediction_scores").select(
+                "analysis_id,dimension,score,delta,predicted,actual"
+            ).in_("analysis_id", aids).eq("dimension", dim).execute().data or []
+            for p in pr:
+                key = (int(p["analysis_id"]), p["dimension"])
+                pred_by_key[key] = p
+        except Exception:
+            pred_by_key = {}
+    raw_by_aid: dict[int, dict] = {}
+    if aids:
+        try:
+            ar = sb.table("analysis").select("id,run_at,raw_json").in_(
+                "id", aids).execute().data or []
+            for a in ar:
+                raw_by_aid[int(a["id"])] = a
+        except Exception:
+            raw_by_aid = {}
+
+    # Stratify wins vs losses out of the retrieved pool so the prompt
+    # always sees both sides of the regime. If the retrieved pool is
+    # all-winning (today's setup is well-explored and has only ever
+    # gone right) we still surface them; same for all-losing.
+    wins, losses, neutral = [], [], []
+    for r in res:
+        aid = int(r.get("analysis_id") or 0)
+        sim = r.get("similarity")
+        score = r.get("outcome_score")
+        a = raw_by_aid.get(aid) or {}
+        raw = a.get("raw_json") or {}
+        ps = pred_by_key.get((aid, dim)) or {}
+        ex = {
+            "date": (a.get("run_at") or "")[:10],
+            "similarity": round(sim, 3) if isinstance(sim, (int, float)) else None,
+            "score": round(score, 1) if isinstance(score, (int, float)) else None,
+        }
+        if isinstance(raw.get("market_mood"), str):
+            ex["mood"] = raw["market_mood"]
+        conf = raw.get("confidence")
+        if isinstance(conf, (int, float)):
+            ex["conf"] = round(float(conf), 0)
+        predicted = ps.get("predicted") or {}
+        actual = ps.get("actual") or {}
+        if dim in ("direction_1d", "sensex_direction_1d"):
+            ex["called"] = predicted.get("direction") or predicted.get("call")
+            delta = ps.get("delta")
+            if isinstance(delta, (int, float)):
+                ex["actual_move_pct"] = round(delta, 2)
+        elif dim.endswith("range_1d"):
+            rng = predicted.get("range") or predicted.get("band")
+            if isinstance(rng, (list, tuple)) and len(rng) >= 2:
+                try:
+                    lo = float(rng[0]); hi = float(rng[1])
+                    mid = (lo + hi) / 2
+                    if mid > 0:
+                        ex["band_pct"] = round(((hi - lo) / mid) * 100, 2)
+                except (TypeError, ValueError):
+                    pass
+            ac = actual.get("close") if isinstance(actual, dict) else None
+            if isinstance(ac, (int, float)):
+                ex["actual_close"] = round(ac, 2)
+        if score is not None and score >= 80:
+            ex["tag"] = "win"
+            wins.append(ex)
+        elif score is not None and score <= 20:
+            ex["tag"] = "loss"
+            losses.append(ex)
+        else:
+            ex["tag"] = "mid"
+            neutral.append(ex)
+
+    # Take up to k/2 each side; fall through to mids if one side is empty.
+    n_each = max(k // 2, 1)
+    out = wins[:n_each] + losses[:n_each]
+    if len(out) < k:
+        out.extend(neutral[: k - len(out)])
+    return out[:k]
+
+
 def _mine_exemplars(sb, dim: str, n_each: int = 3) -> list[dict]:
     """Pull n_each highest-scoring and n_each lowest-scoring graded calls
     for `dim`, joined to the analysis row that produced them, and return
@@ -419,14 +578,17 @@ def build_feedback() -> dict | None:
             f"reserve buy_now for clear setups."
         )
 
-    # ---- Win/loss exemplars: mined from your own graded history ----
-    # Concrete past calls (wins score>=80, losses score<=20) with the
-    # market mood + confidence + outcome at the time. The model already
-    # sees the rolling stats; exemplars let it pattern-match the SHAPE
-    # of a winning call vs a losing one. Self-distillation in-context.
+    # ---- Win/loss exemplars: similarity-retrieved from your own
+    # graded history (Phase 1 RAG). For each key dimension, pull the k
+    # past graded calls most similar to TODAY's tape state. Falls back
+    # to Phase 0 score-recency selection automatically when:
+    #   - sentence-transformers is absent (Render in-process fallback)
+    #   - prediction_embeddings is empty (pre-backfill)
+    #   - any RPC / yfinance / encode step errors
+    # so the pipeline degrades gracefully instead of breaking.
     exemplars = {
-        "direction_1d": _mine_exemplars(sb, "direction_1d", n_each=3),
-        "range_1d": _mine_exemplars(sb, "range_1d", n_each=3),
+        "direction_1d": _retrieve_exemplars_by_similarity(sb, "direction_1d", k=6),
+        "range_1d": _retrieve_exemplars_by_similarity(sb, "range_1d", k=6),
     }
     # Drop empty buckets so the prompt does not ship dead keys before
     # the score thresholds have any matches.
@@ -447,12 +609,15 @@ def build_feedback() -> dict | None:
             "Keep tightening every hit until a band misses, then widen one notch, not "
             "back to the old comfort width. A wide band that always hits teaches "
             "nothing. Learn from the specific recent_misses. EXEMPLAR DOCTRINE: the "
-            "`exemplars` block carries concrete past WIN and LOSS calls graded against "
-            "real market outcomes. Before issuing today's call, scan them for the "
-            "setup that most resembles today's tape (mood, your stated confidence) "
-            "and let the outcome of THAT historical call moderate today's confidence "
-            "+ band width. A LOSS exemplar at conf=72 in a similar mood is a hard "
-            "ceiling on today's confidence in the same regime."
+            "`exemplars` block carries concrete past WIN and LOSS calls retrieved "
+            "by similarity to TODAY's tape state (VIX, DMA distances, RSI, recent "
+            "returns, your own stated mood + confidence). When the `similarity` "
+            "field is high, that historical setup genuinely resembles today's. "
+            "Treat a LOSS exemplar at similarity>0.85 with conf=72 as a hard "
+            "ceiling on today's confidence in the same regime, NOT just a "
+            "suggestion. When all retrieved exemplars are wins, today's setup is "
+            "well-explored and your confidence may run; when all are losses, "
+            "moderate it."
         ),
     }
 
