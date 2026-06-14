@@ -67,6 +67,113 @@ def _direction_history(sb) -> list[dict]:
     return items
 
 
+def _mine_exemplars(sb, dim: str, n_each: int = 3) -> list[dict]:
+    """Pull n_each highest-scoring and n_each lowest-scoring graded calls
+    for `dim`, joined to the analysis row that produced them, and return
+    compact one-line exemplars. Each exemplar carries the date, the
+    market mood + stated confidence at call time, the specific call
+    made, the realized outcome, and the score. Injected into
+    self_feedback so the next-day prompt sees concrete wins and losses
+    it can pattern-match against, not just aggregate "you are 58% right"
+    stats. Phase 0 of the RAG roadmap: recency-broken-out-by-score
+    selection, no embedding store yet.
+
+    Cheap by construction: two indexed range queries on prediction_scores
+    (b-tree on dimension) and a single in-list lookup on analysis. Total
+    payload added is ~6 small dicts per dim, well under the
+    self_feedback budget.
+    """
+    out: list[dict] = []
+    try:
+        wins = sb.table("prediction_scores").select(
+            "id,analysis_id,score,delta,predicted,actual"
+        ).eq("dimension", dim).gte("score", 80).order(
+            "id", desc=True).limit(n_each).execute().data or []
+        losses = sb.table("prediction_scores").select(
+            "id,analysis_id,score,delta,predicted,actual"
+        ).eq("dimension", dim).lte("score", 20).order(
+            "id", desc=True).limit(n_each).execute().data or []
+    except Exception as e:
+        # Soft-fail. Missing exemplars are a less-rich prompt, not a
+        # broken pipeline; the rest of self_feedback still ships.
+        print(f"  exemplar mine skip ({dim}): {str(e)[:120]}")
+        return out
+
+    rows = list(wins) + list(losses)
+    if not rows:
+        return out
+
+    ids = list({r["analysis_id"] for r in rows if r.get("analysis_id") is not None})
+    meta: dict[int, dict] = {}
+    if ids:
+        try:
+            ar = sb.table("analysis").select("id,run_at,raw_json").in_(
+                "id", ids
+            ).execute().data or []
+            meta = {a["id"]: a for a in ar}
+        except Exception:
+            meta = {}
+
+    def _build(r: dict, tag: str) -> dict | None:
+        a = meta.get(r.get("analysis_id"))
+        if not a:
+            return None
+        raw = a.get("raw_json") or {}
+        conf = raw.get("confidence")
+        mood = raw.get("market_mood")
+        predicted = r.get("predicted") or {}
+        actual = r.get("actual") or {}
+        ex: dict = {
+            "date": (a.get("run_at") or "")[:10],
+            "tag": tag,
+            "score": r.get("score"),
+        }
+        if isinstance(conf, (int, float)):
+            ex["conf"] = round(conf, 0)
+        if mood:
+            ex["mood"] = mood
+        # Dimension-specific compact body. Keep keys terse so the
+        # prompt does not bloat. Caller reads them like a tape sheet.
+        if dim in ("direction_1d", "sensex_direction_1d"):
+            ex["called"] = predicted.get("direction") or predicted.get("call")
+            delta = r.get("delta")
+            if isinstance(delta, (int, float)):
+                ex["actual_move_pct"] = round(delta, 2)
+        elif dim == "range_1d" or dim.endswith("range_1d"):
+            rng = predicted.get("range") or predicted.get("band")
+            if isinstance(rng, (list, tuple)) and len(rng) >= 2:
+                try:
+                    lo = float(rng[0]); hi = float(rng[1])
+                    mid = (lo + hi) / 2
+                    if mid > 0:
+                        ex["band_pct"] = round(((hi - lo) / mid) * 100, 2)
+                except (TypeError, ValueError):
+                    pass
+            ac = actual.get("close") if isinstance(actual, dict) else None
+            if isinstance(ac, (int, float)):
+                ex["actual_close"] = round(ac, 2)
+        else:
+            # Generic dims (picks, verdicts, etc): just keep the
+            # numeric predicted target if it serializes simply.
+            target = predicted.get("target") or predicted.get("call")
+            if isinstance(target, (str, int, float)):
+                ex["called"] = target
+        return ex
+
+    for r in wins:
+        ex = _build(r, "win")
+        if ex:
+            out.append(ex)
+    for r in losses:
+        ex = _build(r, "loss")
+        if ex:
+            out.append(ex)
+    # Sort wins-then-losses, each block newest-first, so the model
+    # reads the most-recent positive pattern first.
+    out.sort(key=lambda e: (0 if e["tag"] == "win" else 1, e.get("date", "")), reverse=False)
+    return out
+
+
 def build_feedback() -> dict | None:
     sb = _sb()
     if not sb:
@@ -312,10 +419,24 @@ def build_feedback() -> dict | None:
             f"reserve buy_now for clear setups."
         )
 
+    # ---- Win/loss exemplars: mined from your own graded history ----
+    # Concrete past calls (wins score>=80, losses score<=20) with the
+    # market mood + confidence + outcome at the time. The model already
+    # sees the rolling stats; exemplars let it pattern-match the SHAPE
+    # of a winning call vs a losing one. Self-distillation in-context.
+    exemplars = {
+        "direction_1d": _mine_exemplars(sb, "direction_1d", n_each=3),
+        "range_1d": _mine_exemplars(sb, "range_1d", n_each=3),
+    }
+    # Drop empty buckets so the prompt does not ship dead keys before
+    # the score thresholds have any matches.
+    exemplars = {k: v for k, v in exemplars.items() if v}
+
     return {
         "track_record": by_window,
         "calibration": calibration,
         "recent_direction_misses": recent_misses,
+        "exemplars": exemplars,
         "corrective_rules": rules,
         "note": (
             "This is your scored track record, graded brutally against real outcomes. "
@@ -325,7 +446,13 @@ def build_feedback() -> dict | None:
             "yesterday's close MUST be tighter today; never repeat a width after a hit. "
             "Keep tightening every hit until a band misses, then widen one notch, not "
             "back to the old comfort width. A wide band that always hits teaches "
-            "nothing. Learn from the specific recent_misses."
+            "nothing. Learn from the specific recent_misses. EXEMPLAR DOCTRINE: the "
+            "`exemplars` block carries concrete past WIN and LOSS calls graded against "
+            "real market outcomes. Before issuing today's call, scan them for the "
+            "setup that most resembles today's tape (mood, your stated confidence) "
+            "and let the outcome of THAT historical call moderate today's confidence "
+            "+ band width. A LOSS exemplar at conf=72 in a similar mood is a hard "
+            "ceiling on today's confidence in the same regime."
         ),
     }
 
