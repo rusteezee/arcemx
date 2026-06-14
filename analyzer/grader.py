@@ -1165,6 +1165,29 @@ def compute_summaries(windows=(7, 30, 90, 180, 365, 1095, 1825, 99999)):
     print("Summaries computed.")
 
 
+def _embed_new_predictions() -> None:
+    """Incremental Phase 1 RAG: embed any prediction_scores rows that
+    do not yet have a matching prediction_embeddings row. Called once
+    per grader pass right after compute_summaries. Soft-fails on
+    import (sentence-transformers absent on the Render in-process
+    fallback path) and on every Supabase / yfinance / model hiccup
+    so the grader run itself is never blocked by embedding work.
+
+    Costs ~5-10 seconds per day at steady state once backfill has
+    run; cold first call after a model swap can take 1-2 minutes
+    while the HuggingFace cache fills."""
+    try:
+        from analyzer.embed_backfill import run as _backfill_run
+    except ImportError as e:
+        print(f"Embedding pass skipped (sentence-transformers absent): {str(e)[:120]}")
+        return
+    try:
+        _backfill_run(force=False)
+    except Exception as e:
+        print(f"Embedding pass skipped: {str(e)[:160]}")
+
+
 if __name__ == "__main__":
     grade_all(lookback_days=90)
     compute_summaries()
+    _embed_new_predictions()
