@@ -92,6 +92,72 @@ interface CalibPoint {
   date: string;
 }
 
+// ISO week label "YYYY-Www" for the date a prediction was MADE. Used by
+// the Cohort Learning Curve which buckets graded direction calls by the
+// week they were issued so an upward slope across weeks reflects later
+// cohorts outperforming earlier ones (the real engine-improvement signal,
+// distinct from Score Trend which is fixed by historical market path).
+function isoWeek(d: Date): string {
+  const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((dt.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${dt.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+// OLS slope over indexed (i, y) pairs. Returns y-units per +1 index step,
+// or null when n<3 or variance collapses. Used for Cohort Learning Curve
+// week-over-week slope and Accuracy WoW Trend snapshot slope.
+function linearSlope(values: number[]): number | null {
+  const n = values.length;
+  if (n < 3) return null;
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += i; sumY += values[i]; sumXY += i * values[i]; sumXX += i * i;
+  }
+  const denom = n * sumXX - sumX * sumX;
+  if (Math.abs(denom) < 1e-6) return null;
+  return (n * sumXY - sumX * sumY) / denom;
+}
+
+// Latest accuracy_pct vs the snapshot closest to ~7 days prior. Returns
+// {latest, prior, delta, n} or null if there are not at least 2 snapshots
+// at least 3 days apart. Used by the Accuracy WoW Trend card.
+function wowDelta(
+  rows: { ts: string; value: number }[],
+): { latest: number; prior: number; delta: number; n: number } | null {
+  if (!rows.length) return null;
+  const sorted = [...rows].sort((a, b) => (a.ts < b.ts ? -1 : 1));
+  const latest = sorted[sorted.length - 1];
+  const latestT = new Date(latest.ts).getTime();
+  // Walk backwards looking for the first snapshot >= 3 days older. Falls
+  // back to the earliest row if no row is that old (still readable as a
+  // "since first measurement" delta).
+  let prior = sorted[0];
+  for (let i = sorted.length - 2; i >= 0; i--) {
+    const ageDays = (latestT - new Date(sorted[i].ts).getTime()) / 86_400_000;
+    if (ageDays >= 3) { prior = sorted[i]; break; }
+  }
+  if (prior.ts === latest.ts) return null;
+  return {
+    latest: latest.value,
+    prior: prior.value,
+    delta: latest.value - prior.value,
+    n: sorted.length,
+  };
+}
+
+interface AccTrendPoint {
+  date: string;        // computed_at YYYY-MM-DD
+  value: number;       // accuracy_pct snapshot for that grader run
+}
+
+interface CohortPoint {
+  date: string;        // ISO week label "YYYY-Www" shown as Monday date
+  value: number;       // mean direction score for predictions MADE that week
+}
+
 // Pearson r over a (stated, realized) cloud. Shared between the
 // CalibScatter SVG geometry and the HTML header strip rendered above
 // the card, so both surfaces always agree on the numbers shown.
@@ -113,6 +179,8 @@ function calibPearson(points: CalibPoint[]): { r: number; r2: number; n: number 
 export default function AccuracyPage() {
   const [summary, setSummary] = useState<any[]>([]);
   const [trend, setTrend] = useState<any[]>([]);
+  const [accTrend, setAccTrend] = useState<AccTrendPoint[]>([]);
+  const [cohortCurve, setCohortCurve] = useState<CohortPoint[]>([]);
   const [rangeScatter, setRangeScatter] = useState<ScatterPoint[]>([]);
   const [calibScatter, setCalibScatter] = useState<CalibPoint[]>([]);
   const [calibration, setCalibration] = useState<Calibration | null>(null);
@@ -232,6 +300,53 @@ export default function AccuracyPage() {
       });
       setTrend(points);
 
+      // ----- Cohort Learning Curve -----
+      // Bucket the same direction_1d scores by the ISO week the call was
+      // MADE (analysis.run_at). Each cohort point is the mean grader
+      // score for predictions issued that week. An upward slope across
+      // cohorts reflects later-issued predictions outperforming earlier
+      // ones, which IS the engine-improvement signal (unlike Score
+      // Trend, whose date-keyed curve is fixed by historical market
+      // path and would climb identically for a static model).
+      const byWeek = new Map<string, number[]>();
+      for (const r of (scoreRows || []) as any[]) {
+        const runAt = runAtById.get(r.analysis_id);
+        if (!runAt || typeof r.score !== "number") continue;
+        const wk = isoWeek(new Date(runAt));
+        const arr = byWeek.get(wk) ?? [];
+        arr.push(r.score);
+        byWeek.set(wk, arr);
+      }
+      const cohort: CohortPoint[] = Array.from(byWeek.entries())
+        .map(([wk, arr]) => ({
+          date: wk,
+          value: Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10,
+        }))
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
+      setCohortCurve(cohort);
+
+      // ----- Accuracy WoW Trend -----
+      // Pull the FULL accuracy_summary history for 30d direction_1d
+      // (the earlier summary query dedupes to one snapshot per
+      // (window, dim) and throws away history; we need the time
+      // series). Each grader pass appends a new snapshot with
+      // computed_at=now() so this is genuinely a record of how the
+      // measured 30d accuracy has moved across runs.
+      const { data: histRows } = await sb
+        .from("accuracy_summary")
+        .select("computed_at,accuracy_pct,sample_size")
+        .eq("window_days", 30)
+        .eq("dimension", "direction_1d")
+        .order("computed_at", { ascending: true })
+        .limit(2000);
+      const hist: AccTrendPoint[] = ((histRows || []) as any[])
+        .filter((r) => typeof r.accuracy_pct === "number" && r.computed_at)
+        .map((r) => ({
+          date: String(r.computed_at).slice(0, 10),
+          value: Math.round(r.accuracy_pct * 10) / 10,
+        }));
+      setAccTrend(hist);
+
       // ----- Range tightness vs hit rate scatter -----
       // Each scored range_1d row carries the predicted [lo, hi] band. Plot
       // band width % vs the binary hit score (100 = close inside, 0 = miss).
@@ -321,7 +436,7 @@ export default function AccuracyPage() {
         </p>
       </div>
 
-      <Section num={calibration ? "001 / 008" : "001 / 007"} title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 010" : "001 / 009"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -342,7 +457,7 @@ export default function AccuracyPage() {
 
       {calibration && (
         <Section
-          num="002 / 008"
+          num="002 / 010"
           title="Confidence Calibration"
           glyph="◉"
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
@@ -367,7 +482,7 @@ export default function AccuracyPage() {
       )}
 
       <Section
-        num={calibration ? "003 / 008" : "002 / 007"}
+        num={calibration ? "003 / 010" : "002 / 009"}
         title="New Dimensions"
         glyph="◉"
         description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
@@ -390,7 +505,7 @@ export default function AccuracyPage() {
         </div>
       </Section>
 
-      <Section num={calibration ? "004 / 008" : "003 / 007"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction accuracy, by prediction date. Self-learning visible as the line climbs.">
+      <Section num={calibration ? "004 / 010" : "003 / 009"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction score, indexed by the date each call was MADE. This is a record of outcomes on a date-by-date basis, not a learning signal: the grader re-scores the whole 90d lookback every run so each point is fixed by how the market actually moved that day. A static engine that never adapted would produce the same shape. For the real engine-improvement signal see Cohort Learning Curve below.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -424,7 +539,132 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "005 / 008" : "004 / 007"}
+        num={calibration ? "005 / 010" : "004 / 009"}
+        title="Cohort Learning Curve"
+        glyph="◈"
+        description="Bucket each direction_1d call by the ISO week it was MADE, plot the mean grader score per week. An upward slope across cohorts means later-issued predictions outperform earlier ones, which IS engine improvement (corrective_rules + sensei feedback actually moving the needle). A flat or downward slope means in-context feedback is not yet translating into better calls."
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.18 }}
+          className="card p-6"
+        >
+          {cohortCurve.length >= 3 ? (
+            <>
+              {(() => {
+                const slope = linearSlope(cohortCurve.map((p) => p.value));
+                const first = cohortCurve[0].value;
+                const last = cohortCurve[cohortCurve.length - 1].value;
+                const delta = last - first;
+                const verdict =
+                  slope == null
+                    ? "n too small"
+                    : slope > 0.5
+                    ? "improving"
+                    : slope < -0.5
+                    ? "regressing"
+                    : "flat";
+                return (
+                  <div className="mb-4">
+                    <div className="text-sm font-medium text-foreground">
+                      Slope: {slope == null ? "·" : `${slope >= 0 ? "+" : ""}${slope.toFixed(2)} pts per week`}
+                      <span className="ml-2 text-[var(--muted)]">· {verdict}</span>
+                    </div>
+                    <div className="text-xs text-[var(--muted)] mt-1 num">
+                      First cohort {first.toFixed(1)} → latest {last.toFixed(1)}
+                      {" · "}Δ {delta >= 0 ? "+" : ""}{delta.toFixed(1)} pts over {cohortCurve.length} cohort weeks
+                    </div>
+                  </div>
+                );
+              })()}
+              <LineChart
+                data={cohortCurve}
+                height={320}
+                color="var(--foreground)"
+                valueLabel="Cohort Mean"
+                yTickFormatter={(v) => `${Math.round(v)}%`}
+                valueFormatter={(v) => `${v.toFixed(1)}%`}
+              />
+            </>
+          ) : (
+            <div
+              style={{ height: 280 }}
+              className="flex flex-col items-center justify-center text-center gap-2"
+            >
+              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+              <p className="text-sm text-[var(--muted)]">
+                Cohort curve appears once at least 3 distinct prediction-weeks are scored.
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {cohortCurve.length} cohort weeks so far.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      </Section>
+
+      <Section
+        num={calibration ? "006 / 010" : "005 / 009"}
+        title="Accuracy Week Over Week"
+        glyph="⬡"
+        description="Each grader run appends a new accuracy_summary snapshot. This chart trends the 30-day direction accuracy across those snapshots over time. Unlike Score Trend (per-prediction date) and Cohort Learning Curve (per prediction-week), this plots how the rolling-30d measurement itself has moved run over run — the literal answer to 'is my 30d accuracy higher this week than last week'."
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
+          className="card p-6"
+        >
+          {accTrend.length >= 2 ? (
+            <>
+              {(() => {
+                const wow = wowDelta(
+                  accTrend.map((p) => ({ ts: p.date, value: p.value })),
+                );
+                const slope = linearSlope(accTrend.map((p) => p.value));
+                return (
+                  <div className="mb-4">
+                    <div className="text-sm font-medium text-foreground">
+                      {wow == null
+                        ? "Awaiting a second snapshot"
+                        : `WoW: ${wow.prior.toFixed(1)} → ${wow.latest.toFixed(1)} (${wow.delta >= 0 ? "+" : ""}${wow.delta.toFixed(1)} pts)`}
+                    </div>
+                    <div className="text-xs text-[var(--muted)] mt-1 num">
+                      Slope: {slope == null ? "·" : `${slope >= 0 ? "+" : ""}${slope.toFixed(2)} pts per snapshot`}
+                      {" · "}n = {accTrend.length} snapshots
+                    </div>
+                  </div>
+                );
+              })()}
+              <LineChart
+                data={accTrend}
+                height={320}
+                color="var(--foreground)"
+                valueLabel="30d Accuracy"
+                yTickFormatter={(v) => `${Math.round(v)}%`}
+                valueFormatter={(v) => `${v.toFixed(1)}%`}
+              />
+            </>
+          ) : (
+            <div
+              style={{ height: 280 }}
+              className="flex flex-col items-center justify-center text-center gap-2"
+            >
+              <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+              <p className="text-sm text-[var(--muted)]">
+                WoW trend appears once at least 2 grader runs have written snapshots.
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {accTrend.length} snapshot{accTrend.length === 1 ? "" : "s"} so far.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      </Section>
+
+      <Section
+        num={calibration ? "007 / 010" : "006 / 009"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
         description="X-axis: predicted band width as percent of midpoint. Y-axis: grader score 0-100 (tight hit nears 100, miss collapses below 40). Useful cluster sits top-left: tight bands that still hit. The trend line falling left-to-right means width is buying score; a flat or rising line means the engine is calibrated."
@@ -473,7 +713,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "006 / 008" : "005 / 007"}
+        num={calibration ? "008 / 010" : "007 / 009"}
         title="Confidence vs Realized Accuracy"
         glyph="◎"
         description="Each dot is one direction call. X-axis: confidence stated when the call was made. Y-axis: graded score for that day. Both axes 0-100, so the diagonal line is perfect calibration (stated equals delivered). Dots above the line read as underconfident; dots below as overconfident. R is the Pearson correlation; tight to 1 = stated confidence reliably tracks realized hit rate."
@@ -522,7 +762,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "007 / 008" : "006 / 007"}
+        num={calibration ? "009 / 010" : "008 / 009"}
         title="Conviction Tier Performance"
         glyph="◉"
         description="Stratified pick alpha by conviction label. A-tier alpha should exceed B; B should exceed C. Flat results across tiers means the labels carry no signal and the prompt needs tightening."
@@ -564,7 +804,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "008 / 008" : "007 / 007"}
+        num={calibration ? "010 / 010" : "009 / 009"}
         title="Reading These Numbers Honestly"
         glyph="◆"
         description="Where the data is now, what the percentages can and cannot tell you yet, and the milestones each dimension has to clear before a reading becomes a conclusion instead of a directional signal."
@@ -795,8 +1035,11 @@ export default function AccuracyPage() {
                 <span className="text-foreground font-medium">Settling (n 30-99).</span>{" "}
                 Begin comparing dimensions against each other (range usually
                 beats direction; direction usually beats picks; multi-day usually
-                beats 1-day). Watch the trend chart for monotonic climb. that
-                is self-feedback working.
+                beats 1-day). Watch the Cohort Learning Curve slope, not the
+                Score Trend: an upward cohort slope means later weeks of
+                predictions are outperforming earlier ones, which is the actual
+                self-feedback signal. Score Trend is fixed by historical market
+                path and will climb identically for a static engine.
               </li>
               <li>
                 <span className="text-foreground font-medium">Stable (n &gt;= 100).</span>{" "}
