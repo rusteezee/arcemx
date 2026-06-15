@@ -151,21 +151,34 @@ def run(force: bool = False) -> None:
         pending_texts.clear()
         pending_meta.clear()
 
+    # Progress instrumentation: print every 10 analyses + every flush
+    # so a stuck step is visible in the GH log instead of silent. The
+    # 12/06/2026 cold backfill ran 55 min without a log line before
+    # being killed; this prevents a recurrence.
+    n_aid_total = len(by_aid)
+    n_aid_done = 0
     for aid, srows in by_aid.items():
+        n_aid_done += 1
         a = analyses.get(aid)
         if not a:
             skipped += len(srows)
             continue
         if aid not in feat_cache:
+            t_feat = time.time()
             feat = features_for_analysis(a.get("raw_json") or {}, a.get("run_at") or "")
             text = features_to_text(feat)
             feat_cache[aid] = (feat, text)
+            if n_aid_done % 10 == 0 or n_aid_done == 1:
+                print(f"  features {n_aid_done}/{n_aid_total} aid={aid} "
+                      f"({time.time() - t_feat:.1f}s) text='{text[:60]}'")
         feat, text = feat_cache[aid]
         for s in srows:
             pending_texts.append(text)
             pending_meta.append((aid, s["dimension"], s.get("score"), feat))
             if len(pending_texts) >= BATCH:
+                t_enc = time.time()
                 _flush()
+                print(f"  encoded batch (total={encoded}) in {time.time() - t_enc:.1f}s")
     _flush()
 
     dt = time.time() - t0

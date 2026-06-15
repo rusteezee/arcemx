@@ -35,13 +35,24 @@ from datetime import datetime, timedelta, timezone
 _MODEL = None
 _MODEL_NAME = None
 
-_PRIMARY = "Qwen/Qwen3-Embedding-0.6B"
-_FALLBACKS = ["BAAI/bge-large-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2"]
+# Primary swapped from Qwen3-0.6B to MiniLM-L6 after the 12/06/2026
+# backfill ran 55+ min on a GH free runner without producing output.
+# Qwen3-0.6B is 600M params CPU-only ~2-5 sec/text; for the short
+# structured tape-state strings we embed (~10-15 tokens like
+# "mood=neutral conf=58 vix=14.2 dma20=-0.8") the MTEB lift from
+# Qwen (64.3) over MiniLM (56.3) is largely irrelevant since neither
+# was trained on this kind of short structured corpus. MiniLM at
+# 22M params runs ~50ms/text, completes the 507-row backfill in
+# under a minute. BGE-large + Qwen3 kept as fallbacks for parity
+# with prior design; if MiniLM ever feels limiting we can switch
+# back without a schema migration (zero-pad keeps the vector(1024)
+# column compatible across models).
+_PRIMARY = "sentence-transformers/all-MiniLM-L6-v2"
+_FALLBACKS = ["BAAI/bge-small-en-v1.5", "BAAI/bge-large-en-v1.5"]
 
-# SQL column is vector(1024). Qwen3-0.6B and BGE-large both natively
-# emit 1024; MiniLM emits 384 and gets zero-padded so retrieval still
-# works in degraded mode (similarity stays directional, just lower
-# resolution).
+# SQL column is vector(1024). MiniLM emits 384 dims (zero-padded);
+# BGE-small emits 384 (zero-padded); BGE-large emits 1024 native.
+# Retrieval similarity remains directional under zero-padding.
 TARGET_DIM = 1024
 
 
@@ -134,9 +145,35 @@ def _yf_features_on_date(target_date) -> dict:
     `target_date` is a date (or datetime) in IST roughly. We fetch a
     60-trading-day window ending at that date and read the latest bar
     inside it as the t-0 close.
+
+    yfinance silently retries on rate-limit / 429 with no client
+    timeout, which froze the 12/06/2026 backfill for 55+ minutes
+    without a single log line. We wrap each yf.download in a
+    threaded timeout (10 s hard cap per call); on hit the call
+    returns empty and the feature falls through, never blocking
+    the backfill loop on a single stuck ticker.
     """
     import yfinance as yf
     import pandas as pd
+    import threading
+
+    def _yf_download_with_timeout(symbol, start, end, timeout=10):
+        result_holder: dict = {"df": None}
+        def _do():
+            try:
+                result_holder["df"] = yf.download(
+                    symbol, start=start, end=end, progress=False, auto_adjust=False,
+                )
+            except Exception as e:
+                result_holder["err"] = str(e)[:120]
+        th = threading.Thread(target=_do, daemon=True)
+        th.start()
+        th.join(timeout)
+        if th.is_alive():
+            # Thread leaks but is daemon; will die with the process.
+            return None
+        return result_holder.get("df")
+
     out: dict = {}
     try:
         if hasattr(target_date, "date"):
@@ -147,9 +184,7 @@ def _yf_features_on_date(target_date) -> dict:
         # need ~60 trading days for stable DMA50 / RSI14.
         start = (d - timedelta(days=120)).isoformat()
         end = (d + timedelta(days=2)).isoformat()
-        ny = yf.download(
-            "^NSEI", start=start, end=end, progress=False, auto_adjust=False
-        )
+        ny = _yf_download_with_timeout("^NSEI", start, end, timeout=10)
         if ny is None or ny.empty:
             return out
         # yfinance can return MultiIndex columns when one ticker is
@@ -193,9 +228,7 @@ def _yf_features_on_date(target_date) -> dict:
             elif gain > 0:
                 out["nifty_rsi14"] = 100.0
         # INDIA VIX close + change
-        vx = yf.download(
-            "^INDIAVIX", start=start, end=end, progress=False, auto_adjust=False
-        )
+        vx = _yf_download_with_timeout("^INDIAVIX", start, end, timeout=10)
         if vx is not None and not vx.empty:
             if isinstance(vx.columns, pd.MultiIndex):
                 vx.columns = [c[0] for c in vx.columns]
