@@ -268,7 +268,7 @@ export function Nav() {
   const open = isMarketOpen(mkt);
 
   return (
-    <div className="sticky top-4 z-40 px-3 sm:px-4 pointer-events-none">
+    <div className="sticky top-0 z-40 px-3 sm:px-4 pt-4 pb-3 pointer-events-none bg-gradient-to-b from-[var(--background)] via-[color-mix(in_srgb,var(--background)_88%,transparent)] to-transparent">
       <div className="md:max-w-fit md:mx-auto pointer-events-auto">
         <motion.nav
           initial={{ y: -20, opacity: 0 }}
@@ -278,8 +278,8 @@ export function Nav() {
             "flex md:grid items-center w-full",
             "pl-4 pr-2 md:pl-9 md:pr-4 py-[9px] md:py-[11px] gap-2 md:gap-20",
             "rounded-full border border-border",
-            "bg-[var(--card)]/65 backdrop-blur-md",
-            "shadow-[0_8px_30px_rgba(0,0,0,0.08)]"
+            "bg-[var(--card)]/92 backdrop-blur-xl",
+            "shadow-[0_8px_30px_rgba(0,0,0,0.18)]"
           )}
           style={{ gridTemplateColumns: "1fr auto 1fr" }}
         >

@@ -171,11 +171,58 @@ table.data tr:last-child td { border-bottom: none; }
 table.data tr:hover td { background: var(--muted-bg); }
 table.data td.num { white-space: nowrap; }
 
-/* Mobile: allow tables to scroll horizontally inside their card */
+/* Mobile: allow tables to scroll horizontally inside their card.
+ *
+ * Cards often nest the table under a header row (`.card > div + table`)
+ * so the descendant `:has(table.data)` form is required; the old
+ * direct-child `:has(> table.data)` missed those and the table clipped
+ * at the card edge. The !important on overflow-x beats the Tailwind
+ * `overflow-hidden` utility used to mask the card's rounded corners.
+ *
+ * The col widths in inline `<colgroup>` blocks are sized for desktop
+ * (% of full card width); on a 360px viewport they crush DIRECTION /
+ * RANGE / CONFIDENCE cols until the pills and numbers overflow into
+ * the next column ("DIRECTIONRANGE", "₹345-₹360 45" glued). Reset
+ * table-layout to auto and void the col widths so content sizes the
+ * columns, then enforce a min-width so the row scrolls horizontally
+ * within the card rather than compressing.
+ */
 @media (max-width: 768px) {
-  .card:has(> table.data) { overflow-x: auto; }
-  .card:has(> table.data) > table.data { min-width: 560px; }
-  table.data th, table.data td { padding: 0.6rem 0.8rem; font-size: 0.82rem; }
+  .card:has(table.data) {
+    overflow-x: auto !important;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+  }
+  .card:has(table.data) table.data {
+    min-width: 720px;
+    table-layout: auto !important;
+  }
+  .card:has(table.data) table.data col { width: auto !important; }
+  table.data th, table.data td {
+    padding: 0.6rem 0.85rem;
+    font-size: 0.82rem;
+  }
+  /* Tighten numeric cells so range/target/stop-loss never wrap into the
+   * neighbouring confidence/key-driver column. */
+  table.data td.num, table.data td.num + td.num {
+    white-space: nowrap;
+    padding-right: 1rem;
+  }
+  /* Freeze the first column (ticker) so it stays visible as the user
+   * swipes horizontally through the remaining columns. Without this the
+   * ticker slides off the left edge and you cannot tell which row is
+   * which. Background matches the card so rows behind do not bleed
+   * through; a hairline right border separates the frozen col from the
+   * scrolling columns visually. */
+  table.data th:first-child,
+  table.data td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--card);
+    z-index: 2;
+    box-shadow: 1px 0 0 var(--border);
+  }
+  table.data tr:hover td:first-child { background: var(--muted-bg); }
 }
 
 .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
