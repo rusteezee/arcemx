@@ -12,6 +12,12 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
+      force:
+        description: "Force re-embed even rows already present (use after a model swap)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
 
 # See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.
 env:
@@ -57,4 +63,9 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python -m analyzer.embed_backfill
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            python -m analyzer.embed_backfill --force
+          else
+            python -m analyzer.embed_backfill
+          fi

@@ -35,20 +35,24 @@ from datetime import datetime, timedelta, timezone
 _MODEL = None
 _MODEL_NAME = None
 
-# Primary swapped from Qwen3-0.6B to MiniLM-L6 after the 12/06/2026
-# backfill ran 55+ min on a GH free runner without producing output.
-# Qwen3-0.6B is 600M params CPU-only ~2-5 sec/text; for the short
-# structured tape-state strings we embed (~10-15 tokens like
-# "mood=neutral conf=58 vix=14.2 dma20=-0.8") the MTEB lift from
-# Qwen (64.3) over MiniLM (56.3) is largely irrelevant since neither
-# was trained on this kind of short structured corpus. MiniLM at
-# 22M params runs ~50ms/text, completes the 507-row backfill in
-# under a minute. BGE-large + Qwen3 kept as fallbacks for parity
-# with prior design; if MiniLM ever feels limiting we can switch
-# back without a schema migration (zero-pad keeps the vector(1024)
-# column compatible across models).
-_PRIMARY = "sentence-transformers/all-MiniLM-L6-v2"
-_FALLBACKS = ["BAAI/bge-small-en-v1.5", "BAAI/bge-large-en-v1.5"]
+# BGE-base-en-v1.5 is the no-compromise quality pick: 109M params,
+# MTEB 63.5 (within 0.8 points of Qwen3-Embedding-0.6B's 64.3 and
+# essentially matching BGE-large's 64.2), runs ~200 ms/text on CPU
+# so the 511-row backfill completes in ~2 min and the daily
+# incremental embed adds ~3 sec. Native 768 dim is zero-padded to
+# the SQL vector(1024) column; padding does not degrade cosine
+# retrieval because the actual signal lives in the first 768 dims.
+#
+# Swap history:
+#   v1 Qwen3-Embedding-0.6B   (600M, CPU 3 s/text, backfill hung 55 min)
+#   v2 MiniLM-L6              (22M, CPU 50 ms/text, MTEB 56.3 - too weak)
+#   v3 BGE-base-en-v1.5       (THIS - 109M, balanced)
+#
+# To swap again: change _PRIMARY, push, re-run daily_grader.yml with
+# backfill=true AND force=true so the existing rows get re-embedded
+# under the new model.
+_PRIMARY = "BAAI/bge-base-en-v1.5"
+_FALLBACKS = ["BAAI/bge-large-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2"]
 
 # SQL column is vector(1024). MiniLM emits 384 dims (zero-padded);
 # BGE-small emits 384 (zero-padded); BGE-large emits 1024 native.
