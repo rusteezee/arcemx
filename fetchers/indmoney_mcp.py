@@ -431,19 +431,22 @@ async def sync_to_supabase(user_id: str = "default"):
                     code = s.get("ind_key", "")
                     if not tk:
                         continue
-                    # INDS* = Indian (NSE, add .NS). Else = US (raw ticker).
-                    if code.startswith("INDS"):
-                        ticker = to_yf(tk)
-                    else:
-                        ticker = tk
+                    # India-only universe: the analyzer, news pipeline,
+                    # sector context, and grader are all built around NSE
+                    # tickers. US names on the watchlist read as confusion
+                    # on the dashboard (no signal, no grade). Skip non-
+                    # INDS codes entirely; the stale-row prune below will
+                    # drop any US tickers that exist from prior syncs.
+                    if not code.startswith("INDS"):
+                        continue
+                    ticker = to_yf(tk)
                     live_tickers.add(ticker)
                     try:
                         sb.table("wishlist").upsert({
                             "user_id": user_id, "ticker": ticker
                         }, on_conflict="user_id,ticker").execute()
                         n_w += 1
-                        if code.startswith("INDS"):
-                            code_to_ticker[code] = tk
+                        code_to_ticker[code] = tk
                     except Exception as e:
                         print(f"wishlist fail {tk}: {e}")
             # Stale-row cleanup. INDmoney is the source of truth for the
