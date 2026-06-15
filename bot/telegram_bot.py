@@ -1026,6 +1026,127 @@ async def _start_health_server(port: int):
                 )
                 writer.write(resp); await writer.drain(); return
 
+            # /trigger/stock-analyst: Deep per-ticker LLM analysis with
+            # cache. Body: { ticker, horizon_days }. Looks up the most
+            # recent (ticker, horizon, today_UTC) row; if ok, returns
+            # that run_id without burning quota. Else inserts a fresh
+            # pending row, kicks the LLM background job, returns 202.
+            # Browser polls stock_analyses by id until status != pending.
+            if method == "POST" and path.startswith("/trigger/stock-analyst"):
+                token = headers.get("x-trigger-token", "")
+                if not trigger_secret or token != trigger_secret:
+                    msg = b'{"error":"unauthorized"}'
+                    resp = (
+                        b"HTTP/1.1 401 Unauthorized\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: " + str(len(msg)).encode() + b"\r\n"
+                        b"Connection: close\r\n\r\n" + msg
+                    )
+                    writer.write(resp); await writer.drain(); return
+
+                import json as _json
+                try:
+                    payload = _json.loads(body_bytes or b"{}")
+                except Exception:
+                    payload = {}
+
+                ticker = (payload.get("ticker") or "").strip().upper()
+                if ticker and not ticker.endswith(".NS") and not ticker.endswith(".BO") \
+                        and not ticker.startswith("^") and "." not in ticker:
+                    ticker += ".NS"
+                try:
+                    horizon = int(payload.get("horizon_days") or 30)
+                except (TypeError, ValueError):
+                    horizon = 30
+                if horizon not in (30, 90, 180):
+                    horizon = 30
+
+                if not ticker:
+                    out = _json.dumps({"ok": False, "error": "ticker required"}).encode()
+                    status_line = b"HTTP/1.1 400 Bad Request\r\n"
+                else:
+                    try:
+                        import os as _os
+                        from supabase import create_client as _create_client
+                        from datetime import datetime as _dt, timezone as _tz
+                        url = _os.getenv("SUPABASE_URL")
+                        key = _os.getenv("SUPABASE_KEY")
+                        if not url or not key:
+                            raise RuntimeError("Supabase env missing")
+                        _sb_local = _create_client(url, key)
+
+                        # Cache lookup: same ticker + horizon + today UTC.
+                        # Returns the existing run_id when ok so the
+                        # browser polls a finished row, no LLM burn.
+                        today = _dt.now(_tz.utc).date().isoformat()
+                        cache_hit = _sb_local.table("stock_analyses").select(
+                            "id,status"
+                        ).eq("ticker", ticker).eq("horizon_days", horizon).eq(
+                            "cache_day", today
+                        ).eq("status", "ok").order(
+                            "requested_at", desc=True
+                        ).limit(1).execute().data or []
+                        if cache_hit:
+                            cached_id = cache_hit[0]["id"]
+                            out = _json.dumps({
+                                "ok": True, "job": "stock-analyst",
+                                "status": "cached", "run_id": cached_id,
+                                "ticker": ticker, "horizon_days": horizon,
+                                "via": "cache",
+                            }).encode()
+                            status_line = b"HTTP/1.1 200 OK\r\n"
+                        else:
+                            # Fresh row + background LLM. Same pattern
+                            # as /trigger/calc-explain.
+                            ins = _sb_local.table("stock_analyses").insert({
+                                "ticker": ticker,
+                                "horizon_days": horizon,
+                                "status": "pending",
+                            }).execute()
+                            run_id = (ins.data or [{}])[0].get("id")
+                            if run_id is None:
+                                raise RuntimeError("insert returned no id")
+
+                            from analyzer.stock_analyst_llm import run as run_analyst
+                            import asyncio as _asyncio
+
+                            async def _bg_analyst(rid: int):
+                                try:
+                                    print(f"Background Stock Analyst starting (run_id={rid})...")
+                                    loop = _asyncio.get_event_loop()
+                                    await loop.run_in_executor(None, lambda: run_analyst(rid))
+                                    print(f"Background Stock Analyst complete (run_id={rid})")
+                                except Exception as bgerr:
+                                    import traceback
+                                    print(f"Background Stock Analyst failed: {bgerr}")
+                                    traceback.print_exc()
+
+                            task = _asyncio.create_task(_bg_analyst(run_id))
+                            _BG_TASKS.add(task)
+                            task.add_done_callback(_BG_TASKS.discard)
+                            out = _json.dumps({
+                                "ok": True, "job": "stock-analyst",
+                                "status": "queued", "run_id": run_id,
+                                "ticker": ticker, "horizon_days": horizon,
+                                "via": "in_process",
+                            }).encode()
+                            status_line = b"HTTP/1.1 202 Accepted\r\n"
+                    except Exception as e:
+                        out = _json.dumps({
+                            "ok": False, "job": "stock-analyst",
+                            "error": str(e),
+                        }).encode()
+                        status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+
+                resp = (
+                    status_line +
+                    b"Content-Type: application/json\r\n"
+                    b"Access-Control-Allow-Origin: *\r\n"
+                    b"Content-Length: " + str(len(out)).encode() + b"\r\n"
+                    b"Connection: close\r\n\r\n" + out
+                )
+                writer.write(resp); await writer.drain(); return
+
             # default health response
             body = b"OK"
             resp = (

@@ -1,0 +1,323 @@
+"""Stock Analyst LLM module.
+
+Consumes analyzer.stock_deep.deep_fetch output for one ticker and
+produces a strict-JSON deep analysis with rating, score, phase,
+buy-window, summary, and reasoning. Persisted to the stock_analyses
+table (row pre-inserted by the bot trigger; this module updates it
+in place to status='ok' or status='failed').
+
+Learning loop is strict: every prior graded prediction for the SAME
+ticker at the SAME horizon is injected into the user prompt as
+`prior_self_predictions` so the model literally sees its own past
+calls and outcomes for this stock before issuing the new one. The
+note doctrine instructs the model that high-grade past wins are
+patterns to repeat and low-grade past misses are patterns to avoid
+verbatim.
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+from dotenv import load_dotenv
+from supabase import create_client
+
+from analyzer.llm_router import (
+    FALLBACK_CHAIN, PRIMARY_MODEL, _post,
+)
+from analyzer.stock_deep import deep_fetch
+
+
+load_dotenv()
+
+
+_SYSTEM_PROMPT = """You are a deep equity analyst for the Indian market.
+You analyse ONE stock at a time end-to-end and produce a strict-JSON deep
+report at a specific time horizon (30 / 90 / 180 days).
+
+You receive every free data point yfinance exposes for the ticker:
+- distilled company info + business summary
+- full financials (income statement, balance sheet, cashflow) annual + quarterly
+- analyst recommendations + price targets + upgrades/downgrades + estimates
+- holders breakdown (institutional, insider, mutual fund)
+- options chain summary (nearest expiry, PCR, IV, max pain) when available
+- daily history since IPO + monthly closes 5y back + a derived technical
+  battery (RSI14, MACD, SMA20/50/200 distances, ATR, 52w range pos,
+  trailing returns, realised vol)
+- calendar (next earnings + ex-dividend) and recent news
+
+You are graded brutally: a deterministic grader compares your rating, phase,
+and buy_window against the ticker's ACTUAL price movement at the horizon
+you predicted. Score 0-100. The grade flows back into `prior_self_predictions`
+on every future call for this ticker so your own track record is the
+ground truth you reason against.
+
+LEARNING LOOP DOCTRINE (strict, non-negotiable):
+- Read `prior_self_predictions` BEFORE forming today's view. The block
+  carries your last 8 graded predictions for this exact ticker at this
+  exact horizon, with their grade_score (0-100) and grade_notes.
+- A prior LOSS (score < 30) at a similar setup is a hard ceiling on
+  today's confidence — your past self made that exact mistake.
+- A prior WIN (score > 70) at a similar setup is a pattern you may
+  repeat. Cite the date(s) you are leaning on in `reasoning.prior_calls`.
+- Phase calls must be progressive. Do not flip-flop bullish->bearish->
+  bullish across consecutive calls without a hard fundamental or
+  technical catalyst in the data.
+
+OUTPUT (strict JSON, no prose outside JSON, no markdown):
+{
+  "ticker": "...",
+  "horizon_days": 30 | 90 | 180,
+  "rating": "buy" | "hold" | "sell",
+  "score": 0-100 integer (your conviction in the rating, NOT a price target),
+  "phase": "bearish" | "moderate_bearish" | "moderate_bullish" | "bullish",
+  "summary": "1-2 sentence plain-English read for an Indian retail investor",
+  "buy_window": {
+    "target_price_low": float,   // best price to add at
+    "target_price_high": float,  // upper bound of the entry zone
+    "time_window_text": "e.g. 'next 2-3 weeks on a retest of 1280-1300'"
+  },
+  "exit_window": {
+    "target_price": float | null,  // upside target for buy/hold; null for sell
+    "stop_loss": float | null      // protective stop; null for sell
+  },
+  "reasoning": {
+    "technicals": "what RSI/MACD/DMA distances/52w pos say (cite real numbers)",
+    "valuation": "PE/PB/EV-EBITDA/PEG vs sector + history (cite numbers)",
+    "fundamentals": "growth/margins/leverage/cashflow trajectory (cite numbers)",
+    "news_flow": "what recent news + analyst flow signals",
+    "catalysts": "upcoming earnings/dividend/sector events",
+    "risks": ["concrete risk 1", "concrete risk 2", "..."],
+    "prior_calls": "cite at least one prior_self_predictions entry by date"
+  },
+  "confidence": 0-100 integer (calibrated to your past grade_score history)
+}
+
+No certainty language. No "guaranteed", "definitely", "will". Probabilistic only.
+No markdown. Strict JSON only.
+"""
+
+
+def _sb():
+    return create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+
+
+def _prior_predictions(sb, ticker: str, horizon_days: int, limit: int = 8) -> list[dict]:
+    """Pull this ticker's last `limit` GRADED predictions at this exact
+    horizon. Returns compact one-line dicts for the prompt: date, rating,
+    score, phase, grade_score, grade_notes. Strict learning loop spine:
+    the model literally sees its own past calls for this stock before
+    issuing the new one.
+    """
+    try:
+        rows = sb.table("stock_analyses").select(
+            "id,requested_at,ticker,horizon_days,llm_json,grade_score,grade_notes"
+        ).eq("ticker", ticker).eq("horizon_days", horizon_days).eq(
+            "status", "ok"
+        ).not_.is_("graded_at", "null").order(
+            "requested_at", desc=True
+        ).limit(limit).execute().data or []
+    except Exception as e:
+        print(f"  prior_predictions skipped: {str(e)[:120]}")
+        return []
+    out = []
+    for r in rows:
+        lj = r.get("llm_json") or {}
+        out.append({
+            "date": (r.get("requested_at") or "")[:10],
+            "rating_called": lj.get("rating"),
+            "phase_called": lj.get("phase"),
+            "confidence_at_call": lj.get("confidence"),
+            "grade_score": r.get("grade_score"),
+            "grade_notes": (r.get("grade_notes") or "")[:200],
+        })
+    return out
+
+
+def _strip_for_prompt(payload: dict, max_chars: int = 90000) -> dict:
+    """Drop the heaviest sub-blocks if the deep payload risks bloating
+    past the LLM context. Mirrors aggregator._PAYLOAD_DROP_ORDER logic
+    but for the single-stock payload. Order: drop holders detail
+    first (lowest leverage), then full historical monthly_close, then
+    raw news bodies, then financial details, until the JSON fits.
+    """
+    drop_order = [
+        "mutualfund_holders",
+        "insider_roster_holders",
+        "sustainability",
+        "insider_transactions",
+        "institutional_holders",
+        "major_holders",
+        "history_summary.monthly_close",
+        "balance_sheet_quarterly",
+        "cashflow_quarterly",
+        "income_stmt_quarterly",
+        "history_summary.tail_60d",
+        "balance_sheet_annual",
+        "cashflow_annual",
+        "income_stmt_annual",
+    ]
+    p = dict(payload)
+    js = json.dumps(p, default=str)
+    if len(js) <= max_chars:
+        return p
+    for path in drop_order:
+        if "." in path:
+            top, sub = path.split(".", 1)
+            if top in p and isinstance(p[top], dict) and sub in p[top]:
+                p[top].pop(sub, None)
+        else:
+            p.pop(path, None)
+        js = json.dumps(p, default=str)
+        if len(js) <= max_chars:
+            break
+    return p
+
+
+def _parse_llm_json(resp: dict) -> dict | None:
+    """Extract the assistant's strict-JSON content from a chat.completions
+    response. Mirrors analyzer.llm_router's parse loop: the routed
+    provider sometimes wraps the JSON in markdown fences."""
+    try:
+        choices = resp.get("choices") or []
+        if not choices:
+            return None
+        msg = (choices[0].get("message") or {}).get("content") or ""
+        msg = msg.strip()
+        if msg.startswith("```"):
+            msg = msg.lstrip("`")
+            if msg.lower().startswith("json"):
+                msg = msg[4:].lstrip()
+            if msg.endswith("```"):
+                msg = msg[: -3]
+        return json.loads(msg)
+    except Exception as e:
+        print(f"  parse_llm_json fail: {str(e)[:160]}")
+        return None
+
+
+def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
+    """Strict shape check. Returns (ok, error_msg). Anything missing
+    is a hard fail so we never persist a half-shaped row."""
+    required = ["ticker", "horizon_days", "rating", "score", "phase",
+                "summary", "buy_window", "reasoning", "confidence"]
+    for k in required:
+        if k not in out:
+            return False, f"missing key: {k}"
+    if out["rating"] not in ("buy", "hold", "sell"):
+        return False, f"invalid rating: {out['rating']}"
+    if out["phase"] not in ("bearish", "moderate_bearish",
+                            "moderate_bullish", "bullish"):
+        return False, f"invalid phase: {out['phase']}"
+    if not isinstance(out["score"], (int, float)) or not (0 <= out["score"] <= 100):
+        return False, f"invalid score: {out.get('score')}"
+    if not isinstance(out["confidence"], (int, float)) or not (0 <= out["confidence"] <= 100):
+        return False, f"invalid confidence: {out.get('confidence')}"
+    bw = out.get("buy_window") or {}
+    for k in ("target_price_low", "target_price_high", "time_window_text"):
+        if k not in bw:
+            return False, f"buy_window missing: {k}"
+    return True, ""
+
+
+def run(run_id: int) -> dict:
+    """Execute one Stock Analyst pass for a stock_analyses row. The
+    bot trigger pre-inserts the row with status='pending'; this
+    function reads the ticker + horizon off it, builds the deep
+    payload + prior predictions, calls the LLM, validates the
+    response, and writes back the result + final status.
+
+    Soft-fail policy: any exception updates the row to status='failed'
+    with the error text. The bot endpoint returns run_id immediately
+    and the browser polls; a failed row surfaces in the UI as a
+    "retry" affordance, not a silent disappearance.
+    """
+    sb = _sb()
+    row = sb.table("stock_analyses").select("*").eq("id", run_id).execute().data
+    if not row:
+        raise RuntimeError(f"stock_analyses id={run_id} not found")
+    r = row[0]
+    ticker = r["ticker"]
+    horizon = int(r["horizon_days"])
+    print(f"stock_analyst run_id={run_id} ticker={ticker} horizon={horizon}d")
+
+    try:
+        # 1. Deep fetch.
+        t0 = time.time()
+        payload = deep_fetch(ticker)
+        print(f"  deep_fetch in {time.time() - t0:.1f}s, payload ~{len(json.dumps(payload, default=str))} chars")
+
+        # 2. Prior self-predictions (learning loop spine).
+        prior = _prior_predictions(sb, ticker, horizon)
+        print(f"  prior graded predictions for ({ticker}, {horizon}d): {len(prior)}")
+
+        # 3. Compress if needed, then assemble user message.
+        payload = _strip_for_prompt(payload, max_chars=85000)
+        user_payload = {
+            "instruction": (
+                f"Produce a strict-JSON deep analysis for {ticker} at a "
+                f"{horizon}-day horizon. Follow the LEARNING LOOP DOCTRINE "
+                "and cite at least one prior_self_predictions entry in "
+                "reasoning.prior_calls."
+            ),
+            "ticker": ticker,
+            "horizon_days": horizon,
+            "deep_payload": payload,
+            "prior_self_predictions": prior,
+        }
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(user_payload, default=str)},
+        ]
+
+        # 4. LLM call via the same OpenRouter chain the morning
+        # analyzer uses. reasoning=True so Nemotron Super does its
+        # thinking pass; deep analysis warrants it.
+        model_chain = [PRIMARY_MODEL] + FALLBACK_CHAIN
+        t1 = time.time()
+        resp = _post(messages, model_chain, reasoning=True, timeout=300)
+        model_used = resp.get("model") or PRIMARY_MODEL
+        print(f"  LLM in {time.time() - t1:.1f}s via {model_used}")
+
+        out = _parse_llm_json(resp)
+        if out is None:
+            raise RuntimeError("LLM response did not contain valid JSON")
+        # Sometimes models echo wrong ticker / horizon. Stamp ours.
+        out["ticker"] = ticker
+        out["horizon_days"] = horizon
+
+        ok, err = _validate(out, ticker, horizon)
+        if not ok:
+            raise RuntimeError(f"output validation failed: {err}")
+
+        # 5. Persist success.
+        sb.table("stock_analyses").update({
+            "deep_payload": payload,
+            "llm_json": out,
+            "model_used": model_used,
+            "status": "ok",
+        }).eq("id", run_id).execute()
+        print(f"  stock_analyst id={run_id} OK rating={out.get('rating')} phase={out.get('phase')}")
+        return out
+    except Exception as e:
+        err_text = f"{type(e).__name__}: {str(e)[:400]}"
+        print(f"  stock_analyst id={run_id} FAIL: {err_text}")
+        try:
+            sb.table("stock_analyses").update({
+                "status": "failed",
+                "error": err_text,
+            }).eq("id", run_id).execute()
+        except Exception:
+            pass
+        raise
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python -m analyzer.stock_analyst_llm <stock_analyses_id>")
+        sys.exit(1)
+    run(int(sys.argv[1]))
