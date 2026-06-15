@@ -92,18 +92,16 @@ interface CalibPoint {
   date: string;
 }
 
-// ISO week label "YYYY-Www" for the date a prediction was MADE. Used by
-// the Cohort Learning Curve which buckets graded direction calls by the
-// week they were issued so an upward slope across weeks reflects later
-// cohorts outperforming earlier ones (the real engine-improvement signal,
-// distinct from Score Trend which is fixed by historical market path).
-function isoWeek(d: Date): string {
+// Monday "YYYY-MM-DD" of the ISO week containing d. Used by the Cohort
+// Learning Curve to bucket graded direction calls by the week they were
+// issued. Emits a real date string (not a "YYYY-Www" label) so LineChart's
+// parseDate accepts it; passing a "W"-style label produces an empty
+// numericData array and crashes the chart on numericData[0].ts.
+function isoWeekMonday(d: Date): string {
   const dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   const day = dt.getUTCDay() || 7;
-  dt.setUTCDate(dt.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((dt.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return `${dt.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  dt.setUTCDate(dt.getUTCDate() - (day - 1));
+  return dt.toISOString().slice(0, 10);
 }
 
 // OLS slope over indexed (i, y) pairs. Returns y-units per +1 index step,
@@ -154,7 +152,7 @@ interface AccTrendPoint {
 }
 
 interface CohortPoint {
-  date: string;        // ISO week label "YYYY-Www" shown as Monday date
+  date: string;        // Monday "YYYY-MM-DD" of the ISO week the calls were MADE
   value: number;       // mean direction score for predictions MADE that week
 }
 
@@ -312,7 +310,7 @@ export default function AccuracyPage() {
       for (const r of (scoreRows || []) as any[]) {
         const runAt = runAtById.get(r.analysis_id);
         if (!runAt || typeof r.score !== "number") continue;
-        const wk = isoWeek(new Date(runAt));
+        const wk = isoWeekMonday(new Date(runAt));
         const arr = byWeek.get(wk) ?? [];
         arr.push(r.score);
         byWeek.set(wk, arr);
