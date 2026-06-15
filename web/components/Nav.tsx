@@ -268,8 +268,17 @@ export function Nav() {
   const open = isMarketOpen(mkt);
 
   return (
-    <div className="sticky top-0 z-40 px-3 sm:px-4 pt-4 pb-3 pointer-events-none bg-gradient-to-b from-[var(--background)] via-[color-mix(in_srgb,var(--background)_88%,transparent)] to-transparent">
-      <div className="md:max-w-fit md:mx-auto pointer-events-auto">
+    <div className="sticky top-0 z-40 pointer-events-none">
+      {/* Top cover strip: opaque-to-transparent gradient over the 16px
+       * slot between viewport top and the nav pill. Prevents section
+       * prose scrolling into that band from being visible above the
+       * pill, without putting any opaque layer BEHIND the pill (which
+       * would kill the pill's translucent backdrop-blur). */}
+      <div
+        aria-hidden
+        className="h-4 bg-gradient-to-b from-[var(--background)] to-transparent"
+      />
+      <div className="px-3 sm:px-4 pb-3 md:max-w-fit md:mx-auto pointer-events-auto">
         <motion.nav
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
