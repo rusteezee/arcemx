@@ -278,8 +278,8 @@ export function Nav() {
             "flex md:grid items-center w-full",
             "pl-4 pr-2 md:pl-9 md:pr-4 py-[9px] md:py-[11px] gap-2 md:gap-20",
             "rounded-full border border-border",
-            "bg-[var(--card)]/92 backdrop-blur-xl",
-            "shadow-[0_8px_30px_rgba(0,0,0,0.18)]"
+            "bg-[var(--card)]/65 backdrop-blur-md",
+            "shadow-[0_8px_30px_rgba(0,0,0,0.08)]"
           )}
           style={{ gridTemplateColumns: "1fr auto 1fr" }}
         >
