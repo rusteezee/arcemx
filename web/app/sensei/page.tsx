@@ -5,6 +5,7 @@ import { Section } from "@/components/Section";
 import { EmptyState } from "@/components/EmptyState";
 import { Calculator } from "@/components/Calculator";
 import { PortfolioScorecard } from "@/components/PortfolioScorecard";
+import { StockAnalyst } from "@/components/StockAnalyst";
 import { sb } from "@/lib/supabase";
 import { polishMarketText } from "@/lib/utils";
 
@@ -246,7 +247,7 @@ export default function SenseiPage() {
       </header>
 
       <Section
-        num="001 / 008"
+        num="001 / 009"
         title="Sensei's Read"
         glyph="◈"
         description="One-line verdict on whether stated confidence matched delivered accuracy. Strict, no softening."
@@ -265,7 +266,16 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="002 / 008"
+        num="002 / 009"
+        title="Stock Analyst"
+        glyph="◎"
+        description="Deep single-stock analysis on demand. Pick a horizon, type a ticker, the analyst pulls every free yfinance data point (info, financials, holders, analyst targets, earnings calendar, news, options, full history since IPO) plus a fresh technical battery, runs the LLM, returns rating + phase + buy zone + reasoning. Every prediction is logged and graded at horizon; the next call for the same ticker injects your past graded calls as prior_self_predictions so the model literally learns from its own track record."
+      >
+        <StockAnalyst />
+      </Section>
+
+      <Section
+        num="003 / 009"
         title="What Worked"
         glyph="◉"
         description="Calls that hit. Evidence column shows the numbers behind each win. Treat as a checklist of what to repeat tomorrow."
@@ -316,7 +326,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="003 / 008"
+        num="004 / 009"
         title="What Missed"
         glyph="◉"
         description="Calls that broke. Root Cause column says why. Read every row before the next session opens."
@@ -374,7 +384,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="004 / 008"
+        num="005 / 009"
         title="Conviction Tier Review"
         glyph="◉"
         description="Did A / B / C labels track actual performance? Inflated tiers will surface here."
@@ -410,7 +420,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="005 / 008"
+        num="006 / 009"
         title="Key Insights"
         glyph="◉"
         description="Sensei's strict reads of today's data. Every bullet cites at least two concrete numbers. No vibe takes."
@@ -431,7 +441,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="006 / 008"
+        num="007 / 009"
         title="Tomorrow's Watchlist"
         glyph="⬡"
         description="Specific levels and events to track at next open. These are the things Sensei wants you to flag before tomorrow's session begins."
@@ -452,7 +462,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="007 / 008"
+        num="008 / 009"
         title="Sensei's Calculator"
         glyph="✦"
         description="Tell Sensei how much you want to deploy, for how long, and how much risk you can stomach. A deterministic prefilter ranks the universe by momentum + RSI + realized vol and proposes an allocation. Ask Sensei wraps the picks with macro and sector context."
@@ -461,7 +471,7 @@ export default function SenseiPage() {
       </Section>
 
       <Section
-        num="008 / 008"
+        num="009 / 009"
         title="Portfolio Scorecard"
         glyph="◉"
         description="Live score on your actual holdings. Sector spread, single-name risk, momentum vs NIFTY, drawdown, edge over the index. Red flags and tips to lift the score below."
