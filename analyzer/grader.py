@@ -1187,7 +1187,24 @@ def _embed_new_predictions() -> None:
         print(f"Embedding pass skipped: {str(e)[:160]}")
 
 
+def _grade_stock_analyses() -> None:
+    """Run the deterministic Stock Analyst grader after the main pass.
+    Soft-fails so the daily grader never blocks on a yfinance hiccup
+    against a single ticker. Idempotent: only matured + ungraded rows
+    are touched (graded_at IS NULL gate)."""
+    try:
+        from analyzer.stock_analyst_grader import grade_all as _stock_grade
+    except ImportError as e:
+        print(f"Stock Analyst grade skipped (import failed): {str(e)[:120]}")
+        return
+    try:
+        _stock_grade()
+    except Exception as e:
+        print(f"Stock Analyst grade skipped: {str(e)[:160]}")
+
+
 if __name__ == "__main__":
     grade_all(lookback_days=90)
     compute_summaries()
+    _grade_stock_analyses()
     _embed_new_predictions()
