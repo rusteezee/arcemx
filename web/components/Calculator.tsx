@@ -581,7 +581,8 @@ function CalcOutput({
             RSI, realized vol. Phase 8b will layer macro and news on top.
           </p>
         </div>
-        <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+        <div className="table-scroll">
+        <table className="data" style={{ width: "100%" }}>
           <colgroup>
             <col style={{ width: "11%" }} />
             <col style={{ width: "8%" }} />
@@ -614,6 +615,7 @@ function CalcOutput({
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Sector concentration */}

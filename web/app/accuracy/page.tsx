@@ -849,7 +849,8 @@ export default function AccuracyPage() {
                 the cards above sits at one column of this table.
               </p>
             </div>
-            <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+            <div className="table-scroll">
+            <table className="data" style={{ width: "100%" }}>
               <colgroup>
                 <col style={{ width: "18%" }} />
                 <col style={{ width: "22%" }} />
@@ -914,6 +915,7 @@ export default function AccuracyPage() {
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* 4. Per-dim status. one box per dimension instead of a
@@ -930,7 +932,7 @@ export default function AccuracyPage() {
                   50. the smaller-n hit rate is a guess, not a measurement.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-1 shrink-0">
+              <div className="h-scroll flex gap-1 -mx-1 px-1">
                 {([
                   { label: "1W", days: 7 },
                   { label: "1M", days: 30 },
@@ -947,7 +949,7 @@ export default function AccuracyPage() {
                       key={days}
                       type="button"
                       onClick={() => setPerDimWindow(days)}
-                      className="text-xs font-medium tracking-wide rounded-full px-3 py-1 border transition-colors"
+                      className="shrink-0 text-xs font-medium tracking-wide rounded-full px-3 py-1 border transition-colors"
                       style={{
                         borderColor: active ? "var(--foreground)" : "var(--border)",
                         background: active ? "var(--foreground)" : "transparent",

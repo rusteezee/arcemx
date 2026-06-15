@@ -202,35 +202,37 @@ export default function TodayPage() {
       <Section num="004 / 006" title="Your Portfolio Verdicts" glyph="⬡">
         {raw.portfolio_verdicts?.length ? (
           <div className="card overflow-hidden">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Verdict</th>
-                  <th>Reason</th>
-                  <th>Target</th>
-                  <th>Stop loss</th>
-                </tr>
-              </thead>
-              <tbody>
-                {raw.portfolio_verdicts.map((v: any, i: number) => (
-                  <tr key={i} className="align-middle">
-                    <td className="font-medium whitespace-nowrap">{v.ticker}</td>
-                    <td className="whitespace-nowrap">
-                      <VerdictPill v={v.verdict} />
-                    </td>
-                    <td
-                      className="text-[var(--muted)] align-top leading-snug"
-                      style={{ whiteSpace: "normal", maxWidth: "44rem" }}
-                    >
-                      {polishMarketText(v.reason)}
-                    </td>
-                    <td className="num whitespace-nowrap text-[var(--gain)]">{formatINR(v.target)}</td>
-                    <td className="num whitespace-nowrap text-[var(--loss)]">{formatINR(v.stop_loss)}</td>
+            <div className="table-scroll">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Verdict</th>
+                    <th>Reason</th>
+                    <th>Target</th>
+                    <th>Stop loss</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {raw.portfolio_verdicts.map((v: any, i: number) => (
+                    <tr key={i}>
+                      <td className="font-medium whitespace-nowrap">{v.ticker}</td>
+                      <td className="whitespace-nowrap">
+                        <VerdictPill v={v.verdict} />
+                      </td>
+                      <td
+                        className="clamp-3 text-[var(--muted)] leading-snug"
+                        style={{ maxWidth: "44rem" }}
+                      >
+                        {polishMarketText(v.reason)}
+                      </td>
+                      <td className="num whitespace-nowrap text-[var(--gain)]">{formatINR(v.target)}</td>
+                      <td className="num whitespace-nowrap text-[var(--loss)]">{formatINR(v.stop_loss)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : (
           <EmptyState title="Sync portfolio via Telegram" hint="Send /sync to the bot, then refresh." />
@@ -455,28 +457,30 @@ function PickTable({ title, rows }: { title: string; rows: any[] }) {
         <div className="section-num mb-1">{title}</div>
       </div>
       {rows.length ? (
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Ticker</th>
-              <th>Tier</th>
-              <th>Entry</th>
-              <th>Target</th>
-              <th>Stop Loss</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td className="font-medium">{r.ticker}</td>
-                <td><ConvictionPill tier={r.conviction} /></td>
-                <td className="num">{formatINR(r.entry || r.entry_zone)}</td>
-                <td className="num text-[var(--gain)]">{formatINR(r.target)}</td>
-                <td className="num text-[var(--loss)]">{formatINR(r.stop_loss)}</td>
+        <div className="table-scroll">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Tier</th>
+                <th>Entry</th>
+                <th>Target</th>
+                <th>Stop Loss</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="font-medium whitespace-nowrap">{r.ticker}</td>
+                  <td><ConvictionPill tier={r.conviction} /></td>
+                  <td className="num">{formatINR(r.entry || r.entry_zone)}</td>
+                  <td className="num text-[var(--gain)]">{formatINR(r.target)}</td>
+                  <td className="num text-[var(--loss)]">{formatINR(r.stop_loss)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="p-8 text-center text-sm text-[var(--muted)]">None today</div>
       )}
@@ -520,40 +524,39 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
         <div className="section-num mb-1">{title}</div>
       </div>
       {rows.length ? (
-        <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
-          <colgroup>
-            <col style={{ width: "14%" }} />
-            <col style={{ width: "12%" }} />
-            <col style={{ width: "14%" }} />
-            <col style={{ width: "10%" }} />
-            <col />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Ticker</th>
-              <th>Direction</th>
-              <th>Range</th>
-              <th>Confidence</th>
-              <th>Key Driver</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r: any, i: number) => (
-              <tr key={i} className="align-middle">
-                <td className="font-medium whitespace-nowrap">{(r.ticker || "").replace(/\.NS$/, "")}</td>
-                <td className="whitespace-nowrap"><DirPill direction={r.direction} /></td>
-                <td className="num whitespace-nowrap">{r.range ? formatINR(r.range) : "·"}</td>
-                <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
-                <td
-                  className="text-[var(--muted)] text-sm align-top leading-snug"
-                  style={{ whiteSpace: "normal" }}
-                >
-                  {polishMarketText(r.key_driver)}
-                </td>
+        <div className="table-scroll">
+          <table className="data" style={{ width: "100%" }}>
+            <colgroup>
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "10%" }} />
+              <col />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Direction</th>
+                <th>Range</th>
+                <th>Confidence</th>
+                <th>Key Driver</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r: any, i: number) => (
+                <tr key={i}>
+                  <td className="font-medium whitespace-nowrap">{(r.ticker || "").replace(/\.NS$/, "")}</td>
+                  <td className="whitespace-nowrap"><DirPill direction={r.direction} /></td>
+                  <td className="num whitespace-nowrap">{r.range ? formatINR(r.range) : "·"}</td>
+                  <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
+                  <td className="clamp-3 text-[var(--muted)] text-sm leading-snug">
+                    {polishMarketText(r.key_driver)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="p-8 text-center text-sm text-[var(--muted)]">None today</div>
       )}

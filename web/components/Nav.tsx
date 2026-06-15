@@ -269,14 +269,20 @@ export function Nav() {
 
   return (
     <div className="sticky top-0 z-40 pointer-events-none">
-      {/* Top cover strip: opaque-to-transparent gradient over the 16px
-       * slot between viewport top and the nav pill. Prevents section
-       * prose scrolling into that band from being visible above the
-       * pill, without putting any opaque layer BEHIND the pill (which
-       * would kill the pill's translucent backdrop-blur). */}
+      {/* Top cover strip: solid background then short gradient over the
+       * slot between viewport top and the nav pill. A 16px strip was
+       * not enough; section prose still bled through the lower half of
+       * a pure gradient. Solid for the first 16px then a 12px fade
+       * gives a hard cover with a soft handoff into transparency where
+       * the pill begins, without putting any opaque layer BEHIND the
+       * pill (which would kill the pill's translucent backdrop-blur). */}
       <div
         aria-hidden
-        className="h-4 bg-gradient-to-b from-[var(--background)] to-transparent"
+        className="h-4 bg-[var(--background)]"
+      />
+      <div
+        aria-hidden
+        className="h-3 bg-gradient-to-b from-[var(--background)] to-transparent"
       />
       <div className="px-3 sm:px-4 pb-3 md:max-w-fit md:mx-auto pointer-events-auto">
         <motion.nav

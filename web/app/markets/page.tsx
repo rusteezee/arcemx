@@ -255,12 +255,12 @@ export default function MarketsPage() {
         title="Chart"
         glyph="◈"
         action={
-          <div className="flex gap-1.5 flex-wrap">
+          <div className="h-scroll flex gap-1.5 -mx-1 px-1">
             {PERIODS.map((p) => (
               <button
                 key={p.range}
                 onClick={() => setPeriod(p.range)}
-                className={`px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
+                className={`shrink-0 px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
                   period === p.range
                     ? "bg-foreground text-background"
                     : "hover:bg-[var(--muted-bg)]"
@@ -413,12 +413,12 @@ export default function MarketsPage() {
             >
               Normalize %
             </button>
-            <div className="flex gap-1.5 flex-wrap">
+            <div className="h-scroll flex gap-1.5 -mx-1 px-1">
               {PERIODS.map((p) => (
                 <button
                   key={p.range}
                   onClick={() => setCmpPeriod(p.range)}
-                  className={`px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
+                  className={`shrink-0 px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
                     cmpPeriod === p.range
                       ? "bg-foreground text-background"
                       : "hover:bg-[var(--muted-bg)]"

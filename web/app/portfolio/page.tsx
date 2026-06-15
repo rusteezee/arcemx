@@ -301,38 +301,40 @@ export default function PortfolioPage() {
 
       <Section num="002 / 003" title="Holdings" glyph="◈">
         <div className="card overflow-hidden">
-          <table className="data">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th>Qty</th>
-                <th>Avg buy</th>
-                <th>Last</th>
-                <th>Invested</th>
-                <th>Current</th>
-                <th>P&L</th>
-                <th>P&L %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.ticker}>
-                  <td className="font-medium">{stripTicker(r.ticker)}</td>
-                  <td className="num">{r.qty}</td>
-                  <td className="num">{r.currency}{r.avg_buy.toFixed(2)}</td>
-                  <td className="num">{r.currency}{r.last.toFixed(2)}</td>
-                  <td className="num text-[var(--muted)]">{r.currency}{r.invested.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                  <td className="num">{r.currency}{r.current.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                  <td className={`num font-medium whitespace-nowrap ${r.pnl >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
-                    {r.pnl >= 0 ? "+" : ""}{r.currency}{r.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                  </td>
-                  <td className={`num font-medium whitespace-nowrap ${r.pnl_pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
-                    {formatPct(r.pnl_pct)}
-                  </td>
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Qty</th>
+                  <th>Avg buy</th>
+                  <th>Last</th>
+                  <th>Invested</th>
+                  <th>Current</th>
+                  <th>P&L</th>
+                  <th>P&L %</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.ticker}>
+                    <td className="font-medium whitespace-nowrap">{stripTicker(r.ticker)}</td>
+                    <td className="num">{r.qty}</td>
+                    <td className="num">{r.currency}{r.avg_buy.toFixed(2)}</td>
+                    <td className="num">{r.currency}{r.last.toFixed(2)}</td>
+                    <td className="num text-[var(--muted)]">{r.currency}{r.invested.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                    <td className="num">{r.currency}{r.current.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                    <td className={`num font-medium whitespace-nowrap ${r.pnl >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                      {r.pnl >= 0 ? "+" : ""}{r.currency}{r.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                    </td>
+                    <td className={`num font-medium whitespace-nowrap ${r.pnl_pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                      {formatPct(r.pnl_pct)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </Section>
 
@@ -342,12 +344,12 @@ export default function PortfolioPage() {
         glyph="⬡"
         description="Full investing history. Replays every buy and sell against daily close to value the entire portfolio at each point in time."
         action={
-          <div className="flex gap-1.5 flex-wrap">
+          <div className="h-scroll flex gap-1.5 -mx-1 px-1">
             {TIMELINE_RANGES.map((p) => (
               <button
                 key={p.label}
                 onClick={() => setTimelineRange(p.label)}
-                className={`px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
+                className={`shrink-0 px-3 py-1.5 text-xs rounded-md border border-border transition-colors ${
                   timelineRange === p.label
                     ? "bg-foreground text-background"
                     : "hover:bg-[var(--muted-bg)]"

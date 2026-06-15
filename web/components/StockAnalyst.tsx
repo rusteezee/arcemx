@@ -443,7 +443,8 @@ export function StockAnalyst() {
         {history.length === 0 ? (
           <EmptyState title="No analyses yet." hint="Run one above to populate this list." />
         ) : (
-          <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+          <div className="table-scroll">
+          <table className="data" style={{ width: "100%" }}>
             <colgroup>
               <col style={{ width: "20%" }} />
               <col style={{ width: "10%" }} />
@@ -506,12 +507,13 @@ export function StockAnalyst() {
                         ? "·"
                         : <span className="text-[var(--muted)] text-xs">grading at +{h.horizon_days}d</span>}
                     </td>
-                    <td className="text-[var(--muted)] text-sm">{timeAgo(h.requested_at)}</td>
+                    <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

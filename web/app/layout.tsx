@@ -32,7 +32,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <Nav />
         <main className="flex-1">
-          <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-20 pb-10 lg:pt-24 lg:pb-14">
+          <div className="max-w-7xl mx-auto px-6 lg:px-10 pt-24 pb-10 lg:pt-28 lg:pb-14">
             <PageTransition>{children}</PageTransition>
           </div>
         </main>

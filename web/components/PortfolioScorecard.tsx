@@ -323,7 +323,8 @@ export function PortfolioScorecard() {
             Live quantities, market value, weight in NAV.
           </p>
         </div>
-        <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+        <div className="table-scroll">
+        <table className="data" style={{ width: "100%" }}>
           <colgroup>
             <col style={{ width: "12%" }} />
             <col style={{ width: "8%" }} />
@@ -350,22 +351,19 @@ export function PortfolioScorecard() {
             {holdings.map((h) => {
               const take = takeByTicker[h.ticker];
               return (
-                <tr key={h.ticker} className="align-top">
-                  <td className="font-medium whitespace-nowrap align-top">{h.ticker.replace(/\.NS$/, "")}</td>
-                  <td className="num whitespace-nowrap align-top">{h.qty.toLocaleString("en-IN")}</td>
-                  <td className="num whitespace-nowrap align-top">{formatMoney(h.lastClose, h.ticker)}</td>
-                  <td className="num whitespace-nowrap align-top">{formatMoney(h.marketValue, h.ticker)}</td>
-                  <td className="num whitespace-nowrap align-top">{(h.weightPct || 0).toFixed(1)}%</td>
-                  <td className="text-[var(--muted)] text-sm whitespace-nowrap align-top">
+                <tr key={h.ticker}>
+                  <td className="font-medium whitespace-nowrap">{h.ticker.replace(/\.NS$/, "")}</td>
+                  <td className="num whitespace-nowrap">{h.qty.toLocaleString("en-IN")}</td>
+                  <td className="num whitespace-nowrap">{formatMoney(h.lastClose, h.ticker)}</td>
+                  <td className="num whitespace-nowrap">{formatMoney(h.marketValue, h.ticker)}</td>
+                  <td className="num whitespace-nowrap">{(h.weightPct || 0).toFixed(1)}%</td>
+                  <td className="text-[var(--muted)] text-sm whitespace-nowrap">
                     {h.sector} · <span className="capitalize">{h.cap}</span>
                   </td>
-                  <td className="whitespace-nowrap align-top">
+                  <td className="whitespace-nowrap">
                     {take ? <VerdictPill v={take.verdict} /> : <span className="text-[var(--muted)]">·</span>}
                   </td>
-                  <td
-                    className="text-[var(--muted)] text-sm align-top"
-                    style={{ whiteSpace: "normal", wordBreak: "break-word" }}
-                  >
+                  <td className="clamp-3 text-[var(--muted)] text-sm" style={{ wordBreak: "break-word" }}>
                     {take?.why || "·"}
                   </td>
                 </tr>
@@ -373,6 +371,7 @@ export function PortfolioScorecard() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Edge verdict */}

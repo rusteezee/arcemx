@@ -133,7 +133,8 @@ export default function WishlistPage() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.05 }}
           className="card overflow-hidden"
         >
-          <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+          <div className="table-scroll">
+          <table className="data" style={{ width: "100%" }}>
             <colgroup>
               <col style={{ width: "16%" }} />
               <col style={{ width: "14%" }} />
@@ -152,7 +153,7 @@ export default function WishlistPage() {
             </thead>
             <tbody>
               {rows.map(({ ticker, outlook }) => (
-                <tr key={ticker} className="align-middle">
+                <tr key={ticker}>
                   <td className="font-medium whitespace-nowrap">
                     {normTicker(ticker)}
                   </td>
@@ -167,10 +168,7 @@ export default function WishlistPage() {
                       <td className="num whitespace-nowrap">
                         {outlook.confidence ?? "·"}
                       </td>
-                      <td
-                        className="text-[var(--muted)] text-sm align-top leading-snug"
-                        style={{ whiteSpace: "normal" }}
-                      >
+                      <td className="clamp-3 text-[var(--muted)] text-sm leading-snug">
                         {outlook.key_driver ? polishMarketText(outlook.key_driver) : "·"}
                       </td>
                     </>
@@ -183,6 +181,7 @@ export default function WishlistPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </motion.div>
       </div>
     </>

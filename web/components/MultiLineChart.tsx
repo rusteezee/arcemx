@@ -111,8 +111,16 @@ export function MultiLineChart({
   const domain: [number, number] = [yMin - pad, yMax + pad];
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <RLineChart data={merged} margin={{ top: 10, right: 20, bottom: 8, left: 4 }}>
+    <div className="h-scroll md:overflow-visible">
+      {/* On mobile the card shrinks to viewport width and the chart
+       * compresses to ~340px — date ticks collapse to 2 labels and lines
+       * stack on top of each other. Wrap in a horizontal scroller with a
+       * larger min-width so the user can swipe the chart sideways and
+       * still read every tick. Desktop ignores the scroller (min-w-0,
+       * overflow-visible) so the chart fills its card normally. */}
+      <div className="min-w-[640px] md:min-w-0">
+        <ResponsiveContainer width="100%" height={height}>
+          <RLineChart data={merged} margin={{ top: 10, right: 20, bottom: 8, left: 4 }}>
         <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
         <XAxis
           dataKey="ts"
@@ -167,6 +175,8 @@ export function MultiLineChart({
           />
         ))}
       </RLineChart>
-    </ResponsiveContainer>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }

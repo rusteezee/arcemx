@@ -114,7 +114,8 @@ export function Playground({
               confidence, with the key driver behind every row.
             </p>
           </div>
-          <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+          <div className="table-scroll">
+          <table className="data" style={{ width: "100%" }}>
             <colgroup>
               <col style={{ width: "5%" }} />
               <col style={{ width: "15%" }} />
@@ -143,7 +144,7 @@ export function Playground({
                     : "var(--muted)";
                 const barPct = Math.min(100, (Math.abs(it.score) / max) * 100);
                 return (
-                  <tr key={`${it.name}-${i}`} className="align-middle">
+                  <tr key={`${it.name}-${i}`}>
                     <td className="num text-[var(--muted)] font-medium">{i + 1}</td>
                     <td className="font-medium whitespace-nowrap">{it.name}</td>
                     <td className="whitespace-nowrap">
@@ -166,10 +167,7 @@ export function Playground({
                       {it.range ? formatNumber(it.range) : "·"}
                     </td>
                     <td className="num whitespace-nowrap">{it.confidence ?? "·"}</td>
-                    <td
-                      className="text-[var(--muted)] text-sm align-top leading-snug"
-                      style={{ whiteSpace: "normal" }}
-                    >
+                    <td className="clamp-3 text-[var(--muted)] text-sm leading-snug">
                       {it.driver ? polishMarketText(it.driver) : "·"}
                     </td>
                   </tr>
@@ -177,6 +175,7 @@ export function Playground({
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

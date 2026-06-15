@@ -284,7 +284,8 @@ export default function SenseiPage() {
           pending
         ) : row?.what_worked && row.what_worked.length > 0 ? (
           <div className="card overflow-hidden">
-            <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+            <div className="table-scroll">
+            <table className="data" style={{ width: "100%" }}>
               <colgroup>
                 <col style={{ width: "32%" }} />
                 <col style={{ width: "18%" }} />
@@ -301,21 +302,22 @@ export default function SenseiPage() {
               </thead>
               <tbody>
                 {row.what_worked.map((w: any, i: number) => (
-                  <tr key={i} className="align-top">
-                    <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                  <tr key={i}>
+                    <td className="clamp-3 font-medium" style={{ wordBreak: "break-word" }}>
                       {humaniseText(w.call)}
                     </td>
-                    <td className="align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                    <td className="whitespace-nowrap">
                       {humaniseDim(w.dimension)}
                     </td>
-                    <td className="num align-top">{w.score_pct ?? "·"}</td>
-                    <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                    <td className="num">{w.score_pct ?? "·"}</td>
+                    <td className="clamp-3 text-[var(--muted)] text-sm" style={{ wordBreak: "break-word" }}>
                       {humaniseText(w.evidence)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         ) : (
           <EmptyState
@@ -335,7 +337,8 @@ export default function SenseiPage() {
           pending
         ) : row?.what_missed && row.what_missed.length > 0 ? (
           <div className="card overflow-hidden">
-            <table className="data" style={{ tableLayout: "fixed", width: "100%" }}>
+            <div className="table-scroll">
+            <table className="data" style={{ width: "100%" }}>
               <colgroup>
                 <col style={{ width: "26%" }} />
                 <col style={{ width: "14%" }} />
@@ -354,26 +357,27 @@ export default function SenseiPage() {
               </thead>
               <tbody>
                 {row.what_missed.map((m: any, i: number) => (
-                  <tr key={i} className="align-top">
-                    <td className="font-medium align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                  <tr key={i}>
+                    <td className="clamp-3 font-medium" style={{ wordBreak: "break-word" }}>
                       {humaniseText(m.call)}
                     </td>
-                    <td className="align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                    <td className="whitespace-nowrap">
                       {humaniseDim(m.dimension)}
                     </td>
-                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                    <td className="num whitespace-nowrap">
                       {m.actual ?? "·"}
                     </td>
-                    <td className="num align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                    <td className="num whitespace-nowrap">
                       {m.gap ?? "·"}
                     </td>
-                    <td className="text-[var(--muted)] text-sm align-top" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                    <td className="clamp-3 text-[var(--muted)] text-sm" style={{ wordBreak: "break-word" }}>
                       {m.root_cause ? humaniseText(m.root_cause) : "·"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         ) : (
           <EmptyState
