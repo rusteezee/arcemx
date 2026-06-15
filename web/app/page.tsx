@@ -10,6 +10,13 @@ import { formatINR, formatNumber, formatPct, polishMarketText } from "@/lib/util
 
 export default function TodayPage() {
   const [analysis, setAnalysis] = useState<any>(null);
+  // Live portfolio tickers used to filter raw.holding_outlooks_1d down
+  // to positions still held. Analysis rows freeze a snapshot at run
+  // time; without this guard a position sold AFTER the morning run
+  // would keep rendering in Forecast Holdings until the next 08:30
+  // cron. null = not yet loaded (no filter); empty set = portfolio
+  // genuinely empty (filter to []).
+  const [portfolioTickers, setPortfolioTickers] = useState<Set<string> | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refetchAnalysis = async () => {
@@ -22,9 +29,21 @@ export default function TodayPage() {
     return data?.[0] || null;
   };
 
+  const refetchPortfolio = async () => {
+    try {
+      const { data } = await sb.from("portfolio").select("ticker");
+      const set = new Set<string>((data || []).map((r: any) => r.ticker).filter(Boolean));
+      setPortfolioTickers(set);
+    } catch {
+      // Soft-fail: leave the existing snapshot unfiltered rather than
+      // hide everything on a transient Supabase blip.
+      setPortfolioTickers(null);
+    }
+  };
+
   useEffect(() => {
     (async () => {
-      await refetchAnalysis();
+      await Promise.all([refetchAnalysis(), refetchPortfolio()]);
       setLoading(false);
     })();
   }, []);
@@ -219,7 +238,19 @@ export default function TodayPage() {
       </Section>
 
       <Section num="005 / 006" title="Forecast Holdings" glyph="◎" description="Per-holding next-day direction + ATR-anchored range. The key driver cites 2+ specific numbers (RSI, MACD, DMA distance, support/resistance). Wishlist 1-day calls live on the Wishlist page.">
-        <StockOutlooks holdings={raw.holding_outlooks_1d || []} />
+        <StockOutlooks
+          holdings={
+            // Filter the analysis row's frozen snapshot down to
+            // tickers still held. portfolioTickers===null means the
+            // live fetch has not landed or errored, so we render
+            // the raw snapshot rather than hiding everything.
+            portfolioTickers
+              ? (raw.holding_outlooks_1d || []).filter((r: any) =>
+                  r?.ticker ? portfolioTickers.has(r.ticker) : false
+                )
+              : (raw.holding_outlooks_1d || [])
+          }
+        />
       </Section>
 
       <Section num="006 / 006" title="Reasoning" glyph="✦">
