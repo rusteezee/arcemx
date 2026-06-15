@@ -514,6 +514,7 @@ async def sync_to_supabase(user_id: str = "default"):
                     await asyncio.sleep(2 * attempt)
                     continue
             n_h = 0
+            live_holding_tickers: set[str] = set()
             for h in holdings:
                 name = h.get("investment", "")
                 code = h.get("investment_code", "")
@@ -532,6 +533,7 @@ async def sync_to_supabase(user_id: str = "default"):
                     continue
 
                 ticker = to_yf(raw_ticker)
+                live_holding_tickers.add(ticker)
                 try:
                     sb.table("portfolio").upsert({
                         "user_id": user_id, "ticker": ticker,
@@ -541,6 +543,30 @@ async def sync_to_supabase(user_id: str = "default"):
                     print(f"  ✓ {ticker}: {qty:g} units @ ₹{avg:.2f}")
                 except Exception as e:
                     print(f"holding upsert fail {ticker}: {e}")
+
+            # Prune stale holdings (mirrors the wishlist cleanup above).
+            # INDmoney is now the source of truth: rows in Supabase that
+            # do not appear in the holdings response are positions the
+            # user has SOLD in the app but were never deleted because
+            # the prior sync was upsert-only. 14/06/2026: SUZLON.NS
+            # stayed visible in Portfolio + Sensei pages after exit
+            # until this prune block landed. Guarded against an empty
+            # response (transient INDmoney 512 / rate limit) so a bad
+            # fetch does not wipe the real portfolio.
+            try:
+                existing = sb.table("portfolio").select("ticker").eq(
+                    "user_id", user_id).execute().data or []
+                existing_tickers = {r.get("ticker") for r in existing if r.get("ticker")}
+                stale = existing_tickers - live_holding_tickers
+                if stale and live_holding_tickers:
+                    print(f"  pruning {len(stale)} stale holding rows: {sorted(stale)}")
+                    for t in stale:
+                        sb.table("portfolio").delete().eq(
+                            "user_id", user_id).eq("ticker", t).execute()
+                elif stale and not live_holding_tickers:
+                    print("  holdings response empty; skipping stale cleanup")
+            except Exception as e:
+                print(f"holding cleanup fail: {e}")
 
     # Log sync timestamp
     try:
