@@ -31,7 +31,20 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -r requirements.txt
+      # HuggingFace model cache for Qwen3-Embedding-0.6B (~1.2 GB).
+      # Phase 1 RAG retrieval inside feedback.build_feedback() embeds
+      # today's tape state at call time; without this cache every
+      # morning run would re-download the model, eating ~90 s wall
+      # clock and ~2 GB egress.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-${{ hashFiles('requirements-embed.txt') }}
+      - name: Install (analyzer + embed for Phase 1 retrieval)
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-embed.txt
       - name: Run aggregator (skips when the bot already ran this morning)
         id: agg
         env:

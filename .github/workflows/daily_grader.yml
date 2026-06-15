@@ -5,6 +5,13 @@ on:
     # 17:00 IST = 11:30 UTC, Mon-Fri (90 min after market close, yfinance EOD settled)
     - cron: "30 11 * * 1-5"
   workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Re-embed historic prediction_scores rows (Phase 1 RAG one-shot)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
 
 # See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.
 env:
@@ -19,15 +26,35 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Cache deps
+      - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-      - name: Install
-        run: pip install -r requirements.txt
-      - name: Grade past predictions
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'requirements-embed.txt') }}
+      # HuggingFace model cache. Qwen3-Embedding-0.6B is ~1.2 GB;
+      # without this cache every grader pass would re-download it,
+      # eating ~2 GB egress and ~90 s wall clock. Keyed only on the
+      # embed deps file so unrelated requirement bumps do not bust it.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-${{ hashFiles('requirements-embed.txt') }}
+      - name: Install (analyzer + embed)
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-embed.txt
+      - name: Grade past predictions + embed incremental
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python -m analyzer.grader
+      # Manual backfill: triggers re-embedding when the workflow is
+      # dispatched with backfill=true. Idempotent (embed_backfill skips
+      # already-embedded analysis_id, dimension pairs unless --force).
+      - name: Backfill prediction_embeddings (manual)
+        if: github.event_name == 'workflow_dispatch' && inputs.backfill == 'true'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -m analyzer.embed_backfill
