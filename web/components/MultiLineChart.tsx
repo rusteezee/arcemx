@@ -151,11 +151,21 @@ export function MultiLineChart({
             const v = typeof value === "number" ? value.toFixed(2) : value;
             return [normalize ? `${v}` : v, label];
           }}
+          /* allowEscapeViewBox lets the tooltip render outside the
+           * chart bounding box; without it the tooltip clips against
+           * the right edge of the chart on mobile and entries read as
+           * "Sensex : 10" or "BankNifty :" with values truncated.
+           * wrapperStyle caps the maximum width so the tooltip stays
+           * legible regardless of which point gets hovered. */
+          allowEscapeViewBox={{ x: true, y: true }}
+          wrapperStyle={{ zIndex: 50, maxWidth: 240 }}
           contentStyle={{
             background: "var(--card)",
             border: "1px solid var(--border)",
             borderRadius: 12,
             fontSize: 12,
+            maxWidth: 240,
+            whiteSpace: "normal",
           }}
         />
         {visible.map((s, i) => (

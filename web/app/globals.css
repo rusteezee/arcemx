@@ -201,7 +201,13 @@ table.data td.num { white-space: nowrap; }
 /* Same scroll behaviour for short horizontal rows (window-pill rows,
  * compact chart toolbars). Scrollbar is hidden because a 6px bar under
  * a row of 8 pills reads as a "stray line" rather than an affordance.
- * Touch-swipe still scrolls. */
+ * Touch-swipe still scrolls.
+ *
+ * The global ::-webkit-scrollbar rule above sets height: 10px on every
+ * scrollable element; some Chromium builds reserve that gutter even
+ * with `display: none`. Setting height/width to 0 explicitly here as
+ * well so the bar collapses to zero pixels and no track-strip can
+ * render below the pill row. */
 .h-scroll {
   overflow-x: auto;
   overflow-y: hidden;
@@ -209,7 +215,11 @@ table.data td.num { white-space: nowrap; }
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
-.h-scroll::-webkit-scrollbar { display: none; }
+.h-scroll::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
 
 /* Mobile-only table tuning.
  *
