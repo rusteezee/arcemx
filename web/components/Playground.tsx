@@ -167,8 +167,8 @@ export function Playground({
                       {it.range ? formatNumber(it.range) : "·"}
                     </td>
                     <td className="num whitespace-nowrap">{it.confidence ?? "·"}</td>
-                    <td className="clamp-3 text-[var(--muted)] text-sm leading-snug">
-                      {it.driver ? polishMarketText(it.driver) : "·"}
+                    <td className="text-[var(--muted)] text-sm leading-snug">
+                      <div className="clamp-3">{it.driver ? polishMarketText(it.driver) : "·"}</div>
                     </td>
                   </tr>
                 );

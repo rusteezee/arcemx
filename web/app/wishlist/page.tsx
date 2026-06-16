@@ -168,8 +168,8 @@ export default function WishlistPage() {
                       <td className="num whitespace-nowrap">
                         {outlook.confidence ?? "·"}
                       </td>
-                      <td className="clamp-3 text-[var(--muted)] text-sm leading-snug">
-                        {outlook.key_driver ? polishMarketText(outlook.key_driver) : "·"}
+                      <td className="text-[var(--muted)] text-sm leading-snug">
+                        <div className="clamp-3">{outlook.key_driver ? polishMarketText(outlook.key_driver) : "·"}</div>
                       </td>
                     </>
                   ) : (

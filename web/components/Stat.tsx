@@ -16,7 +16,7 @@ export function Stat({ label, value, delta, deltaPositive, glyph }: StatProps) {
         <div className="section-num">{label}</div>
         {glyph && <span className="glyph text-sm">{glyph}</span>}
       </div>
-      <div className="text-2xl font-semibold tracking-tight num">{value}</div>
+      <div className="text-xl sm:text-2xl font-semibold tracking-tight num break-words">{value}</div>
       {delta && (
         <div
           className={cn(

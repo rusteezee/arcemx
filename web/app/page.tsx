@@ -220,11 +220,8 @@ export default function TodayPage() {
                       <td className="whitespace-nowrap">
                         <VerdictPill v={v.verdict} />
                       </td>
-                      <td
-                        className="clamp-3 text-[var(--muted)] leading-snug"
-                        style={{ maxWidth: "44rem" }}
-                      >
-                        {polishMarketText(v.reason)}
+                      <td className="text-[var(--muted)] leading-snug">
+                        <div className="clamp-3">{polishMarketText(v.reason)}</div>
                       </td>
                       <td className="num whitespace-nowrap text-[var(--gain)]">{formatINR(v.target)}</td>
                       <td className="num whitespace-nowrap text-[var(--loss)]">{formatINR(v.stop_loss)}</td>
@@ -549,8 +546,8 @@ function StockOutlookTable({ title, rows }: { title: string; rows: any[] }) {
                   <td className="whitespace-nowrap"><DirPill direction={r.direction} /></td>
                   <td className="num whitespace-nowrap">{r.range ? formatINR(r.range) : "·"}</td>
                   <td className="num whitespace-nowrap">{r.confidence ?? "·"}</td>
-                  <td className="clamp-3 text-[var(--muted)] text-sm leading-snug">
-                    {polishMarketText(r.key_driver)}
+                  <td className="text-[var(--muted)] text-sm leading-snug">
+                    <div className="clamp-3">{polishMarketText(r.key_driver)}</div>
                   </td>
                 </tr>
               ))}

@@ -198,22 +198,18 @@ table.data td.num { white-space: nowrap; }
   border-radius: 6px;
 }
 
-/* Same scrollbar styling for any horizontally-scrolled wrapper (charts,
- * pill rows). Keeps the affordance consistent across the dashboard. */
+/* Same scroll behaviour for short horizontal rows (window-pill rows,
+ * compact chart toolbars). Scrollbar is hidden because a 6px bar under
+ * a row of 8 pills reads as a "stray line" rather than an affordance.
+ * Touch-swipe still scrolls. */
 .h-scroll {
   overflow-x: auto;
   overflow-y: hidden;
   max-width: 100%;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  scrollbar-width: none;
 }
-.h-scroll::-webkit-scrollbar { height: 6px; }
-.h-scroll::-webkit-scrollbar-track { background: transparent; }
-.h-scroll::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 6px;
-}
+.h-scroll::-webkit-scrollbar { display: none; }
 
 /* Mobile-only table tuning.
  *
@@ -242,19 +238,33 @@ table.data td.num { white-space: nowrap; }
   }
   /* Numeric cells never wrap into the neighbour's column. */
   table.data td.num { white-space: nowrap; }
-  /* Long prose cells (reasoning, why, key driver) clamp to a fixed
-   * line count so every row in the table is the same height. Without
-   * this each row stretches to its longest prose cell and the column
-   * grid looks jagged. 3 lines fits the typical reasoning sentence
-   * within mobile cell width; longer text gets ellipsis. */
-  table.data td.clamp-3 {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    overflow: hidden;
-    white-space: normal;
-  }
+  /* Uniform row height for tables that mix prose cells with short
+   * cells: forces every row to the same min-height so the column grid
+   * looks even instead of jagged when one row has more prose. */
+  table.data tbody tr { height: 4.6rem; }
+}
+
+/* Line-clamp for prose cells inside tables.
+ *
+ * Applied to a child <div> in the JSX, not the <td> itself: a <td> is
+ * forced to display: table-cell by the browser's UA stylesheet, which
+ * silently ignores the display: -webkit-box that line-clamp requires.
+ * On a block-level <div> inside the cell the clamp works correctly.
+ *
+ * min-width keeps the cell from collapsing to a single-word column
+ * when other columns claim the space; max-width keeps it from sprawl
+ * on wide desktop layouts. The clamp-3 cell text is the only place
+ * full prose is rendered in tables, so these bounds are intentional. */
+.clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
+  min-width: 12rem;
+  max-width: 22rem;
 }
 
 .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }

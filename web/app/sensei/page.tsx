@@ -303,15 +303,15 @@ export default function SenseiPage() {
               <tbody>
                 {row.what_worked.map((w: any, i: number) => (
                   <tr key={i}>
-                    <td className="clamp-3 font-medium" style={{ wordBreak: "break-word" }}>
-                      {humaniseText(w.call)}
+                    <td className="font-medium">
+                      <div className="clamp-3">{humaniseText(w.call)}</div>
                     </td>
                     <td className="whitespace-nowrap">
                       {humaniseDim(w.dimension)}
                     </td>
                     <td className="num">{w.score_pct ?? "·"}</td>
-                    <td className="clamp-3 text-[var(--muted)] text-sm" style={{ wordBreak: "break-word" }}>
-                      {humaniseText(w.evidence)}
+                    <td className="text-[var(--muted)] text-sm">
+                      <div className="clamp-3">{humaniseText(w.evidence)}</div>
                     </td>
                   </tr>
                 ))}
@@ -358,8 +358,8 @@ export default function SenseiPage() {
               <tbody>
                 {row.what_missed.map((m: any, i: number) => (
                   <tr key={i}>
-                    <td className="clamp-3 font-medium" style={{ wordBreak: "break-word" }}>
-                      {humaniseText(m.call)}
+                    <td className="font-medium">
+                      <div className="clamp-3">{humaniseText(m.call)}</div>
                     </td>
                     <td className="whitespace-nowrap">
                       {humaniseDim(m.dimension)}
@@ -370,8 +370,8 @@ export default function SenseiPage() {
                     <td className="num whitespace-nowrap">
                       {m.gap ?? "·"}
                     </td>
-                    <td className="clamp-3 text-[var(--muted)] text-sm" style={{ wordBreak: "break-word" }}>
-                      {m.root_cause ? humaniseText(m.root_cause) : "·"}
+                    <td className="text-[var(--muted)] text-sm">
+                      <div className="clamp-3">{m.root_cause ? humaniseText(m.root_cause) : "·"}</div>
                     </td>
                   </tr>
                 ))}

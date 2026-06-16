@@ -231,28 +231,38 @@ export function PortfolioScorecard() {
         </div>
       )}
 
-      {/* Score header */}
-      <div className="card p-6">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-          <div>
-            <div className="section-num mb-1">Portfolio Score</div>
-            <div className="text-5xl font-semibold num leading-none">{score.total}</div>
-            <div className="text-xs text-[var(--muted)] mt-2">
-              {hasHistory ? "Composite of 5 components" : "Structural only (history thin)"}
-            </div>
+      {/* Score header
+       *
+       * Four equal-sized stat boxes in a 2x2 grid (mobile) or 1x4 row
+       * (desktop). Previously the Score block was a plain div while the
+       * other three were Stat cards, so on mobile the Score box looked
+       * borderless and the row read as 1 unstyled box + 3 cards. Now
+       * each tile is the same card-styled container and the layout is
+       * uniform. NAV value uses smaller text on mobile so 7-figure
+       * rupee amounts ("₹51,819.15") sit inside the card padding
+       * rather than crushing against the right edge. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-2">
+            <div className="section-num">Portfolio Score</div>
+            <span className="glyph text-sm">✦</span>
           </div>
-          <Stat label="NAV" value={formatMoney(totalValue, "RELIANCE.NS")} glyph="◈" />
-          <Stat
-            label="30d alpha vs NIFTY"
-            value={metrics.alpha30dPct == null ? "·" : `${metrics.alpha30dPct >= 0 ? "+" : ""}${metrics.alpha30dPct.toFixed(2)} pp`}
-            glyph="⬡"
-          />
-          <Stat
-            label="Max drawdown"
-            value={metrics.maxDrawdownPct == null ? "·" : `${metrics.maxDrawdownPct.toFixed(1)}%`}
-            glyph="◉"
-          />
+          <div className="text-3xl font-semibold tracking-tight num leading-none">{score.total}</div>
+          <div className="text-xs text-[var(--muted)] mt-2 leading-snug">
+            {hasHistory ? "Composite of 5 components" : "Structural only (history thin)"}
+          </div>
         </div>
+        <Stat label="NAV" value={formatMoney(totalValue, "RELIANCE.NS")} glyph="◈" />
+        <Stat
+          label="30d alpha vs NIFTY"
+          value={metrics.alpha30dPct == null ? "·" : `${metrics.alpha30dPct >= 0 ? "+" : ""}${metrics.alpha30dPct.toFixed(2)} pp`}
+          glyph="⬡"
+        />
+        <Stat
+          label="Max drawdown"
+          value={metrics.maxDrawdownPct == null ? "·" : `${metrics.maxDrawdownPct.toFixed(1)}%`}
+          glyph="◉"
+        />
       </div>
 
       {/* Component scores */}
@@ -363,8 +373,8 @@ export function PortfolioScorecard() {
                   <td className="whitespace-nowrap">
                     {take ? <VerdictPill v={take.verdict} /> : <span className="text-[var(--muted)]">·</span>}
                   </td>
-                  <td className="clamp-3 text-[var(--muted)] text-sm" style={{ wordBreak: "break-word" }}>
-                    {take?.why || "·"}
+                  <td className="text-[var(--muted)] text-sm">
+                    <div className="clamp-3">{take?.why || "·"}</div>
                   </td>
                 </tr>
               );
