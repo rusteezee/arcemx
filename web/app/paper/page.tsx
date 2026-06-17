@@ -8,9 +8,10 @@ import { sb } from "@/lib/supabase";
 import { formatINR, formatPct, stripTicker } from "@/lib/utils";
 import {
   computePaperMetrics,
-  perDimSkill,
+  perDimSkillByWindow,
+  skillCellStyle,
   type PaperMetrics,
-  type DimSkill,
+  type DimSkillByWindow,
   type PredictionScoreRow,
 } from "@/lib/metrics";
 
@@ -106,7 +107,7 @@ export default function PaperPage() {
       const [tRes, sRes, pRes] = await Promise.all([
         sb.from("paper_trades").select("*").order("entered_at", { ascending: false }).limit(500),
         sb.from("paper_signals").select("*").gte("evaluated_at", since14).order("evaluated_at", { ascending: false }).limit(500),
-        sb.from("prediction_scores").select("dimension,score").gte("scored_at", since90).limit(5000),
+        sb.from("prediction_scores").select("dimension,score,scored_at").gte("scored_at", since90).limit(5000),
       ]);
       setTrades((tRes.data || []) as PaperTrade[]);
       setSignals((sRes.data || []) as PaperSignal[]);
@@ -121,7 +122,10 @@ export default function PaperPage() {
     () => computePaperMetrics(closed.map((t) => ({ exit_at: t.exit_at, net_pnl: t.net_pnl }))),
     [closed],
   );
-  const dimSkills: DimSkill[] = useMemo(() => perDimSkill(predScores), [predScores]);
+  const dimHeatmap: DimSkillByWindow[] = useMemo(
+    () => perDimSkillByWindow(predScores, [7, 30, 90]),
+    [predScores],
+  );
 
   const totalNetPnl = closed.reduce((s, t) => s + (t.net_pnl || 0), 0);
   const totalGrossPnl = closed.reduce((s, t) => s + (t.gross_pnl || 0), 0);
@@ -397,11 +401,11 @@ export default function PaperPage() {
 
       <Section
         num="005 / 006"
-        title="Per-Dim Skill"
+        title="Per-Dim Skill Heatmap"
         glyph="◉"
-        description="(mean accuracy - 50) / stdev across the last 90 days. Above 1.0 = dim's accuracy distribution sits comfortably above coin-flip noise. Below 0 = systematically worse than guessing. Low-sample dims (<5) shown but marked."
+        description="Skill ratio = (mean accuracy - 50) / stdev. Above 1.0 = dim's accuracy distribution sits comfortably above coin-flip noise. Below 0 = worse than guessing. Cells colored by skill: green = positive, red = negative, intensity tracks magnitude. Reading across rows shows whether a dim's skill is improving or decaying. Low-sample cells (<5) shown as dim text."
       >
-        {dimSkills.length === 0 ? (
+        {dimHeatmap.length === 0 ? (
           <EmptyState
             title="No graded predictions in window"
             hint="Grader has not produced scores in the last 90 days."
@@ -413,31 +417,35 @@ export default function PaperPage() {
                 <thead>
                   <tr>
                     <th>Dimension</th>
-                    <th>Samples</th>
-                    <th>Mean Acc</th>
-                    <th>Stdev</th>
-                    <th>Skill Ratio</th>
+                    <th>7d skill (n)</th>
+                    <th>30d skill (n)</th>
+                    <th>90d skill (n)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {dimSkills.map((d) => (
+                  {dimHeatmap.map((d) => (
                     <tr key={d.dimension}>
-                      <td className="whitespace-nowrap">
-                        {d.dimension}
-                        {d.lowSample && <span className="ml-2 text-[var(--muted)] text-xs">low n</span>}
-                      </td>
-                      <td className="num">{d.sampleSize}</td>
-                      <td className="num">{d.meanAcc.toFixed(1)}</td>
-                      <td className="num">{d.stdevAcc.toFixed(1)}</td>
-                      <td className={`num font-medium ${
-                        d.skillRatio >= 1.0
-                          ? "text-[var(--gain)]"
-                          : d.skillRatio >= 0
-                          ? "text-[var(--muted)]"
-                          : "text-[var(--loss)]"
-                      }`}>
-                        {d.skillRatio.toFixed(2)}
-                      </td>
+                      <td className="whitespace-nowrap font-medium">{d.dimension}</td>
+                      {[7, 30, 90].map((w) => {
+                        const cell = d.byWindow[w];
+                        const skill = cell?.skillRatio ?? null;
+                        const style = skillCellStyle(skill);
+                        return (
+                          <td
+                            key={w}
+                            className="num whitespace-nowrap"
+                            style={style}
+                          >
+                            {cell && cell.sampleSize > 0 ? (
+                              <span className={cell.lowSample ? "text-[var(--muted)]" : ""}>
+                                {cell.skillRatio.toFixed(2)} <span className="text-xs text-[var(--muted)]">({cell.sampleSize})</span>
+                              </span>
+                            ) : (
+                              <span className="text-[var(--muted)]">·</span>
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>

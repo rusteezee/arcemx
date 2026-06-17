@@ -227,6 +227,7 @@ export function computePaperMetrics(trades: ClosedTrade[],
 export interface PredictionScoreRow {
   dimension: string;
   score: number | null;
+  scored_at?: string | null;
 }
 
 export interface DimSkill {
@@ -261,4 +262,74 @@ export function perDimSkill(rows: PredictionScoreRow[], minSamples = 5): DimSkil
   }
   out.sort((a, b) => b.skillRatio - a.skillRatio);
   return out;
+}
+
+// Per-dim skill cut by trailing time windows. Used by the heatmap viz
+// on /paper: rows = dims, cols = {7d, 30d, 90d}, cells = skill ratio
+// over that trailing window.
+export interface DimSkillByWindow {
+  dimension: string;
+  byWindow: Record<number, DimSkill | null>;
+}
+
+export function perDimSkillByWindow(
+  rows: PredictionScoreRow[],
+  windowDays: number[] = [7, 30, 90],
+  minSamples = 5,
+): DimSkillByWindow[] {
+  const nowMs = Date.now();
+  const dimsSeen = new Set<string>();
+  for (const r of rows) {
+    if (r.dimension) dimsSeen.add(r.dimension);
+  }
+  const out: DimSkillByWindow[] = [];
+  for (const dim of dimsSeen) {
+    const dimRows = rows.filter((r) => r.dimension === dim);
+    const byWindow: Record<number, DimSkill | null> = {};
+    for (const w of windowDays) {
+      const cutoff = nowMs - w * 86400_000;
+      const slice = dimRows.filter((r) => {
+        if (!r.scored_at) return false;
+        return new Date(r.scored_at).getTime() >= cutoff;
+      });
+      const skills = perDimSkill(slice, minSamples);
+      byWindow[w] = skills.find((s) => s.dimension === dim) || null;
+    }
+    out.push({ dimension: dim, byWindow });
+  }
+  // Sort by widest window's skill ratio descending so the strongest
+  // dims surface at the top of the heatmap regardless of which window
+  // they spike in.
+  const wMax = Math.max(...windowDays);
+  out.sort((a, b) => {
+    const ra = a.byWindow[wMax]?.skillRatio ?? -999;
+    const rb = b.byWindow[wMax]?.skillRatio ?? -999;
+    return rb - ra;
+  });
+  return out;
+}
+
+// Heatmap cell background style. Continuous gradient from red (skill
+// <= -1) through gray (skill ~= 0) to green (skill >= 2). Returns a
+// CSS background-color string the caller can drop onto a <td>.
+export function skillCellStyle(skill: number | null | undefined): { background: string; color: string } {
+  if (skill == null || !isFinite(skill)) {
+    return { background: "transparent", color: "var(--muted)" };
+  }
+  // Clamp to a visible range so a runaway 10+ skill doesn't make every
+  // other cell look the same shade of green.
+  const s = Math.max(-1.5, Math.min(2.5, skill));
+  if (s >= 0) {
+    // 0 -> 0% opacity, 2 -> 35% opacity green
+    const alpha = Math.min(0.35, (s / 2.0) * 0.35);
+    return {
+      background: `color-mix(in srgb, var(--gain) ${(alpha * 100).toFixed(0)}%, transparent)`,
+      color: "var(--foreground)",
+    };
+  }
+  const alpha = Math.min(0.35, (Math.abs(s) / 1.5) * 0.35);
+  return {
+    background: `color-mix(in srgb, var(--loss) ${(alpha * 100).toFixed(0)}%, transparent)`,
+    color: "var(--foreground)",
+  };
 }
