@@ -617,6 +617,7 @@ async def _start_health_server(port: int):
             if method == "POST" and (
                 path.startswith("/trigger/sensei")
                 or path.startswith("/trigger/grader")
+                or path.startswith("/trigger/paper-eval")
             ):
                 token = headers.get("x-trigger-token", "")
                 if not trigger_secret or token != trigger_secret:
@@ -697,7 +698,7 @@ async def _start_health_server(port: int):
                                 _JOB_RUNNING.discard("sensei")
                                 out = _json.dumps({"ok": False, "job": "sensei", "error": str(e)}).encode()
                                 status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
-                else:  # /trigger/grader
+                elif path.startswith("/trigger/grader"):
                     lookback = payload.get("lookback_days", 90)
                     try:
                         lookback_int = int(lookback)
@@ -762,6 +763,64 @@ async def _start_health_server(port: int):
                             _JOB_RUNNING.discard("grader")
                             out = _json.dumps({"ok": False, "job": "grader", "error": str(e)}).encode()
                             status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
+
+                elif path.startswith("/trigger/paper-eval"):
+                    # Phase A ad-hoc paper trader trigger. The daily
+                    # grader runs the trader as part of its sequence,
+                    # so this endpoint exists for dashboard-driven
+                    # manual evaluation (re-run after a signal correction,
+                    # smoke after a schema change, etc). Same GH-first /
+                    # in-process fallback shape as /trigger/grader, but
+                    # the in-process branch only runs the paper trader
+                    # itself rather than the full grader pipeline so a
+                    # manual click is cheap.
+                    if "paper-eval" in _JOB_RUNNING:
+                        out = _json.dumps({
+                            "ok": False, "job": "paper-eval",
+                            "status": "already_running",
+                        }).encode()
+                        status_line = b"HTTP/1.1 409 Conflict\r\n"
+                    else:
+                        gh_ok, gh_detail = await _dispatch_github_workflow("daily_grader.yml")
+                        if gh_ok:
+                            _acquire_dispatch_lock("paper-eval", ttl_seconds=600)
+                            out = _json.dumps({
+                                "ok": True, "job": "paper-eval", "status": "queued",
+                                "via": "github",
+                            }).encode()
+                            status_line = b"HTTP/1.1 202 Accepted\r\n"
+                        else:
+                            print(f"  /trigger/paper-eval: {gh_detail}; falling back in-process")
+                            try:
+                                import asyncio as _asyncio
+                                from analyzer.paper_trader import run_daily as _paper_run
+
+                                async def _bg_paper():
+                                    try:
+                                        print("Background paper-eval starting...")
+                                        loop = _asyncio.get_event_loop()
+                                        await loop.run_in_executor(None, _paper_run)
+                                        print("Background paper-eval complete")
+                                    except Exception as bgerr:
+                                        import traceback
+                                        print(f"Background paper-eval failed: {bgerr}")
+                                        traceback.print_exc()
+                                    finally:
+                                        _JOB_RUNNING.discard("paper-eval")
+
+                                _JOB_RUNNING.add("paper-eval")
+                                task = _asyncio.create_task(_bg_paper())
+                                _BG_TASKS.add(task)
+                                task.add_done_callback(_BG_TASKS.discard)
+                                out = _json.dumps({
+                                    "ok": True, "job": "paper-eval", "status": "queued",
+                                    "via": "in_process",
+                                }).encode()
+                                status_line = b"HTTP/1.1 202 Accepted\r\n"
+                            except Exception as e:
+                                _JOB_RUNNING.discard("paper-eval")
+                                out = _json.dumps({"ok": False, "job": "paper-eval", "error": str(e)}).encode()
+                                status_line = b"HTTP/1.1 500 Internal Server Error\r\n"
 
                 resp = (
                     status_line +
