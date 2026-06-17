@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Section } from "@/components/Section";
 import { Stat } from "@/components/Stat";
 import { EmptyState } from "@/components/EmptyState";
+import { MultiLineChart, type Series } from "@/components/MultiLineChart";
 import { sb } from "@/lib/supabase";
 import { formatINR, formatPct, stripTicker } from "@/lib/utils";
 import {
@@ -14,6 +15,11 @@ import {
   type DimSkillByWindow,
   type PredictionScoreRow,
 } from "@/lib/metrics";
+
+interface PriceRow {
+  ts: string;
+  close: number;
+}
 
 interface PaperTrade {
   id: number;
@@ -98,6 +104,7 @@ export default function PaperPage() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [signals, setSignals] = useState<PaperSignal[]>([]);
   const [predScores, setPredScores] = useState<PredictionScoreRow[]>([]);
+  const [niftyPrices, setNiftyPrices] = useState<PriceRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -109,9 +116,29 @@ export default function PaperPage() {
         sb.from("paper_signals").select("*").gte("evaluated_at", since14).order("evaluated_at", { ascending: false }).limit(500),
         sb.from("prediction_scores").select("dimension,score,scored_at").gte("scored_at", since90).limit(5000),
       ]);
-      setTrades((tRes.data || []) as PaperTrade[]);
+      const allTrades = (tRes.data || []) as PaperTrade[];
+      setTrades(allTrades);
       setSignals((sRes.data || []) as PaperSignal[]);
       setPredScores((pRes.data || []) as PredictionScoreRow[]);
+
+      // NIFTY benchmark for the equity-curve overlay. Only pull rows
+      // spanning the closed-trade range; if there are no closed trades
+      // there's nothing to overlay against, so skip the fetch.
+      const closedExits = allTrades
+        .filter((t) => t.status !== "open" && t.exit_at)
+        .map((t) => t.exit_at!.slice(0, 10))
+        .sort();
+      if (closedExits.length) {
+        const startDate = closedExits[0];
+        const niftyRes = await sb
+          .from("prices")
+          .select("ts,close")
+          .eq("ticker", "^NSEI")
+          .gte("ts", startDate)
+          .order("ts", { ascending: true })
+          .limit(1000);
+        setNiftyPrices((niftyRes.data || []) as PriceRow[]);
+      }
       setLoading(false);
     })();
   }, []);
@@ -188,7 +215,7 @@ export default function PaperPage() {
         </p>
       </div>
 
-      <Section num="001 / 006" title="Realised P&L" glyph="✦">
+      <Section num="001 / 008" title="Realised P&L" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat label="Open Positions" value={open.length.toString()} />
           <Stat label="Closed Trades" value={closed.length.toString()} />
@@ -227,7 +254,48 @@ export default function PaperPage() {
       </Section>
 
       <Section
-        num="002 / 006"
+        num="002 / 008"
+        title="Equity Curve vs NIFTY"
+        glyph="⬡"
+        description="Cumulative net P&L on the paper trader's working capital versus a NIFTY 50 baseline over the same date span. Both series rebased to 100 at the first closed-trade date so the comparison is a pure relative-return read. Paper above NIFTY = positive alpha after friction; below NIFTY = the gates are letting noise through."
+      >
+        {(() => {
+          const curve = metrics.equityCurve;
+          if (curve.length === 0 || niftyPrices.length === 0) {
+            return (
+              <EmptyState
+                title="Curve renders after first closed trade"
+                hint="Each closed trade plots one point. NIFTY overlay fills in once the date range covers at least one prices row."
+              />
+            );
+          }
+          const paperPoints = curve.map((p) => ({
+            date: p.date,
+            value: 65_000 + p.cum,
+          }));
+          const niftyPoints = niftyPrices.map((r) => ({
+            date: r.ts.slice(0, 10),
+            value: r.close,
+          }));
+          const series: Series[] = [
+            { key: "paper", label: "Paper Equity", color: "var(--foreground)", points: paperPoints },
+            { key: "nifty", label: "NIFTY 50", color: "var(--muted)", points: niftyPoints },
+          ];
+          return (
+            <div className="card p-6">
+              <MultiLineChart
+                series={series}
+                visibleKeys={new Set(["paper", "nifty"])}
+                normalize
+                height={340}
+              />
+            </div>
+          );
+        })()}
+      </Section>
+
+      <Section
+        num="003 / 008"
         title="Edge Metrics"
         glyph="◇"
         description="Sharpe, max drawdown, and Probabilistic Sharpe (Bailey-Lopez de Prado, skew + kurt adjusted). PSR is the probability the true Sharpe exceeds zero given the sample. Risk-free leg = 6.5% RBI repo proxy."
@@ -301,7 +369,7 @@ export default function PaperPage() {
         </div>
       </Section>
 
-      <Section num="003 / 006" title="Open Positions" glyph="◈">
+      <Section num="004 / 008" title="Open Positions" glyph="◈">
         {open.length === 0 ? (
           <EmptyState
             title="No open paper positions"
@@ -345,7 +413,7 @@ export default function PaperPage() {
         )}
       </Section>
 
-      <Section num="004 / 006" title="Closed Trades" glyph="⬡">
+      <Section num="005 / 008" title="Closed Trades" glyph="⬡">
         {closed.length === 0 ? (
           <EmptyState
             title="No closed trades yet"
@@ -400,7 +468,103 @@ export default function PaperPage() {
       </Section>
 
       <Section
-        num="005 / 006"
+        num="006 / 008"
+        title="Slippage Attribution Waterfall"
+        glyph="◮"
+        description="Where the gross P&L went. Friction layers stripped from gross in order: slippage (spread + market impact, modeled per cap tier), brokerage (INDstocks flat ₹5/order + exchange + SEBI + GST), STT (0.1% delivery sell). Below 30% of gross = healthy. Above = the gates are letting illiquid or oversized signals through."
+      >
+        {(() => {
+          if (closed.length === 0) {
+            return (
+              <EmptyState
+                title="Waterfall renders after first closed trade"
+                hint="Friction attribution needs realised costs from at least one round-trip."
+              />
+            );
+          }
+          const totalSlippage = closed.reduce((s, t) => s + (t.slippage_cost || 0), 0);
+          const totalBrokerage = closed.reduce((s, t) => s + (t.brokerage || 0), 0);
+          const totalStt = closed.reduce((s, t) => s + (t.stt || 0), 0);
+          const grossAbs = Math.abs(totalGrossPnl) || 1;
+          const frictionPctOfGross = grossAbs > 0 ? (totalFriction / grossAbs) * 100 : 0;
+          const rows = [
+            { label: "Gross P&L", value: totalGrossPnl, share: 100, sign: totalGrossPnl >= 0 ? "pos" : "neg" },
+            { label: "Slippage", value: -totalSlippage, share: -(totalSlippage / grossAbs) * 100, sign: "cost" },
+            { label: "Brokerage + Exch + GST", value: -totalBrokerage, share: -(totalBrokerage / grossAbs) * 100, sign: "cost" },
+            { label: "STT", value: -totalStt, share: -(totalStt / grossAbs) * 100, sign: "cost" },
+            { label: "Net P&L", value: totalNetPnl, share: (totalNetPnl / grossAbs) * 100, sign: totalNetPnl >= 0 ? "pos" : "neg" },
+          ];
+          return (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+                <Stat
+                  label="Friction % of Gross"
+                  value={formatPct(frictionPctOfGross, false)}
+                  deltaPositive={frictionPctOfGross <= 30.0}
+                />
+                <Stat label="Total Slippage" value={formatINR(totalSlippage)} />
+                <Stat label="Total Brokerage + STT" value={formatINR(totalBrokerage + totalStt)} />
+              </div>
+              <div className="card overflow-hidden">
+                <div className="table-scroll">
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th>Layer</th>
+                        <th>Amount</th>
+                        <th>% of |Gross|</th>
+                        <th>Bar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => {
+                        const barWidth = Math.min(100, Math.abs(r.share));
+                        const barColor =
+                          r.sign === "pos"
+                            ? "var(--gain)"
+                            : r.sign === "neg"
+                            ? "var(--loss)"
+                            : "var(--warn)";
+                        return (
+                          <tr key={r.label}>
+                            <td className="font-medium whitespace-nowrap">{r.label}</td>
+                            <td
+                              className={`num whitespace-nowrap ${
+                                r.value >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"
+                              }`}
+                            >
+                              {r.value >= 0 ? "+" : ""}
+                              {formatINR(r.value)}
+                            </td>
+                            <td className="num whitespace-nowrap">
+                              {r.share >= 0 ? "+" : ""}
+                              {r.share.toFixed(1)}%
+                            </td>
+                            <td style={{ minWidth: 180 }}>
+                              <div
+                                style={{
+                                  width: `${barWidth}%`,
+                                  height: 10,
+                                  background: barColor,
+                                  borderRadius: 4,
+                                  opacity: 0.7,
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          );
+        })()}
+      </Section>
+
+      <Section
+        num="007 / 008"
         title="Per-Dim Skill Heatmap"
         glyph="◉"
         description="Skill ratio = (mean accuracy - 50) / stdev. Above 1.0 = dim's accuracy distribution sits comfortably above coin-flip noise. Below 0 = worse than guessing. Cells colored by skill: green = positive, red = negative, intensity tracks magnitude. Reading across rows shows whether a dim's skill is improving or decaying. Low-sample cells (<5) shown as dim text."
@@ -456,7 +620,7 @@ export default function PaperPage() {
       </Section>
 
       <Section
-        num="006 / 006"
+        num="008 / 008"
         title="Signal Activity"
         glyph="◐"
         description="Last 14 days. Every Stock Analyst buy is logged here even when skipped, so gate stack attribution stays computable."
