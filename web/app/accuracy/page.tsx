@@ -8,8 +8,15 @@ import { EmptyState } from "@/components/EmptyState";
 import { LineChart } from "@/components/LineChart";
 import { sb } from "@/lib/supabase";
 
+// "(1d)" suffix dropped from every next-day dimension: it was wrapping
+// the Stat card headers to two lines on mobile and added no
+// information (none of these dims have a non-1d sibling on this page).
+// Non-1d horizons keep the parenthetical (5d/7d/10d/14d/20d/60d/180d)
+// because those genuinely distinguish from a 1d version. "FII Cash
+// Flow Direction" shortened to "FII Cash Flow" so the card title fits
+// on a single line in the New Dimensions grid.
 const DIMENSION_LABELS: Record<string, string> = {
-  market_mood_1d: "Market Mood (1d)",
+  market_mood_1d: "Market Mood",
   direction_1d: "NIFTY Next Day Direction",
   range_1d: "NIFTY Next Day Range",
   direction_5d: "NIFTY 5-Day Trend",
@@ -27,16 +34,16 @@ const DIMENSION_LABELS: Record<string, string> = {
   verdict_7d: "Portfolio Verdicts (7d)",
   verdict_tp_sl: "Holding Target/SL Hit (20d)",
   wishlist_7d: "Wishlist Signals (7d)",
-  holding_outlook_dir_1d: "Holdings Direction (1d)",
-  holding_outlook_range_1d: "Holdings Range (1d)",
-  wishlist_outlook_dir_1d: "Wishlist Direction (1d)",
-  wishlist_outlook_range_1d: "Wishlist Range (1d)",
-  sector_dir_1d: "Sectors Direction (1d)",
-  sector_range_1d: "Sectors Range (1d)",
-  stock_range_1d: "Stock Range (1d)",
-  index_pair_1d: "NIFTY vs BankNifty (1d)",
-  cap_pair_1d: "NIFTY vs Midcap 150 (1d)",
-  fii_flow_1d: "FII Cash Flow Direction (1d)",
+  holding_outlook_dir_1d: "Holdings Direction",
+  holding_outlook_range_1d: "Holdings Range",
+  wishlist_outlook_dir_1d: "Wishlist Direction",
+  wishlist_outlook_range_1d: "Wishlist Range",
+  sector_dir_1d: "Sectors Direction",
+  sector_range_1d: "Sectors Range",
+  stock_range_1d: "Stock Range",
+  index_pair_1d: "NIFTY vs BankNifty",
+  cap_pair_1d: "NIFTY vs Midcap 150",
+  fii_flow_1d: "FII Cash Flow",
   short_pick_A_7d: "Short Picks · Tier A (7d)",
   short_pick_B_7d: "Short Picks · Tier B (7d)",
   short_pick_C_7d: "Short Picks · Tier C (7d)",

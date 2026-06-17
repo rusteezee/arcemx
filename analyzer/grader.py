@@ -886,11 +886,26 @@ def grade_all(lookback_days: int = 90):
                         ).json()
                         target_str = _date.fromisoformat(
                             nifty_anchor[2]).strftime("%d-%b-%Y")
+                        # API schema uses short keys: `d` for the
+                        # session date (e.g. "17-Jun-2026") and `fn`
+                        # for FII cash net in cr. The earlier code
+                        # looked up `date` / `fii_net`, which silently
+                        # returned None for every row, so actual_net
+                        # stayed None and no score was ever upserted
+                        # (zero scored fii_flow_1d rows over weeks of
+                        # predictions). Keep tolerant fallbacks so a
+                        # future schema flip back to long names still
+                        # works without a code change.
                         actual_net = None
                         for row in hist:
-                            if row.get("date") == target_str:
-                                actual_net = row.get("fii_net")
+                            row_date = row.get("d") or row.get("date")
+                            if row_date == target_str:
+                                actual_net = row.get("fn")
+                                if actual_net is None:
+                                    actual_net = row.get("fii_net")
                                 break
+                        if actual_net is None:
+                            print(f"  fii_flow grade skip: no row for {target_str} in {len(hist)} API rows")
                         if actual_net is not None:
                             if pred == "inflow":
                                 score = 100.0 if actual_net > 500 else (50.0 if -500 <= actual_net <= 500 else 0.0)
