@@ -195,7 +195,8 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/sell TICKER\n"
         "/add_wish TICKER /rm_wish TICKER\n"
         "/import. send CSV after (INDmoney export works)\n"
-        "/sync. pull holdings + watchlist from INDmoney MCP\n\n"
+        "/sync. pull holdings + watchlist from INDmoney MCP\n"
+        "/trade. Phase A paper-trader status + tier gate\n\n"
         f"Your chat ID: `{update.effective_chat.id}`",
         parse_mode="Markdown",
     )
@@ -352,6 +353,70 @@ async def add_wish(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     sb().table("wishlist").upsert({"user_id": uid, "ticker": t}, on_conflict="user_id,ticker").execute()
     await update.message.reply_text(f"Added {t}")
+
+
+async def trade_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Phase A paper-trader status: open positions, last 14d signal
+    histogram, current cleared tier + the gate(s) blocking the next."""
+    try:
+        s = sb()
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        since = (_dt.now(_tz.utc) - _td(days=14)).isoformat()
+        open_rows = s.table("paper_trades").select(
+            "ticker,fill_px,target_px,stop_px,confidence,expected_edge_pct,entered_at"
+        ).eq("status", "open").order("entered_at", desc=True).execute().data or []
+        closed_rows = s.table("paper_trades").select(
+            "net_pnl,status"
+        ).neq("status", "open").execute().data or []
+        signals = s.table("paper_signals").select(
+            "action,skip_reason"
+        ).gte("evaluated_at", since).execute().data or []
+
+        n_open = len(open_rows)
+        n_closed = len(closed_rows)
+        net = sum((r.get("net_pnl") or 0) for r in closed_rows)
+        n_enter = sum(1 for x in signals if x.get("action") == "enter")
+        n_skip = len(signals) - n_enter
+        skip_hist: dict[str, int] = {}
+        for x in signals:
+            if x.get("action") == "skip" and x.get("skip_reason"):
+                skip_hist[x["skip_reason"]] = skip_hist.get(x["skip_reason"], 0) + 1
+
+        # Tier eval via metrics module (best-effort).
+        tier_line = "tier: unknown"
+        try:
+            from analyzer.metrics import compute_paper_metrics as _cpm
+            bundle = _cpm()
+            te = bundle.get("tier_eval") or {}
+            pm = te.get("pass_map") or {}
+            tier_line = (
+                f"tier {te.get('cleared_tier', 0)} cleared, next T{te.get('next_tier')} "
+                f"({te.get('next_label', '')})\n"
+                f"  sharpe: {bundle.get('sharpe')} {'✓' if pm.get('sharpe') else '✗'}\n"
+                f"  max_dd: {bundle.get('max_drawdown', {}).get('max_dd_pct')}%"
+                f" {'✓' if pm.get('max_dd') else '✗'}\n"
+                f"  psr:    {bundle.get('psr')} {'✓' if pm.get('psr') else '✗'}"
+            )
+        except Exception as e:
+            tier_line = f"tier: metrics import skipped ({str(e)[:60]})"
+
+        msg = "*Trade status*\n\n"
+        msg += f"open: {n_open}, closed: {n_closed}, net: ₹{net:+.0f}\n\n"
+        if open_rows:
+            msg += "*open positions*\n"
+            for r in open_rows[:5]:
+                msg += (f"• `{r['ticker']}` fill ₹{r.get('fill_px') or 0:.1f} "
+                        f"T ₹{r.get('target_px') or 0:.1f} SL ₹{r.get('stop_px') or 0:.1f} "
+                        f"conf {r.get('confidence') or '-'}\n")
+            msg += "\n"
+        msg += f"*signals 14d* enter {n_enter}, skip {n_skip}\n"
+        if skip_hist:
+            for k, v in sorted(skip_hist.items(), key=lambda kv: -kv[1])[:6]:
+                msg += f"  {k}: {v}\n"
+        msg += "\n*gate*\n" + tier_line + DISCLAIMER
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"trade_status error: {str(e)[:200]}")
 
 
 async def rm_wish(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1463,6 +1528,8 @@ def main():
     app.add_handler(CommandHandler("import", import_help))
     app.add_handler(CommandHandler("sync_indmoney", sync_indmoney))
     app.add_handler(CommandHandler("sync", sync_indmoney))
+    app.add_handler(CommandHandler("trade_status", trade_status))
+    app.add_handler(CommandHandler("trade", trade_status))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
     print("Bot running...")
     app.run_polling()

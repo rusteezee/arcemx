@@ -288,6 +288,31 @@ create table if not exists calibration_log (
 create index if not exists idx_calibration_dim_date on calibration_log(dimension, prediction_date desc);
 
 
+-- Metrics snapshot: one row per grader pass (or manual cron) capturing
+-- the Phase A edge-gate numbers (Sharpe, PSR, max DD, Calmar, current
+-- cleared tier). Lets the dashboard chart tier progress over time and
+-- gives the never-give-up doctrine a measurable trail: every diagnose
+-- + iterate cycle leaves a snapshot showing whether the fix moved the
+-- needle. Full bundle is kept in jsonb so future metrics can be added
+-- without a schema bump.
+create table if not exists metrics_snapshot (
+    id bigserial primary key,
+    computed_at timestamptz not null default now(),
+    trade_count int not null default 0,
+    span_days int not null default 0,
+    total_net_pnl numeric,
+    annual_return_pct numeric,
+    sharpe numeric,
+    max_dd_pct numeric,
+    calmar numeric,
+    psr numeric,
+    cleared_tier int default 0,
+    next_tier int default 1,
+    bundle jsonb
+);
+create index if not exists idx_metrics_snapshot_at on metrics_snapshot(computed_at desc);
+
+
 -- Row Level Security. Defense uniformity: anon (browser, NEXT_PUBLIC) gets
 -- SELECT on the tables the dashboard reads, nothing else. Service role
 -- (bot + GH crons) bypasses RLS so writes keep working unchanged. No INSERT
@@ -310,6 +335,7 @@ alter table sync_log             enable row level security;
 alter table calibration_log      enable row level security;
 alter table paper_trades         enable row level security;
 alter table paper_signals        enable row level security;
+alter table metrics_snapshot     enable row level security;
 
 do $$
 declare t text;
@@ -318,7 +344,7 @@ begin
     'prices','analysis','portfolio','wishlist','transactions',
     'prediction_scores','accuracy_summary','sensei_eod',
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
-    'paper_trades','paper_signals'
+    'paper_trades','paper_signals','metrics_snapshot'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('create policy "anon read" on %I for select to anon using (true)', t);

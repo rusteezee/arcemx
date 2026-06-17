@@ -1315,9 +1315,46 @@ def _run_paper_trader() -> None:
         print(f"Paper trader skipped: {str(e)[:160]}")
 
 
+def _snapshot_metrics() -> None:
+    """Persist the Phase A metric bundle to metrics_snapshot so the
+    tier-progress trail is queryable later. One row per grader pass.
+    Soft-fails: a missing module or compute hiccup must never block
+    the grader. The bundle column is jsonb so future metrics can be
+    added without a schema bump."""
+    try:
+        from analyzer.metrics import compute_paper_metrics as _cpm
+    except ImportError as e:
+        print(f"Metrics snapshot skipped (import failed): {str(e)[:120]}")
+        return
+    try:
+        bundle = _cpm()
+        sb = _sb()
+        dd = bundle.get("max_drawdown") or {}
+        tier_eval = bundle.get("tier_eval") or {}
+        sb.table("metrics_snapshot").insert({
+            "trade_count": int(bundle.get("trade_count", 0)),
+            "span_days": int(bundle.get("span_days", 0)),
+            "total_net_pnl": bundle.get("total_net_pnl"),
+            "annual_return_pct": bundle.get("annual_return_pct"),
+            "sharpe": bundle.get("sharpe"),
+            "max_dd_pct": dd.get("max_dd_pct"),
+            "calmar": bundle.get("calmar"),
+            "psr": bundle.get("psr"),
+            "cleared_tier": int(tier_eval.get("cleared_tier", 0)),
+            "next_tier": int(tier_eval.get("next_tier", 1)),
+            "bundle": bundle,
+        }).execute()
+        print(f"Metrics snapshot written: tier={tier_eval.get('cleared_tier')}, "
+              f"sharpe={bundle.get('sharpe')}, psr={bundle.get('psr')}, "
+              f"trades={bundle.get('trade_count')}")
+    except Exception as e:
+        print(f"Metrics snapshot skipped: {str(e)[:160]}")
+
+
 if __name__ == "__main__":
     grade_all(lookback_days=90)
     compute_summaries()
     _grade_stock_analyses()
     _run_paper_trader()
+    _snapshot_metrics()
     _embed_new_predictions()
