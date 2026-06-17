@@ -610,6 +610,20 @@ def build_feedback() -> dict | None:
             dim_accuracy[dim] = round(float(row["accuracy_pct"]), 1)
         else:
             dim_accuracy[dim] = None
+    # Below-noise filter: drop dims with measured accuracy below the
+    # coin-flip baseline (50) before the exemplar block ships to the
+    # model. Carrying analogies from a dim that systematically scores
+    # worse than guessing adds noise to the prompt; the model anchors
+    # on the analogies and inherits the dim's bias. A dim with no
+    # measurement (None) is kept because the silence-vs-bad distinction
+    # matters: it might be a new dim that just hasn't accumulated rows
+    # yet. Per the never-give-up doctrine, a dropped dim is not killed;
+    # it just stops driving exemplar retrieval until its grader score
+    # climbs back above 50.
+    dropped_low_skill = [d for d, acc in dim_accuracy.items()
+                         if acc is not None and acc < 50.0]
+    for d in dropped_low_skill:
+        exemplars.pop(d, None)
     # Stable-sort exemplar bucket order by accuracy desc (None ranks
     # last). Preserves all entries, just reorders for prompt prominence.
     exemplars = dict(sorted(
