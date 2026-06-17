@@ -100,7 +100,7 @@ function fmtDate(iso: string | null): string {
   });
 }
 
-export default function TradePage() {
+export default function TraderPage() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [signals, setSignals] = useState<PaperSignal[]>([]);
   const [predScores, setPredScores] = useState<PredictionScoreRow[]>([]);
@@ -179,7 +179,7 @@ export default function TradePage() {
   if (loading) {
     return (
       <div className="card p-10 text-center text-sm text-[var(--muted)]">
-        Loading trade state.
+        Loading trader state.
       </div>
     );
   }
@@ -188,13 +188,13 @@ export default function TradePage() {
     return (
       <>
         <div className="mb-12">
-          <div className="section-num mb-2">000 · Trade</div>
+          <div className="section-num mb-2">000 · Trader</div>
           <h1 className="headline mb-3">
             Phase A <span className="italic">Friction-Modeled Simulation.</span>
           </h1>
         </div>
         <EmptyState
-          title="No trade activity yet."
+          title="No trader activity yet."
           hint="Trigger a Stock Analyst pass with expected_edge_pct populated, then wait for the next 17:00 IST grader. Trader runs after grading."
         />
       </>
@@ -204,7 +204,7 @@ export default function TradePage() {
   return (
     <>
       <div className="mb-12">
-        <div className="section-num mb-2">000 · Trade</div>
+        <div className="section-num mb-2">000 · Trader</div>
         <h1 className="headline mb-3">
           Phase A <span className="italic">Friction-Modeled Simulation.</span>
         </h1>
@@ -257,7 +257,7 @@ export default function TradePage() {
         num="002 / 008"
         title="Equity Curve vs NIFTY"
         glyph="⬡"
-        description="Cumulative net P&L on the trader's working capital versus a NIFTY 50 baseline over the same date span. Both series rebased to 100 at the first closed-trade date so the comparison is a pure relative-return read. Trade above NIFTY = positive alpha after friction; below NIFTY = the gates are letting noise through."
+        description="Cumulative net P&L on the trader's working capital versus a NIFTY 50 baseline over the same date span. Both series rebased to 100 at the first closed-trade date so the comparison is a pure relative-return read. Trader above NIFTY = positive alpha after friction; below NIFTY = the gates are letting noise through."
       >
         {(() => {
           const curve = metrics.equityCurve;
@@ -278,7 +278,7 @@ export default function TradePage() {
             value: r.close,
           }));
           const series: Series[] = [
-            { key: "paper", label: "Trade Equity", color: "var(--foreground)", points: paperPoints },
+            { key: "paper", label: "Trader Equity", color: "var(--foreground)", points: paperPoints },
             { key: "nifty", label: "NIFTY 50", color: "var(--muted)", points: niftyPoints },
           ];
           return (
@@ -346,7 +346,7 @@ export default function TradePage() {
                   { tier: 1, sharpe: 1.0, maxDdPct: 15.0, psr: 0.95, label: "Phase B unlock" },
                   { tier: 2, sharpe: 1.3, maxDdPct: 12.0, psr: 0.97, label: "Phase C unlock" },
                   { tier: 3, sharpe: 1.6, maxDdPct: 10.0, psr: 0.99, label: "Hardening" },
-                  { tier: 4, sharpe: 2.0, maxDdPct: 8.0,  psr: 0.995, label: "Peak (2028)" },
+                  { tier: 4, sharpe: 2.0, maxDdPct: 8.0,  psr: 0.995, label: "Peak (Phase B terminal)" },
                 ].map((g) => {
                   const cleared = metrics.tierEval.clearedTier >= g.tier;
                   const isNext = metrics.tierEval.nextTier === g.tier && !cleared;

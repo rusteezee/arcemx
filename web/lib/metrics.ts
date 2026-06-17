@@ -145,7 +145,7 @@ export const TIER_GATES = [
   { tier: 1, sharpe: 1.0, maxDdPct: 15.0, psr: 0.95, label: "Phase B unlock" },
   { tier: 2, sharpe: 1.3, maxDdPct: 12.0, psr: 0.97, label: "Phase C unlock" },
   { tier: 3, sharpe: 1.6, maxDdPct: 10.0, psr: 0.99, label: "Hardening" },
-  { tier: 4, sharpe: 2.0, maxDdPct: 8.0,  psr: 0.995, label: "Peak (2028)" },
+  { tier: 4, sharpe: 2.0, maxDdPct: 8.0,  psr: 0.995, label: "Peak (Phase B terminal)" },
 ];
 
 export interface TierEval {

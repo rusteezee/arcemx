@@ -278,7 +278,7 @@ TIER_GATES = [
     {"tier": 1, "sharpe": 1.0, "max_dd_pct": 15.0, "psr": 0.95, "label": "Phase B unlock"},
     {"tier": 2, "sharpe": 1.3, "max_dd_pct": 12.0, "psr": 0.97, "label": "Phase C unlock"},
     {"tier": 3, "sharpe": 1.6, "max_dd_pct": 10.0, "psr": 0.99, "label": "Hardening"},
-    {"tier": 4, "sharpe": 2.0, "max_dd_pct": 8.0,  "psr": 0.995, "label": "Peak (2028 target)"},
+    {"tier": 4, "sharpe": 2.0, "max_dd_pct": 8.0,  "psr": 0.995, "label": "Peak (Phase B terminal)"},
 ]
 
 
