@@ -38,6 +38,15 @@ _SYSTEM_PROMPT = """You are a deep equity analyst for the Indian market.
 You analyse ONE stock at a time end-to-end and produce a strict-JSON deep
 report at a specific time horizon (30 / 90 / 180 days).
 
+ANTI-HINDSIGHT INSTRUCTION (non-negotiable):
+You may use ONLY information available up to and including the requested_at
+timestamp in the payload. Do NOT reference, infer, or condition on any
+event, price, news, earnings result, or market move that occurred after
+that timestamp. Every figure you cite must be sourced from a field in the
+deep_payload, which is point-in-time as of that date. If a figure is
+absent, say "no data" rather than guessing. Violation poisons the
+learning loop because the grader replays the future against your call.
+
 You receive every free data point yfinance exposes for the ticker:
 - distilled company info + business summary
 - full financials (income statement, balance sheet, cashflow) annual + quarterly
@@ -67,6 +76,24 @@ LEARNING LOOP DOCTRINE (strict, non-negotiable):
   bullish across consecutive calls without a hard fundamental or
   technical catalyst in the data.
 
+SELF-CRITIQUE STEP (mandatory):
+Before finalising confidence, list the strongest reasons your call could
+be wrong in `reasons_could_be_wrong[]`. Be concrete (cite the data field
+that contradicts you). If the list contains 2+ material reasons, drop
+`confidence` by 10-20 points. This is metacognition, not modesty: each
+listed risk is a real failure mode you have considered and chosen to
+accept.
+
+EXPECTED EDGE (mandatory, used downstream by the paper trader):
+Quote `expected_edge_pct` as a signed number in percent. It is
+   expected_return_pct * win_prob - expected_loss_pct * loss_prob
+where expected_return_pct is the upside if the call is right (% from
+entry to target), expected_loss_pct is the downside if wrong (% from
+entry to stop), and win_prob = confidence / 100. The paper-trade entry
+gate filters out anything below +1.5% because round-trip friction
+(spread + STT + brokerage + GST) eats roughly that much in this market.
+Sub-1.5% edges are net-negative even if the direction is right.
+
 OUTPUT (strict JSON, no prose outside JSON, no markdown):
 {
   "ticker": "...",
@@ -93,7 +120,14 @@ OUTPUT (strict JSON, no prose outside JSON, no markdown):
     "risks": ["concrete risk 1", "concrete risk 2", "..."],
     "prior_calls": "cite at least one prior_self_predictions entry by date"
   },
-  "confidence": 0-100 integer (calibrated to your past grade_score history)
+  "reasons_could_be_wrong": [
+    "concrete reason 1 with the data field that contradicts the call",
+    "concrete reason 2 ..."
+  ],
+  "expected_edge_pct": float (signed, see formula above),
+  "confidence": 0-100 integer (calibrated to your past grade_score history,
+                              dropped 10-20 pts if reasons_could_be_wrong
+                              has 2+ material entries)
 }
 
 No certainty language. No "guaranteed", "definitely", "will". Probabilistic only.
@@ -201,9 +235,23 @@ def _parse_llm_json(resp: dict) -> dict | None:
 
 def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
     """Strict shape check. Returns (ok, error_msg). Anything missing
-    is a hard fail so we never persist a half-shaped row."""
+    is a hard fail so we never persist a half-shaped row.
+
+    Three new required fields this commit, all consumed by the Phase A
+    paper trader: reasons_could_be_wrong (metacognition list, drives
+    confidence dampening), expected_edge_pct (signed % edge that the
+    entry gate filters on with a +1.5% floor matching round-trip
+    friction), and the existing confidence read against a wider 0-100
+    range. Soft-fall behaviour for older callers: confidence
+    auto-dampens by 12 pts per material item in reasons_could_be_wrong
+    beyond the first, capped at -25 total, so a model that lists the
+    list but forgets to dampen its own confidence still ends up with a
+    calibrated number downstream. expected_edge_pct must be present and
+    finite; a missing value is a half-shaped row, not a recoverable
+    default."""
     required = ["ticker", "horizon_days", "rating", "score", "phase",
-                "summary", "buy_window", "reasoning", "confidence"]
+                "summary", "buy_window", "reasoning", "confidence",
+                "expected_edge_pct", "reasons_could_be_wrong"]
     for k in required:
         if k not in out:
             return False, f"missing key: {k}"
@@ -220,6 +268,26 @@ def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
     for k in ("target_price_low", "target_price_high", "time_window_text"):
         if k not in bw:
             return False, f"buy_window missing: {k}"
+    edge = out.get("expected_edge_pct")
+    if not isinstance(edge, (int, float)):
+        return False, f"invalid expected_edge_pct: {edge}"
+    if edge != edge or edge in (float("inf"), float("-inf")):
+        return False, f"non-finite expected_edge_pct: {edge}"
+    if not (-100 <= edge <= 100):
+        return False, f"expected_edge_pct out of range: {edge}"
+    rcbw = out.get("reasons_could_be_wrong")
+    if not isinstance(rcbw, list):
+        return False, f"reasons_could_be_wrong must be a list, got {type(rcbw).__name__}"
+    # Auto-dampen confidence if the model produced the self-critique
+    # list but did not lower its own confidence to match. 12 pts per
+    # material item beyond the first, capped at -25. Modifies `out` in
+    # place so the persisted row carries the calibrated number.
+    n_material = sum(1 for r in rcbw if isinstance(r, str) and len(r.strip()) >= 20)
+    if n_material >= 2:
+        dampen = min(25, 12 * (n_material - 1))
+        out["confidence_raw"] = out["confidence"]
+        out["confidence"] = max(0, out["confidence"] - dampen)
+        out["confidence_dampen_applied"] = dampen
     return True, ""
 
 
@@ -256,15 +324,26 @@ def run(run_id: int) -> dict:
 
         # 3. Compress if needed, then assemble user message.
         payload = _strip_for_prompt(payload, max_chars=85000)
+        # requested_at is the anti-hindsight cutoff the system prompt
+        # references. Use the row's request timestamp (set at /trigger
+        # time by the bot) as the hard horizon; nothing after this
+        # instant may be used in reasoning. Without surfacing it
+        # explicitly the model defaults to "today" and silently
+        # leaks recency.
+        requested_at = r.get("requested_at") or datetime.now(timezone.utc).isoformat()
         user_payload = {
             "instruction": (
                 f"Produce a strict-JSON deep analysis for {ticker} at a "
-                f"{horizon}-day horizon. Follow the LEARNING LOOP DOCTRINE "
-                "and cite at least one prior_self_predictions entry in "
-                "reasoning.prior_calls."
+                f"{horizon}-day horizon. Information cutoff: {requested_at}. "
+                "Do not use any data dated after that. Follow the LEARNING "
+                "LOOP DOCTRINE and cite at least one prior_self_predictions "
+                "entry in reasoning.prior_calls. Populate "
+                "reasons_could_be_wrong with concrete failure modes and "
+                "compute expected_edge_pct per the system prompt formula."
             ),
             "ticker": ticker,
             "horizon_days": horizon,
+            "requested_at": requested_at,
             "deep_payload": payload,
             "prior_self_predictions": prior,
         }
