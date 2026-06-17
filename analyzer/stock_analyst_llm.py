@@ -124,7 +124,12 @@ OUTPUT (strict JSON, no prose outside JSON, no markdown):
     "concrete reason 1 with the data field that contradicts the call",
     "concrete reason 2 ..."
   ],
-  "expected_edge_pct": float (signed, see formula above),
+  "expected_return_pct": float (positive, upside % from entry to target if right),
+  "expected_loss_pct": float (positive, downside % from entry to stop if wrong),
+  "win_prob": float in [0,1] (probability the call is right; should mirror confidence/100),
+  "loss_prob": float in [0,1] (probability the call is wrong; win_prob + loss_prob = 1.0),
+  "expected_edge_pct": float (signed, MUST equal expected_return_pct * win_prob
+                              - expected_loss_pct * loss_prob within 0.5%),
   "confidence": 0-100 integer (calibrated to your past grade_score history,
                               dropped 10-20 pts if reasons_could_be_wrong
                               has 2+ material entries)
@@ -251,7 +256,9 @@ def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
     default."""
     required = ["ticker", "horizon_days", "rating", "score", "phase",
                 "summary", "buy_window", "reasoning", "confidence",
-                "expected_edge_pct", "reasons_could_be_wrong"]
+                "expected_edge_pct", "reasons_could_be_wrong",
+                "expected_return_pct", "expected_loss_pct",
+                "win_prob", "loss_prob"]
     for k in required:
         if k not in out:
             return False, f"missing key: {k}"
@@ -278,6 +285,34 @@ def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
     rcbw = out.get("reasons_could_be_wrong")
     if not isinstance(rcbw, list):
         return False, f"reasons_could_be_wrong must be a list, got {type(rcbw).__name__}"
+    # Edge decomposition: the four components that derive expected_edge_pct
+    # must be present + numerically consistent. Without these the edge
+    # value is unauditable. Tolerance is 0.5% to absorb model rounding;
+    # tighter tolerances catch fewer real errors and reject more honest
+    # rounding. Probabilities must sum to ~1.0 (allow 0.05 slop for
+    # model floating-point output).
+    for k in ("expected_return_pct", "expected_loss_pct", "win_prob", "loss_prob"):
+        v = out.get(k)
+        if not isinstance(v, (int, float)):
+            return False, f"missing/invalid {k}: {v}"
+        if v != v or v in (float("inf"), float("-inf")):
+            return False, f"non-finite {k}: {v}"
+    R = float(out["expected_return_pct"])
+    L = float(out["expected_loss_pct"])
+    Pw = float(out["win_prob"])
+    Pl = float(out["loss_prob"])
+    if not (0.0 <= Pw <= 1.0) or not (0.0 <= Pl <= 1.0):
+        return False, f"probabilities out of [0,1]: win={Pw}, loss={Pl}"
+    if abs((Pw + Pl) - 1.0) > 0.05:
+        return False, f"win_prob + loss_prob must equal 1.0 (got {Pw + Pl:.3f})"
+    if R < 0 or L < 0:
+        return False, f"expected_return_pct + expected_loss_pct must be positive magnitudes (got R={R}, L={L})"
+    derived_edge = R * Pw - L * Pl
+    if abs(derived_edge - edge) > 0.5:
+        return False, (
+            f"expected_edge_pct inconsistent: stated={edge:.3f}, "
+            f"R*Pw - L*Pl = {derived_edge:.3f}"
+        )
     # Auto-dampen confidence if the model produced the self-critique
     # list but did not lower its own confidence to match. 12 pts per
     # material item beyond the first, capped at -25. Modifies `out` in
@@ -338,8 +373,11 @@ def run(run_id: int) -> dict:
                 "Do not use any data dated after that. Follow the LEARNING "
                 "LOOP DOCTRINE and cite at least one prior_self_predictions "
                 "entry in reasoning.prior_calls. Populate "
-                "reasons_could_be_wrong with concrete failure modes and "
-                "compute expected_edge_pct per the system prompt formula."
+                "reasons_could_be_wrong with concrete failure modes, emit "
+                "expected_return_pct + expected_loss_pct + win_prob + "
+                "loss_prob, and ensure expected_edge_pct equals "
+                "expected_return_pct * win_prob - expected_loss_pct * "
+                "loss_prob within 0.5%."
             ),
             "ticker": ticker,
             "horizon_days": horizon,
