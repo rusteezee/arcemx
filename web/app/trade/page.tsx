@@ -100,7 +100,7 @@ function fmtDate(iso: string | null): string {
   });
 }
 
-export default function PaperPage() {
+export default function TradePage() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [signals, setSignals] = useState<PaperSignal[]>([]);
   const [predScores, setPredScores] = useState<PredictionScoreRow[]>([]);
@@ -179,7 +179,7 @@ export default function PaperPage() {
   if (loading) {
     return (
       <div className="card p-10 text-center text-sm text-[var(--muted)]">
-        Loading paper trader state.
+        Loading trade state.
       </div>
     );
   }
@@ -188,14 +188,14 @@ export default function PaperPage() {
     return (
       <>
         <div className="mb-12">
-          <div className="section-num mb-2">000 · Paper Trader</div>
+          <div className="section-num mb-2">000 · Trade</div>
           <h1 className="headline mb-3">
             Phase A <span className="italic">Friction-Modeled Simulation.</span>
           </h1>
         </div>
         <EmptyState
-          title="No paper trader activity yet."
-          hint="Trigger a Stock Analyst pass with expected_edge_pct populated, then wait for the next 17:00 IST grader. Paper trader runs after grading."
+          title="No trade activity yet."
+          hint="Trigger a Stock Analyst pass with expected_edge_pct populated, then wait for the next 17:00 IST grader. Trader runs after grading."
         />
       </>
     );
@@ -204,7 +204,7 @@ export default function PaperPage() {
   return (
     <>
       <div className="mb-12">
-        <div className="section-num mb-2">000 · Paper Trader</div>
+        <div className="section-num mb-2">000 · Trade</div>
         <h1 className="headline mb-3">
           Phase A <span className="italic">Friction-Modeled Simulation.</span>
         </h1>
@@ -257,7 +257,7 @@ export default function PaperPage() {
         num="002 / 008"
         title="Equity Curve vs NIFTY"
         glyph="⬡"
-        description="Cumulative net P&L on the paper trader's working capital versus a NIFTY 50 baseline over the same date span. Both series rebased to 100 at the first closed-trade date so the comparison is a pure relative-return read. Paper above NIFTY = positive alpha after friction; below NIFTY = the gates are letting noise through."
+        description="Cumulative net P&L on the trader's working capital versus a NIFTY 50 baseline over the same date span. Both series rebased to 100 at the first closed-trade date so the comparison is a pure relative-return read. Trade above NIFTY = positive alpha after friction; below NIFTY = the gates are letting noise through."
       >
         {(() => {
           const curve = metrics.equityCurve;
@@ -278,7 +278,7 @@ export default function PaperPage() {
             value: r.close,
           }));
           const series: Series[] = [
-            { key: "paper", label: "Paper Equity", color: "var(--foreground)", points: paperPoints },
+            { key: "paper", label: "Trade Equity", color: "var(--foreground)", points: paperPoints },
             { key: "nifty", label: "NIFTY 50", color: "var(--muted)", points: niftyPoints },
           ];
           return (
@@ -372,7 +372,7 @@ export default function PaperPage() {
       <Section num="004 / 008" title="Open Positions" glyph="◈">
         {open.length === 0 ? (
           <EmptyState
-            title="No open paper positions"
+            title="No open positions"
             hint="Next 17:00 IST grader run will evaluate fresh signals."
           />
         ) : (
@@ -691,7 +691,7 @@ export default function PaperPage() {
         ) : (
           <EmptyState
             title="No signals yet"
-            hint="Paper trader logs every Stock Analyst run here."
+            hint="Trader logs every Stock Analyst run here."
           />
         )}
       </Section>
