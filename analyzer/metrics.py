@@ -316,6 +316,149 @@ def evaluate_tiers(sharpe_v: float, max_dd_pct: float, psr_v: float) -> dict[str
 
 
 # ---------------------------------------------------------------------------
+# Walk-forward parameter tuning
+# ---------------------------------------------------------------------------
+def _trade_to_return(t: dict, base_inr: float) -> float | None:
+    """Per-trade fractional return on the portfolio base. Used by walk-
+    forward grid search: a trade's contribution is its net_pnl / base.
+    Returns None if the trade is missing the fields a return needs."""
+    net = t.get("net_pnl")
+    if net is None:
+        return None
+    try:
+        return float(net) / base_inr
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_trades_by_confidence(trades: list[dict], floor: int) -> list[dict]:
+    """Hypothetical re-filter: which trades WOULD have been entered if
+    the gate floor was `floor` instead of the floor in effect when they
+    fired? A trade with confidence >= floor would still have entered."""
+    return [t for t in trades if (t.get("confidence") or 0) >= floor]
+
+
+def _window_sharpe(trades: list[dict], base_inr: float) -> float:
+    """Per-trade-treated-as-day Sharpe over a window. NOT annualised the
+    same way the equity-curve Sharpe is because per-trade frequency may
+    not be daily — we use sqrt(len(returns)) as a coarse n adjustment
+    only, so two windows with the same return distribution but different
+    trade counts can be compared. Caller should think of this as a
+    relative score across window-floor pairs, not an absolute Sharpe."""
+    rets: list[float] = []
+    for t in trades:
+        r = _trade_to_return(t, base_inr)
+        if r is not None:
+            rets.append(r)
+    if len(rets) < 3:
+        return 0.0
+    s = _stdev(rets, ddof=1)
+    if s <= 0:
+        return 0.0
+    return (_mean(rets) / s) * math.sqrt(len(rets))
+
+
+def walk_forward_confidence_floor(
+    sb=None,
+    grid: list[int] | None = None,
+    train_days: int = 60,
+    test_days: int = 14,
+    base_inr: float = PORTFOLIO_BASE_INR,
+) -> dict[str, Any]:
+    """Rolling-window optimisation of the entry-gate confidence floor.
+
+    For each Monday in the closed-trade history:
+      1. train window = [monday - train_days, monday]
+      2. Grid-search floor in `grid` (default 40..80 step 5)
+      3. Pick floor that maximises Sharpe on trades within the train
+         window. Stamp the picked floor as the "what would have been
+         optimal" floor for the next `test_days`.
+
+    Output:
+      - per_window list of {monday_date, picked_floor, train_n_trades, train_sharpe}
+      - latest_floor: the most recent window's pick
+      - drift: stdev of picked floors across windows (high stdev = the
+        optimal floor is unstable, signal does not generalise)
+
+    The result is a discipline check, not an automation: the user reads
+    it and decides whether to change paper_trader.MIN_CONF, never the
+    other way around. Auto-changing live parameters on a 60d window is
+    exactly the overfitting trap the walk-forward exists to detect.
+
+    Returns an empty bundle (per_window=[], latest_floor=None) when
+    there are not enough closed trades to score even one window.
+    """
+    if grid is None:
+        grid = list(range(40, 85, 5))
+    if sb is None:
+        sb = _sb()
+    rows = sb.table("paper_trades").select(
+        "id,entered_at,exit_at,net_pnl,confidence,status"
+    ).neq("status", "open").execute().data or []
+    if not rows:
+        return {"per_window": [], "latest_floor": None, "drift_stdev": 0.0,
+                "trade_count": 0, "grid": grid, "note": "no closed trades yet"}
+    parsed: list[dict] = []
+    for r in rows:
+        ea = r.get("entered_at")
+        if not ea:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(ea).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        parsed.append({**r, "_entered_dt": dt})
+    parsed.sort(key=lambda x: x["_entered_dt"])
+    if not parsed:
+        return {"per_window": [], "latest_floor": None, "drift_stdev": 0.0,
+                "trade_count": 0, "grid": grid, "note": "no parseable trades"}
+
+    first = parsed[0]["_entered_dt"].date()
+    last = parsed[-1]["_entered_dt"].date()
+    # Walk Mondays in [first + train_days, last] so each window has
+    # at least one full train slice behind it. weekday() == 0 -> Monday.
+    cursor = first + timedelta(days=train_days)
+    while cursor.weekday() != 0:
+        cursor += timedelta(days=1)
+    per_window: list[dict] = []
+    while cursor <= last:
+        train_start_d = cursor - timedelta(days=train_days)
+        train = [t for t in parsed
+                 if train_start_d <= t["_entered_dt"].date() <= cursor]
+        best_floor = None
+        best_sharpe = float("-inf")
+        for floor in grid:
+            cand = _filter_trades_by_confidence(train, floor)
+            sh = _window_sharpe(cand, base_inr)
+            if sh > best_sharpe:
+                best_sharpe = sh
+                best_floor = floor
+        per_window.append({
+            "monday": cursor.isoformat(),
+            "picked_floor": best_floor,
+            "train_n_trades": len(train),
+            "train_sharpe": round(best_sharpe, 3) if best_sharpe != float("-inf") else 0.0,
+        })
+        cursor += timedelta(days=7)
+
+    if per_window:
+        picks = [w["picked_floor"] for w in per_window if w["picked_floor"] is not None]
+        drift = _stdev(picks, ddof=1) if len(picks) >= 2 else 0.0
+        latest_floor = per_window[-1]["picked_floor"]
+    else:
+        drift = 0.0
+        latest_floor = None
+
+    return {
+        "per_window": per_window,
+        "latest_floor": latest_floor,
+        "drift_stdev": round(drift, 2),
+        "trade_count": len(parsed),
+        "grid": grid,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Top-level: read paper_trades + prediction_scores, emit metric bundle
 # ---------------------------------------------------------------------------
 def compute_paper_metrics(base_inr: float = PORTFOLIO_BASE_INR) -> dict[str, Any]:
@@ -337,6 +480,7 @@ def compute_paper_metrics(base_inr: float = PORTFOLIO_BASE_INR) -> dict[str, Any
     calmar_v = calmar(sharpe_v, dd["max_dd_pct"], annual_ret_pct)
     tiers = evaluate_tiers(sharpe_v, dd["max_dd_pct"], psr_v)
     per_dim = per_dim_skill(sb)
+    wf = walk_forward_confidence_floor(sb=sb, base_inr=base_inr)
     return {
         "trade_count": len(rows),
         "span_days": span_days,
@@ -349,6 +493,7 @@ def compute_paper_metrics(base_inr: float = PORTFOLIO_BASE_INR) -> dict[str, Any
         "tier_eval": tiers,
         "equity_curve": [(d.isoformat(), v) for d, v in curve],
         "per_dim_skill": per_dim,
+        "walk_forward": wf,
     }
 
 
