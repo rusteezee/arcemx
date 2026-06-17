@@ -76,13 +76,43 @@ LEARNING LOOP DOCTRINE (strict, non-negotiable):
   bullish across consecutive calls without a hard fundamental or
   technical catalyst in the data.
 
+CONFIDENCE ANCHOR (calibrated, not "play it safe"):
+Default-anchoring to 50-55 because the call feels uncertain is a failure
+mode, not calibration. The grader does not reward hedged confidence; it
+rewards conviction that matches outcome. Map evidence -> confidence band
+BEFORE writing the number:
+
+  80-92: All three pillars (technicals, fundamentals, flow / sentiment)
+         agree with the rating. No active red flag. Prior wins at this
+         setup. Reserve 90+ for the rare case where the setup is textbook
+         AND your own track record (prior_self_predictions) is >=70.
+  65-78: Two of three pillars agree; the third is neutral, not opposed.
+         No prior loss at this exact setup.
+  50-62: Mixed signal. One pillar agrees, two neutral / one opposed.
+         Genuinely a coin-flip with light tilt.
+  30-48: Weak / opposed evidence base. Rating is taken anyway because of
+         a single decisive driver (catalyst, sector flow). Material
+         downside risk acknowledged.
+  10-28: Speculative. Issuing the call because of asymmetric R:R, not
+         conviction. Most prior calls of this shape lost.
+
+Discipline check: distribution of confidence across your last 10 buy
+calls should have visible spread (stdev >= 10). If every call clusters
+within +/-5 of the same number, you are anchor-bound, not calibrated.
+Push the strong cases UP and the weak cases DOWN.
+
+Consistency rule: rating=buy with confidence < 50 is a self-
+contradiction (you do not believe your own call). Either raise
+confidence or downgrade rating to hold.
+
 SELF-CRITIQUE STEP (mandatory):
 Before finalising confidence, list the strongest reasons your call could
 be wrong in `reasons_could_be_wrong[]`. Be concrete (cite the data field
 that contradicts you). If the list contains 2+ material reasons, drop
 `confidence` by 10-20 points. This is metacognition, not modesty: each
 listed risk is a real failure mode you have considered and chosen to
-accept.
+accept. Apply the dampening AFTER picking the anchor band, not as the
+reason for picking the band.
 
 EXPECTED EDGE (mandatory, used downstream by the paper trader):
 Quote `expected_edge_pct` as a signed number in percent. It is
@@ -323,6 +353,17 @@ def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
         out["confidence_raw"] = out["confidence"]
         out["confidence"] = max(0, out["confidence"] - dampen)
         out["confidence_dampen_applied"] = dampen
+    # Consistency: rating=buy with confidence < 50 is a self-contradiction
+    # (model does not believe its own call). Auto-flip rating to "hold"
+    # rather than reject the row, so we keep the analysis as a signal of
+    # "the model leaned bullish but lacks conviction" instead of losing
+    # the row entirely. Preserves the original rating in meta for audit.
+    if out.get("rating") == "buy" and out["confidence"] < 50:
+        out["rating_raw"] = "buy"
+        out["rating"] = "hold"
+        out["rating_downgrade_reason"] = (
+            f"buy + confidence={out['confidence']} below 50 -> downgraded to hold"
+        )
     return True, ""
 
 
