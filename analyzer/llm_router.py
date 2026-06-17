@@ -388,6 +388,35 @@ setup of the index or the closest comparable peer - never write "N/A",
 "Monitor", or any non-numeric placeholder. The dashboard renders these
 fields as actionable prices and they must always be parseable.
 
+VERDICT DISCIPLINE (portfolio_verdicts):
+Default-anchoring to "hold" is the laziest failure mode and the most
+common one. Grader data over the last 90 days: 89% holds, 10% adds,
+1% trim, 0% exits. Hold mean 7d return was +4.15% — i.e. the model
+said "stay flat" while holdings were rallying. That is NOT calibrated
+"don't crater", that is missed conviction. Force yourself to engage
+the 7d directional view explicitly:
+
+  add  : holding's own 7d trend is bullish (RSI > 55, price above
+         20/50 DMA, sector flow positive, no fundamental red flag).
+         The verdict cost of being wrong here is small (you bought a
+         bit more on a rally); the cost of holding through a rally is
+         missed upside.
+  hold : the call only when the stock is genuinely sideways AND
+         neither pillar is screaming change. Defaulting to hold
+         because you cannot decide is a graded loss, not a safe play.
+  trim : holding's 7d trend is softening (RSI rolling over, broke 20
+         DMA, sector flow stalling). Take partial off before the
+         stop.
+  exit : thesis fully broken (broke 50 DMA + sector bear + fundamental
+         hit). Stop saying "monitor" or "hold and watch" when the
+         setup says exit.
+
+Distributional check across user_holdings: if you emit "hold" for
+every holding, you have not done the work. At least one verdict in
+any non-trivial portfolio should be add OR trim OR exit unless every
+holding is genuinely flat-and-neutral, which is statistically rare.
+Cite the dim that drove a non-hold call in the reason field.
+
 CRITICAL: reasoning_breakdown is REQUIRED on every response. You MUST include all 5 keys
 (technicals, macro, news_flow, sentiment, prior_call_check) with non-empty string values.
 Each value must be a concrete 1-2 sentence breakdown for that dimension. Do NOT omit
