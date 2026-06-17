@@ -227,16 +227,37 @@ def grade_verdict(verdict: str, ret_pct: float) -> float:
 
     add  -> expected up; hold -> expected to not crater; trim -> expected to
     cool off; exit -> expected down. Scored 0-100.
+
+    Continuous gradients (replaces the old trinary 0/40-50/100 cliffs).
+    Previous version mean-scored verdict_7d at ~98 with stdev 4.7 because
+    "hold" returned 100 for any return > -2% and most holdings stay
+    within that band on a 7d window. The skill ratio rolled up to 10.2
+    standard deviations above coin-flip, which read as "perfect calibration"
+    but was actually a generous threshold on the default verdict. The
+    rebuild gives each call a real loss function: add/exit are directional
+    bets that earn full credit only on a clear move; hold earns full credit
+    only when the holding is genuinely flat (|r| <= 1.5%); trim earns
+    credit for a softening move and loses it on a rally.
     """
     v = (verdict or "").lower()
+    r = float(ret_pct)
     if v == "add":
-        return 100.0 if ret_pct > 0.5 else (50.0 if ret_pct > -1 else 0.0)
+        # Up bet. Linear: +3% -> 100, 0% -> 50, -3% -> 0. Clamp.
+        return max(0.0, min(100.0, 50.0 + r * 16.67))
     if v == "hold":
-        return 100.0 if ret_pct > -2 else (40.0 if ret_pct > -4 else 0.0)
+        # Flat call. Tight band: |r|<=1.5 -> 100, <=3 -> 70, <=5 -> 40,
+        # else 10. "Did not crater" is a free pass; "stayed flat" is not.
+        ar = abs(r)
+        if ar <= 1.5: return 100.0
+        if ar <= 3.0: return 70.0
+        if ar <= 5.0: return 40.0
+        return 10.0
     if v == "trim":
-        return 100.0 if ret_pct < 1 else (40.0 if ret_pct < 3 else 0.0)
+        # Cool-off bet. -2% -> 90, 0% -> 60, +2% -> 30, +4% -> 0.
+        return max(0.0, min(100.0, 60.0 - r * 15.0))
     if v == "exit":
-        return 100.0 if ret_pct < 0 else (40.0 if ret_pct < 1.5 else 0.0)
+        # Down bet. Mirror of add. -3% -> 100, 0% -> 50, +3% -> 0.
+        return max(0.0, min(100.0, 50.0 - r * 16.67))
     return 0.0
 
 
