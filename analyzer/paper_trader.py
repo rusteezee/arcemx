@@ -50,7 +50,7 @@ load_dotenv()
 # cycle (per the never-give-up doctrine) can tighten/loosen them in
 # one commit, not search-and-replace across the file.
 # ---------------------------------------------------------------------------
-PORTFOLIO_BASE_INR = 65_000      # current INDmoney balance, updated by sync; cold-start fixed
+PORTFOLIO_BASE_FALLBACK = 65_000  # used only when portfolio table lookup fails
 RISK_PER_TRADE = 0.02            # 2% portfolio risk per single trade
 MAX_NOTIONAL_PCT = 0.05          # 5% portfolio cap on any single trade's notional
 MIN_CONF = 60                    # PolyBench discard floor
@@ -65,10 +65,119 @@ GST_RATE = 0.18                  # 18% on (brokerage + exchange)
 SPREAD_BPS = {"large": 5, "mid": 12, "small": 25}  # half-spread per cap tier
 IMPACT_COEF = 50                 # sqrt-impact coefficient (bps)
 IMPACT_CAP_BPS = 150             # bound runaway impact estimate
+TICKER_FREEZE_LOSSES = 3         # >= N losses in lookback => freeze ticker
+TICKER_FREEZE_LOOKBACK_DAYS = 90 # lookback window for loss count
+TICKER_FREEZE_DURATION_DAYS = 30 # how long the freeze lasts after the trigger
+OUTLOOK_MIN_CONF = 65            # higher floor for 1d outlook entries (less confirmation than Stock Analyst)
+OUTLOOK_MIN_EDGE_PCT = 1.0       # outlooks have tighter horizons so the friction cushion is smaller
+CALIBRATION_LOOKBACK_DAYS = 90   # window over which per-dim confidence bias is measured
+CALIBRATION_MIN_PAIRS = 8        # below this, ignore the dim's bias (too noisy)
 
 
 def _sb():
     return create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+
+
+def _resolve_portfolio_base(sb) -> float:
+    """Read the user's live portfolio cost basis as the working capital
+    denominator. Replaces the old hardcoded 65000 so position sizing
+    tracks the actual portfolio as it grows / shrinks via INDmoney
+    syncs. Cost basis (qty * avg_buy_price) is used rather than mark-
+    to-market because (a) it avoids a price fetch per ticker on every
+    eval and (b) the trader's RISK budget is naturally denominated in
+    deployed capital, not unrealised P&L. Falls back to the constant
+    on any failure so a missing portfolio row never breaks an eval.
+
+    Single-user app: read every portfolio row regardless of user_id.
+    INDmoney sync writes rows under the user's Telegram chat id, not
+    'default', so filtering on user_id='default' missed everything
+    and we silently fell back to PORTFOLIO_BASE_FALLBACK."""
+    try:
+        rows = sb.table("portfolio").select("qty,avg_buy_price").execute().data or []
+        invested = 0.0
+        for r in rows:
+            q = r.get("qty")
+            p = r.get("avg_buy_price")
+            if q is None or p is None:
+                continue
+            try:
+                invested += float(q) * float(p)
+            except (TypeError, ValueError):
+                continue
+        if invested > 0:
+            return float(invested)
+    except Exception as e:
+        print(f"  _resolve_portfolio_base fallback ({str(e)[:80]})")
+    return float(PORTFOLIO_BASE_FALLBACK)
+
+
+def _dim_confidence_bias(sb, dim: str) -> float:
+    """Per-dim overconfidence gap learnt from calibration_log.
+
+    Returns stated_mean - realized_mean over the last
+    CALIBRATION_LOOKBACK_DAYS for the given dimension. Positive bias =
+    model has been historically overconfident on this dim (stated 70
+    when realized was 55, returns +15). Caller subtracts the bias from
+    raw confidence to get the calibrated effective_conf for the gate.
+
+    Returns 0.0 (no adjustment) when fewer than CALIBRATION_MIN_PAIRS
+    rows exist for the dim — the bias estimate would be too noisy to
+    act on. This closes the never-give-up loop: dim that overclaims
+    self-corrects via the gate, dim that underclaims gets a free pass."""
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(days=CALIBRATION_LOOKBACK_DAYS)).isoformat()
+        rows = sb.table("calibration_log").select(
+            "stated_confidence,realized_score"
+        ).eq("dimension", dim).gte("graded_at", since).execute().data or []
+        if len(rows) < CALIBRATION_MIN_PAIRS:
+            return 0.0
+        stated = [float(r["stated_confidence"]) for r in rows
+                  if r.get("stated_confidence") is not None]
+        realized = [float(r["realized_score"]) for r in rows
+                    if r.get("realized_score") is not None]
+        if not stated or not realized:
+            return 0.0
+        gap = sum(stated) / len(stated) - sum(realized) / len(realized)
+        # Clamp to [-25, 25] so a single quirky window cannot fully
+        # zero out the gate. The doctrine says iterate, not nuke.
+        return max(-25.0, min(25.0, gap))
+    except Exception:
+        return 0.0
+
+
+def _ticker_is_frozen(sb, ticker: str, now: datetime) -> tuple[bool, dict]:
+    """Per-ticker risk gate: if a ticker has accumulated >= N losses in
+    the last lookback window, freeze it from new entries for the freeze
+    duration after the most recent loss. Phase C risk gate brought
+    forward to Phase A because it costs nothing to enforce now and
+    surfaces serial-losers as a separate skip reason from low_conf /
+    low_edge / sector_cap. Returns (frozen?, meta_dict)."""
+    try:
+        since = (now - timedelta(days=TICKER_FREEZE_LOOKBACK_DAYS)).isoformat()
+        rows = sb.table("paper_trades").select(
+            "id,exit_at,net_pnl,status"
+        ).eq("ticker", ticker).like(
+            "status", "closed_%"
+        ).gte("exit_at", since).execute().data or []
+        losses = [r for r in rows
+                  if (r.get("net_pnl") or 0) < 0 and r.get("exit_at")]
+        if len(losses) < TICKER_FREEZE_LOSSES:
+            return False, {"loss_count_90d": len(losses)}
+        latest_loss_at = max(losses, key=lambda r: r["exit_at"])["exit_at"]
+        try:
+            ll_dt = datetime.fromisoformat(str(latest_loss_at).replace("Z", "+00:00"))
+        except Exception:
+            return False, {"loss_count_90d": len(losses), "parse_failed": True}
+        freeze_until = ll_dt + timedelta(days=TICKER_FREEZE_DURATION_DAYS)
+        if now < freeze_until:
+            return True, {
+                "loss_count_90d": len(losses),
+                "latest_loss_at": latest_loss_at,
+                "freeze_until": freeze_until.isoformat(),
+            }
+        return False, {"loss_count_90d": len(losses), "freeze_expired": True}
+    except Exception:
+        return False, {}
 
 
 # ---------------------------------------------------------------------------
@@ -248,12 +357,16 @@ def _ticker_sector_and_cap(sb, ticker: str) -> tuple[str | None, str]:
 def _log_signal(sb, ticker: str, sa_id: int, action: str,
                 skip_reason: str | None = None,
                 paper_trade_id: int | None = None,
-                confidence=None, edge=None, meta: dict | None = None):
+                confidence=None, edge=None, meta: dict | None = None,
+                source_kind: str = "stock_analyst"):
     """Upsert one paper_signals row. Unique (source, run_id, ticker)
-    handles same-day re-runs of the eval cleanly."""
+    handles same-day re-runs of the eval cleanly. source_kind defaults
+    to 'stock_analyst' so existing callers stay unchanged; outlook
+    evaluators pass 'holding_outlook_1d' or 'wishlist_outlook_1d'
+    explicitly so the skip-reason histogram is per-source."""
     row = {
         "ticker": ticker,
-        "source_kind": "stock_analyst",
+        "source_kind": source_kind,
         "source_run_id": sa_id,
         "action": action,
         "skip_reason": skip_reason,
@@ -272,7 +385,8 @@ def _log_signal(sb, ticker: str, sa_id: int, action: str,
         print(f"  paper_signals upsert skip ({ticker}): {str(e)[:120]}")
 
 
-def _evaluate_one(sb, analysis_row: dict, now: datetime) -> str:
+def _evaluate_one(sb, analysis_row: dict, now: datetime,
+                  portfolio_base: float | None = None) -> str:
     """Apply gate stack to one stock_analyses row. Returns action or
     skip_reason string for logging. ALWAYS writes a paper_signals row
     so the skipped-winner attribution is computable later."""
@@ -283,6 +397,8 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime) -> str:
     confidence = j.get("confidence")
     edge = j.get("expected_edge_pct")
     horizon = int(analysis_row.get("horizon_days") or j.get("horizon_days") or 30)
+    if portfolio_base is None:
+        portfolio_base = _resolve_portfolio_base(sb)
 
     # Idempotency: skip if (source, ticker) already evaluated this run.
     existing = sb.table("paper_signals").select("id").eq(
@@ -291,20 +407,35 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime) -> str:
     if existing.data:
         return "already_evaluated"
 
+    # Pre-schema attribution: Stock Analyst runs that predate the edge
+    # decomposition commit (f406518) have edge=None. Distinguish that
+    # from a fresh run that scored real-but-low edge so the skip reason
+    # histogram on /trade does not lump them together. pre_schema rows
+    # cannot be re-graded; they are just legacy data.
+    edge_present = isinstance(edge, (int, float))
+
     # Gate stack (ordered cheapest-first so we do the yfinance hit only
     # when the JSON-only gates pass).
     if rating != "buy":
         _log_signal(sb, ticker, sa_id, "skip", "not_buy", confidence=confidence, edge=edge)
         return "not_buy"
+    if not edge_present:
+        _log_signal(sb, ticker, sa_id, "skip", "pre_schema", confidence=confidence, edge=edge)
+        return "pre_schema"
     if not isinstance(confidence, (int, float)) or confidence < MIN_CONF:
         _log_signal(sb, ticker, sa_id, "skip", "low_conf", confidence=confidence, edge=edge)
         return "low_conf"
-    if not isinstance(edge, (int, float)) or edge < MIN_EDGE_PCT:
+    if edge < MIN_EDGE_PCT:
         _log_signal(sb, ticker, sa_id, "skip", "low_edge", confidence=confidence, edge=edge)
         return "low_edge"
     if _has_open_position(sb, ticker):
         _log_signal(sb, ticker, sa_id, "skip", "already_open", confidence=confidence, edge=edge)
         return "already_open"
+    frozen, freeze_meta = _ticker_is_frozen(sb, ticker, now)
+    if frozen:
+        _log_signal(sb, ticker, sa_id, "skip", "ticker_freeze",
+                    confidence=confidence, edge=edge, meta=freeze_meta)
+        return "ticker_freeze"
 
     bw = j.get("buy_window") or {}
     lo = bw.get("target_price_low")
@@ -344,9 +475,11 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime) -> str:
         return "sector_cap"
 
     # Position sizing: 2% portfolio risk, capped at 5% notional.
-    risk_budget = PORTFOLIO_BASE_INR * RISK_PER_TRADE
+    # portfolio_base flows in from eval_signals so a single lookup
+    # serves the whole pass (avoids one Supabase hit per signal).
+    risk_budget = portfolio_base * RISK_PER_TRADE
     qty_by_risk = int(risk_budget / risk_per_share)
-    qty_by_notional_cap = int((PORTFOLIO_BASE_INR * MAX_NOTIONAL_PCT) / intent_px)
+    qty_by_notional_cap = int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)
     qty = max(1, min(qty_by_risk, qty_by_notional_cap))
 
     # Fill simulation: anchor on next-session open, add buy-side slippage.
@@ -403,30 +536,251 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime) -> str:
 
 
 def eval_signals(now: datetime | None = None) -> dict:
-    """Pull recently-graded stock_analyses (status=ok) and evaluate
-    each through the gate stack. Window is the last 3 days of
-    requested_at so a late grade still gets evaluated once. Idempotent
-    via paper_signals (source, run_id, ticker) unique constraint."""
+    """Pull recently-graded stock_analyses (status=ok) AND today's
+    morning analysis outlook signals (holding_outlooks_1d +
+    wishlist_outlooks_1d), then evaluate each through the gate stack.
+    Window is the last 3 days of requested_at / run_at so a late
+    grade still gets evaluated once. Idempotent via paper_signals
+    (source, run_id, ticker) unique constraint.
+
+    Two signal sources, evaluated in this order:
+      1. stock_analyst (deep, multi-day horizon, has buy_window/target/stop)
+      2. holding_outlook_1d / wishlist_outlook_1d (intraday, 1d horizon,
+         derive synthetic target/stop from outlook.range)
+
+    Stock Analyst signals get priority because they carry explicit
+    target/stop levels the model committed to. Outlook signals are
+    secondary because they synthesize entry geometry from the range
+    band; they fire when stock_analyst hasn't been triggered for the
+    ticker recently."""
     sb = _sb()
     now = now or datetime.now(timezone.utc)
-    since = (now - timedelta(days=3)).isoformat()
-    rows = sb.table("stock_analyses").select(
-        "id,ticker,horizon_days,requested_at,llm_json,status"
-    ).gte("requested_at", since).eq("status", "ok").execute().data or []
+    portfolio_base = _resolve_portfolio_base(sb)
+    print(f"paper_trader: portfolio_base resolved = {portfolio_base:.0f}")
+
     counts = {"evaluated": 0, "entered": 0}
     skips: dict[str, int] = {}
-    for r in rows:
+
+    # Source 1: Stock Analyst
+    since = (now - timedelta(days=3)).isoformat()
+    sa_rows = sb.table("stock_analyses").select(
+        "id,ticker,horizon_days,requested_at,llm_json,status"
+    ).gte("requested_at", since).eq("status", "ok").execute().data or []
+    for r in sa_rows:
         counts["evaluated"] += 1
-        outcome = _evaluate_one(sb, r, now)
+        outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome == "already_evaluated":
-            pass  # not a skip, idempotent re-run
+            pass
         else:
             skips[outcome] = skips.get(outcome, 0) + 1
+
+    # Source 2: Morning analysis outlook signals
+    a_rows = sb.table("analysis").select(
+        "id,run_at,raw_json"
+    ).gte("run_at", since).order("run_at", desc=True).limit(5).execute().data or []
+    for a in a_rows:
+        raw = a.get("raw_json") or {}
+        for source_kind, key in (("holding_outlook_1d", "holding_outlooks_1d"),
+                                 ("wishlist_outlook_1d", "wishlist_outlooks_1d")):
+            for outlook in (raw.get(key) or []):
+                counts["evaluated"] += 1
+                outcome = _evaluate_outlook(sb, a, outlook, source_kind, now,
+                                           portfolio_base=portfolio_base)
+                if outcome == "enter":
+                    counts["entered"] += 1
+                elif outcome == "already_evaluated":
+                    pass
+                else:
+                    skips[outcome] = skips.get(outcome, 0) + 1
+
     counts["skips"] = skips
     print(f"paper_trader.eval_signals: {counts}")
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Outlook signal evaluator (B5): holding_outlooks_1d + wishlist_outlooks_1d
+# ---------------------------------------------------------------------------
+def _parse_range_band(s) -> tuple[float, float] | None:
+    """Parse a tight INR band string like '320-330' or '₹320 - ₹330' into
+    (lo, hi) floats. Returns None on any failure. The morning prompt
+    forces this format so the parse is lenient on whitespace + ₹ but
+    strict on the two-number shape."""
+    if not isinstance(s, str):
+        return None
+    cleaned = s.replace("₹", "").replace(",", "").strip()
+    parts = [p.strip() for p in cleaned.replace("to", "-").split("-") if p.strip()]
+    if len(parts) != 2:
+        return None
+    try:
+        lo, hi = float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+    if lo <= 0 or hi <= 0 or lo >= hi:
+        return None
+    return lo, hi
+
+
+def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
+                      source_kind: str, now: datetime,
+                      portfolio_base: float) -> str:
+    """Gate-stack a single outlook entry. outlook carries direction +
+    range + confidence + key_driver. Target/stop synthesized from the
+    range band: long entry at mid, target = upper of range, stop = lower.
+    The per-dim calibration bias for the relevant calibration_log dim
+    is subtracted from raw confidence before the conf gate fires, so a
+    dim that historically overclaims confidence self-tightens the gate."""
+    a_id = analysis_row["id"]
+    raw_ticker = (outlook.get("ticker") or "").strip().upper()
+    if not raw_ticker:
+        return "no_ticker"
+    if not raw_ticker.endswith(".NS") and not raw_ticker.endswith(".BO") \
+            and not raw_ticker.startswith("^"):
+        ticker = raw_ticker + ".NS"
+    else:
+        ticker = raw_ticker
+
+    # Closure logger so every outlook skip / enter row writes the correct
+    # source_kind without each call site repeating the kwarg.
+    def L(action: str, skip_reason: str | None = None,
+          paper_trade_id: int | None = None, edge=None, meta: dict | None = None):
+        _log_signal(sb, ticker, a_id, action,
+                    skip_reason=skip_reason, paper_trade_id=paper_trade_id,
+                    confidence=outlook.get("confidence"), edge=edge,
+                    meta=meta, source_kind=source_kind)
+
+    # Idempotency check first so noisy re-runs don't waste CPU.
+    existing = sb.table("paper_signals").select("id").eq(
+        "source_kind", source_kind
+    ).eq("source_run_id", a_id).eq("ticker", ticker).limit(1).execute()
+    if existing.data:
+        return "already_evaluated"
+
+    direction = (outlook.get("direction") or "").lower()
+    stated_conf = outlook.get("confidence")
+    # Direction filter: only long entries for now. down + sideways skip.
+    if direction != "up":
+        L("skip", "not_buy")
+        return "not_buy"
+
+    # Per-dim confidence recalibration (A1). Pull the dim's bias from
+    # calibration_log; apply only if a non-trivial gap exists.
+    dim_for_calibration = (
+        "holding_outlook_dir_1d" if source_kind == "holding_outlook_1d"
+        else "wishlist_outlook_dir_1d"
+    )
+    bias = _dim_confidence_bias(sb, dim_for_calibration)
+    if not isinstance(stated_conf, (int, float)):
+        L("skip", "low_conf")
+        return "low_conf"
+    effective_conf = float(stated_conf) - bias
+    if effective_conf < OUTLOOK_MIN_CONF:
+        L("skip", "low_conf",
+          meta={"bias": bias, "effective_conf": effective_conf})
+        return "low_conf"
+
+    band = _parse_range_band(outlook.get("range"))
+    if not band:
+        L("skip", "no_intent_px")
+        return "no_intent_px"
+    lo, hi = band
+    intent_px = (lo + hi) / 2.0
+    target_px = hi
+    stop_px = lo
+    # Synthetic edge: pure geometry off the band. Compare against the
+    # outlook-specific (tighter) edge floor since 1d horizon has less
+    # friction cushion than a 30d Stock Analyst trade.
+    expected_return_pct = (target_px - intent_px) / intent_px * 100.0
+    expected_loss_pct = (intent_px - stop_px) / intent_px * 100.0
+    win_prob = max(0.0, min(1.0, effective_conf / 100.0))
+    loss_prob = 1.0 - win_prob
+    edge = expected_return_pct * win_prob - expected_loss_pct * loss_prob
+    if edge < OUTLOOK_MIN_EDGE_PCT:
+        L("skip", "low_edge", edge=edge, meta={"effective_conf": effective_conf})
+        return "low_edge"
+
+    if _has_open_position(sb, ticker):
+        L("skip", "already_open", edge=edge)
+        return "already_open"
+    frozen, freeze_meta = _ticker_is_frozen(sb, ticker, now)
+    if frozen:
+        L("skip", "ticker_freeze", edge=edge, meta=freeze_meta)
+        return "ticker_freeze"
+
+    risk_per_share = abs(intent_px - stop_px)
+    if risk_per_share <= 0:
+        L("skip", "bad_risk", edge=edge)
+        return "bad_risk"
+
+    avg_turnover = _yf_avg_turnover(ticker)
+    if avg_turnover is None:
+        L("skip", "no_liquidity_data", edge=edge)
+        return "no_liquidity_data"
+    if (avg_turnover / 1e7) < LIQUIDITY_MIN_CR:
+        L("skip", "liquidity", edge=edge,
+          meta={"avg_turnover_inr": avg_turnover})
+        return "liquidity"
+
+    sector, cap_tier = _ticker_sector_and_cap(sb, ticker)
+    if sector and _open_in_sector(sb, sector) >= SECTOR_CAP:
+        L("skip", "sector_cap", edge=edge, meta={"sector": sector})
+        return "sector_cap"
+
+    risk_budget = portfolio_base * RISK_PER_TRADE
+    qty_by_risk = int(risk_budget / risk_per_share)
+    qty_by_notional_cap = int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)
+    qty = max(1, min(qty_by_risk, qty_by_notional_cap))
+
+    run_at = analysis_row.get("run_at") or now.isoformat()
+    try:
+        ra_dt = datetime.fromisoformat(str(run_at).replace("Z", "+00:00"))
+    except Exception:
+        ra_dt = now
+    next_open = _yf_next_open(ticker, ra_dt)
+    anchor = next_open if next_open else intent_px
+    fill_px, slippage_cost = _apply_slippage(anchor, qty, "buy", cap_tier, avg_turnover)
+    buy_friction, _ = _broker_friction(fill_px * qty, "buy")
+
+    try:
+        t_res = sb.table("paper_trades").insert({
+            "source_kind": source_kind,
+            "source_run_id": a_id,
+            "ticker": ticker,
+            "side": "long",
+            "entered_at": now.isoformat(),
+            "intent_px": float(intent_px),
+            "fill_px": float(fill_px),
+            "qty": int(qty),
+            "target_px": float(target_px),
+            "stop_px": float(stop_px),
+            "horizon_days": 1,
+            "brokerage": float(buy_friction),
+            "stt": 0.0,
+            "slippage_cost": float(slippage_cost),
+            "confidence": int(stated_conf),
+            "expected_edge_pct": float(edge),
+            "status": "open",
+            "meta": {
+                "sector": sector,
+                "cap_tier": cap_tier,
+                "avg_turnover_inr": avg_turnover,
+                "next_open_anchor": next_open,
+                "calibration_bias_applied": bias,
+                "effective_conf": effective_conf,
+                "key_driver": outlook.get("key_driver"),
+            },
+        }).execute()
+        trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
+    except Exception as e:
+        print(f"  paper_trades insert failed ({ticker}, {source_kind}): {str(e)[:200]}")
+        L("skip", "insert_failed", edge=edge)
+        return "insert_failed"
+
+    L("enter", paper_trade_id=trade_id, edge=edge,
+      meta={"sector": sector, "calibration_bias_applied": bias})
+    return "enter"
 
 
 # ---------------------------------------------------------------------------
