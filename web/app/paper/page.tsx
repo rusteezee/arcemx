@@ -6,6 +6,13 @@ import { Stat } from "@/components/Stat";
 import { EmptyState } from "@/components/EmptyState";
 import { sb } from "@/lib/supabase";
 import { formatINR, formatPct, stripTicker } from "@/lib/utils";
+import {
+  computePaperMetrics,
+  perDimSkill,
+  type PaperMetrics,
+  type DimSkill,
+  type PredictionScoreRow,
+} from "@/lib/metrics";
 
 interface PaperTrade {
   id: number;
@@ -89,23 +96,32 @@ function fmtDate(iso: string | null): string {
 export default function PaperPage() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [signals, setSignals] = useState<PaperSignal[]>([]);
+  const [predScores, setPredScores] = useState<PredictionScoreRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       const since14 = new Date(Date.now() - 14 * 86400_000).toISOString();
-      const [tRes, sRes] = await Promise.all([
+      const since90 = new Date(Date.now() - 90 * 86400_000).toISOString();
+      const [tRes, sRes, pRes] = await Promise.all([
         sb.from("paper_trades").select("*").order("entered_at", { ascending: false }).limit(500),
         sb.from("paper_signals").select("*").gte("evaluated_at", since14).order("evaluated_at", { ascending: false }).limit(500),
+        sb.from("prediction_scores").select("dimension,score").gte("scored_at", since90).limit(5000),
       ]);
       setTrades((tRes.data || []) as PaperTrade[]);
       setSignals((sRes.data || []) as PaperSignal[]);
+      setPredScores((pRes.data || []) as PredictionScoreRow[]);
       setLoading(false);
     })();
   }, []);
 
   const open = useMemo(() => trades.filter((t) => t.status === "open"), [trades]);
   const closed = useMemo(() => trades.filter((t) => t.status !== "open"), [trades]);
+  const metrics: PaperMetrics = useMemo(
+    () => computePaperMetrics(closed.map((t) => ({ exit_at: t.exit_at, net_pnl: t.net_pnl }))),
+    [closed],
+  );
+  const dimSkills: DimSkill[] = useMemo(() => perDimSkill(predScores), [predScores]);
 
   const totalNetPnl = closed.reduce((s, t) => s + (t.net_pnl || 0), 0);
   const totalGrossPnl = closed.reduce((s, t) => s + (t.gross_pnl || 0), 0);
@@ -168,7 +184,7 @@ export default function PaperPage() {
         </p>
       </div>
 
-      <Section num="001 / 004" title="Realised P&L" glyph="✦">
+      <Section num="001 / 006" title="Realised P&L" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat label="Open Positions" value={open.length.toString()} />
           <Stat label="Closed Trades" value={closed.length.toString()} />
@@ -206,7 +222,82 @@ export default function PaperPage() {
         )}
       </Section>
 
-      <Section num="002 / 004" title="Open Positions" glyph="◈">
+      <Section
+        num="002 / 006"
+        title="Edge Metrics"
+        glyph="◇"
+        description="Sharpe, max drawdown, and Probabilistic Sharpe (Bailey-Lopez de Prado, skew + kurt adjusted). PSR is the probability the true Sharpe exceeds zero given the sample. Risk-free leg = 6.5% RBI repo proxy."
+      >
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Stat
+            label="Sharpe (ann.)"
+            value={metrics.tradeCount ? metrics.sharpe.toFixed(2) : "·"}
+            deltaPositive={metrics.sharpe >= 1.0}
+          />
+          <Stat
+            label="Max Drawdown"
+            value={metrics.tradeCount ? formatPct(metrics.maxDd.maxDdPct, false) : "·"}
+            deltaPositive={metrics.maxDd.maxDdPct <= 15.0}
+          />
+          <Stat
+            label="PSR"
+            value={metrics.tradeCount >= 4 ? metrics.psr.toFixed(3) : "·"}
+            deltaPositive={metrics.psr >= 0.95}
+          />
+          <Stat
+            label="Calmar"
+            value={metrics.tradeCount ? metrics.calmar.toFixed(2) : "·"}
+          />
+        </div>
+        <div className="card overflow-hidden mt-5">
+          <div className="px-5 py-4 border-b border-border">
+            <div className="text-sm font-medium">Tier Ladder</div>
+            <div className="text-xs text-[var(--muted)] mt-1">
+              Cleared tier: {metrics.tierEval.clearedTier}. Next: T{metrics.tierEval.nextTier} ({metrics.tierEval.nextLabel}).
+              Every gate must pass simultaneously. A failed gate diagnoses + iterates, never kills.
+            </div>
+          </div>
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Tier</th>
+                  <th>Label</th>
+                  <th>Sharpe ≥</th>
+                  <th>Max DD ≤</th>
+                  <th>PSR ≥</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { tier: 1, sharpe: 1.0, maxDdPct: 15.0, psr: 0.95, label: "Phase B unlock" },
+                  { tier: 2, sharpe: 1.3, maxDdPct: 12.0, psr: 0.97, label: "Phase C unlock" },
+                  { tier: 3, sharpe: 1.6, maxDdPct: 10.0, psr: 0.99, label: "Hardening" },
+                  { tier: 4, sharpe: 2.0, maxDdPct: 8.0,  psr: 0.995, label: "Peak (2028)" },
+                ].map((g) => {
+                  const cleared = metrics.tierEval.clearedTier >= g.tier;
+                  const isNext = metrics.tierEval.nextTier === g.tier && !cleared;
+                  return (
+                    <tr key={g.tier}>
+                      <td className="num font-medium">T{g.tier}</td>
+                      <td className="whitespace-nowrap">{g.label}</td>
+                      <td className="num">{g.sharpe.toFixed(1)}</td>
+                      <td className="num">{g.maxDdPct.toFixed(0)}%</td>
+                      <td className="num">{g.psr.toFixed(3)}</td>
+                      <td className={`whitespace-nowrap ${cleared ? "text-[var(--gain)]" : isNext ? "text-[var(--warn)]" : "text-[var(--muted)]"}`}>
+                        {cleared ? "CLEARED" : isNext ? "ACTIVE" : "LOCKED"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Section>
+
+      <Section num="003 / 006" title="Open Positions" glyph="◈">
         {open.length === 0 ? (
           <EmptyState
             title="No open paper positions"
@@ -250,7 +341,7 @@ export default function PaperPage() {
         )}
       </Section>
 
-      <Section num="003 / 004" title="Closed Trades" glyph="⬡">
+      <Section num="004 / 006" title="Closed Trades" glyph="⬡">
         {closed.length === 0 ? (
           <EmptyState
             title="No closed trades yet"
@@ -305,7 +396,59 @@ export default function PaperPage() {
       </Section>
 
       <Section
-        num="004 / 004"
+        num="005 / 006"
+        title="Per-Dim Skill"
+        glyph="◉"
+        description="(mean accuracy - 50) / stdev across the last 90 days. Above 1.0 = dim's accuracy distribution sits comfortably above coin-flip noise. Below 0 = systematically worse than guessing. Low-sample dims (<5) shown but marked."
+      >
+        {dimSkills.length === 0 ? (
+          <EmptyState
+            title="No graded predictions in window"
+            hint="Grader has not produced scores in the last 90 days."
+          />
+        ) : (
+          <div className="card overflow-hidden">
+            <div className="table-scroll">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Dimension</th>
+                    <th>Samples</th>
+                    <th>Mean Acc</th>
+                    <th>Stdev</th>
+                    <th>Skill Ratio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dimSkills.map((d) => (
+                    <tr key={d.dimension}>
+                      <td className="whitespace-nowrap">
+                        {d.dimension}
+                        {d.lowSample && <span className="ml-2 text-[var(--muted)] text-xs">low n</span>}
+                      </td>
+                      <td className="num">{d.sampleSize}</td>
+                      <td className="num">{d.meanAcc.toFixed(1)}</td>
+                      <td className="num">{d.stdevAcc.toFixed(1)}</td>
+                      <td className={`num font-medium ${
+                        d.skillRatio >= 1.0
+                          ? "text-[var(--gain)]"
+                          : d.skillRatio >= 0
+                          ? "text-[var(--muted)]"
+                          : "text-[var(--loss)]"
+                      }`}>
+                        {d.skillRatio.toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section
+        num="006 / 006"
         title="Signal Activity"
         glyph="◐"
         description="Last 14 days. Every Stock Analyst buy is logged here even when skipped, so gate stack attribution stays computable."
