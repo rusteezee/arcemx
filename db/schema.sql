@@ -204,6 +204,69 @@ create table if not exists sync_log (
 create index if not exists idx_sync_log_user_ts on sync_log(user_id, ts desc);
 
 
+-- Paper trades (Phase A): every simulated position the entry gate
+-- decides to open is logged here with the friction-adjusted fill,
+-- horizon-mandatory exit, and final net P&L. Source-tracked so the
+-- per-dim Sharpe heatmap on the /paper page can attribute returns
+-- back to the signal that produced them. No real capital touches
+-- this table; Phase B will introduce a sibling live_trades when
+-- the edge gate clears.
+create table if not exists paper_trades (
+    id bigserial primary key,
+    source_kind text not null,
+    source_run_id bigint,
+    ticker text not null,
+    side text not null,
+    entered_at timestamptz not null,
+    intent_px numeric,
+    fill_px numeric,
+    qty integer,
+    target_px numeric,
+    stop_px numeric,
+    horizon_days integer,
+    exit_at timestamptz,
+    exit_px numeric,
+    exit_reason text,
+    gross_pnl numeric,
+    slippage_cost numeric,
+    brokerage numeric,
+    stt numeric,
+    net_pnl numeric,
+    confidence integer,
+    expected_edge_pct numeric,
+    status text not null default 'open',
+    meta jsonb,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_paper_trades_ticker_entered on paper_trades(ticker, entered_at desc);
+create index if not exists idx_paper_trades_status on paper_trades(status);
+create index if not exists idx_paper_trades_source on paper_trades(source_kind, source_run_id);
+
+
+-- Paper signals (Phase A): every signal the entry gate evaluates,
+-- whether it produced a trade or got skipped. Records the skip_reason
+-- so the gate can be retro-tuned (which gate rejected the most
+-- ultimately-profitable signals?) and the "skipped winner" attribution
+-- can be measured. One row per (source_kind, source_run_id, ticker)
+-- evaluation; the unique constraint keeps idempotent re-runs cheap.
+create table if not exists paper_signals (
+    id bigserial primary key,
+    evaluated_at timestamptz not null default now(),
+    ticker text not null,
+    source_kind text not null,
+    source_run_id bigint,
+    action text not null,
+    skip_reason text,
+    paper_trade_id bigint references paper_trades(id) on delete set null,
+    confidence integer,
+    expected_edge_pct numeric,
+    meta jsonb,
+    unique (source_kind, source_run_id, ticker)
+);
+create index if not exists idx_paper_signals_ticker_eval on paper_signals(ticker, evaluated_at desc);
+create index if not exists idx_paper_signals_action on paper_signals(action, evaluated_at desc);
+
+
 -- Confidence calibration log. One row per scored prediction that carries
 -- a stated confidence at call time, capturing the (stated, realized)
 -- pair for calibration analysis. Lets the dashboard plot per-dim
@@ -245,6 +308,8 @@ alter table portfolio_score_runs enable row level security;
 alter table ticker_enrichment    enable row level security;
 alter table sync_log             enable row level security;
 alter table calibration_log      enable row level security;
+alter table paper_trades         enable row level security;
+alter table paper_signals        enable row level security;
 
 do $$
 declare t text;
@@ -252,7 +317,8 @@ begin
   foreach t in array array[
     'prices','analysis','portfolio','wishlist','transactions',
     'prediction_scores','accuracy_summary','sensei_eod',
-    'calculator_runs','portfolio_score_runs','sync_log','calibration_log'
+    'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
+    'paper_trades','paper_signals'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('create policy "anon read" on %I for select to anon using (true)', t);
