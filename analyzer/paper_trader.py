@@ -88,12 +88,18 @@ def _resolve_portfolio_base(sb) -> float:
     deployed capital, not unrealised P&L. Falls back to the constant
     on any failure so a missing portfolio row never breaks an eval.
 
-    Single-user app: read every portfolio row regardless of user_id.
-    INDmoney sync writes rows under the user's Telegram chat id, not
-    'default', so filtering on user_id='default' missed everything
-    and we silently fell back to PORTFOLIO_BASE_FALLBACK."""
+    Resolves user_id from DEFAULT_USER_ID env (matches the dashboard
+    pattern at web/lib/supabase.ts). INDmoney sync writes rows under
+    the user's Telegram chat id, not 'default'; the env var holds
+    that id so server-side reads stay consistent with the browser.
+    Falls back to reading every row regardless of user_id when the
+    env is unset so a fresh-install never silently fails."""
+    user_id = os.getenv("DEFAULT_USER_ID") or os.getenv("NEXT_PUBLIC_DEFAULT_USER_ID")
     try:
-        rows = sb.table("portfolio").select("qty,avg_buy_price").execute().data or []
+        q = sb.table("portfolio").select("qty,avg_buy_price")
+        if user_id:
+            q = q.eq("user_id", user_id)
+        rows = q.execute().data or []
         invested = 0.0
         for r in rows:
             q = r.get("qty")

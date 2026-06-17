@@ -367,6 +367,76 @@ def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
     return True, ""
 
 
+_BEAR_SYSTEM_PROMPT = """You are an adversarial bear-case auditor. A prior bull analyst has issued a BUY call on this stock. Your job is to find the kill shot.
+
+You see the same `deep_payload` the bull saw, the bull's full output, and the bull's prior_self_predictions track record. Default to skepticism. Your output is a JSON object with a single key `concrete_failure_modes`: a list of 2-5 short strings, each ONE concrete way this trade fails over the bull's stated horizon. Each entry must cite a SPECIFIC data field from deep_payload (e.g. "trailing PE of 680 vs sector median 28; multiple compression to 30x = ~55% downside"). No prose outside JSON, no markdown.
+
+Constraints on each failure mode:
+- Concrete: cite a number from the payload, not a vibe.
+- Distinct: do not echo entries already in the bull's `reasons_could_be_wrong` (those are listed in the user message; skip near-duplicates).
+- Material: the failure mode must plausibly cost more than the bull's `expected_loss_pct` over the horizon. Skip trivial nitpicks.
+- Anti-hindsight: never reference data dated after `requested_at`.
+
+Output STRICT JSON only:
+{
+  "concrete_failure_modes": [
+    "trailing PE 680 vs sector 28; multiple compression to 30x = ~55% downside",
+    "FCF -2868cr; if margins do not recover, equity raise dilutes ~15% inside the horizon",
+    "..."
+  ]
+}
+
+Empty list is allowed if the bull case is genuinely airtight. Lying about an airtight case to please the validator is a worse failure than admitting it."""
+
+
+def _adversarial_bear_pass(payload: dict, bull_output: dict, ticker: str,
+                           horizon: int, requested_at: str,
+                           prior: list[dict], model_chain: list[str]) -> list[str]:
+    """Run a focused bear-case 2nd pass against the same LLM router.
+    Returns the bear's concrete_failure_modes list (may be empty).
+    Soft-fails: any exception returns [] so the bull output is kept.
+
+    Free-quota note: this doubles the LLM call cost per Stock Analyst
+    run. Worth it per the PolyBench research finding that confidence
+    calibration matters more than raw signal; the adversarial second
+    voice is the cheapest way to stress-test the bull's confidence."""
+    user_payload = {
+        "instruction": (
+            f"The bull analyst issued a BUY call on {ticker} at a "
+            f"{horizon}-day horizon. Information cutoff: {requested_at}. "
+            "Find 2-5 concrete failure modes that would kill this trade. "
+            "Cite specific payload fields. Skip near-duplicates of the "
+            "bull's existing reasons_could_be_wrong."
+        ),
+        "ticker": ticker,
+        "horizon_days": horizon,
+        "requested_at": requested_at,
+        "deep_payload": payload,
+        "prior_self_predictions": prior,
+        "bull_output": {
+            "rating": bull_output.get("rating"),
+            "confidence": bull_output.get("confidence"),
+            "summary": bull_output.get("summary"),
+            "expected_edge_pct": bull_output.get("expected_edge_pct"),
+            "reasons_could_be_wrong_already_listed": bull_output.get("reasons_could_be_wrong") or [],
+        },
+    }
+    messages = [
+        {"role": "system", "content": _BEAR_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(user_payload, default=str)},
+    ]
+    t0 = time.time()
+    resp = _post(messages, model_chain, reasoning=True, timeout=240)
+    print(f"  bear pass LLM in {time.time() - t0:.1f}s")
+    parsed = _parse_llm_json(resp)
+    if not isinstance(parsed, dict):
+        return []
+    out = parsed.get("concrete_failure_modes")
+    if not isinstance(out, list):
+        return []
+    return [str(x) for x in out if isinstance(x, str)]
+
+
 def run(run_id: int) -> dict:
     """Execute one Stock Analyst pass for a stock_analyses row. The
     bot trigger pre-inserts the row with status='pending'; this
@@ -450,6 +520,56 @@ def run(run_id: int) -> dict:
         ok, err = _validate(out, ticker, horizon)
         if not ok:
             raise RuntimeError(f"output validation failed: {err}")
+
+        # 4b. Adversarial bear-case 2nd pass. Take the bull output back
+        # to the same LLM with a focused "find the kill shot" prompt.
+        # New failure modes get spliced into reasons_could_be_wrong and
+        # the validator's dampening logic re-runs, so a strong refute
+        # automatically cuts confidence further. Soft-fails: a bear-pass
+        # exception leaves the bull output unchanged (free quota stays
+        # protected and the original call is still graded honestly).
+        try:
+            bear = _adversarial_bear_pass(payload, out, ticker, horizon,
+                                          requested_at, prior, model_chain)
+            if bear:
+                existing = out.get("reasons_could_be_wrong") or []
+                merged: list[str] = list(existing)
+                added = 0
+                for r_new in bear:
+                    if not isinstance(r_new, str) or len(r_new.strip()) < 20:
+                        continue
+                    if any(r_new.strip().lower()[:60] in e.lower() for e in merged):
+                        continue
+                    merged.append(r_new.strip())
+                    added += 1
+                if added:
+                    out["reasons_could_be_wrong"] = merged
+                    out["bear_pass_added"] = added
+                    # Re-run dampening on the merged list. The validator
+                    # already stamped confidence_raw + confidence_dampen_applied
+                    # on the first pass; we restore from raw, then
+                    # re-dampen against the merged count.
+                    if out.get("confidence_raw") is not None:
+                        out["confidence"] = int(out["confidence_raw"])
+                    n_material = sum(1 for x in merged
+                                     if isinstance(x, str) and len(x.strip()) >= 20)
+                    if n_material >= 2:
+                        dampen = min(25, 12 * (n_material - 1))
+                        out["confidence_raw"] = out["confidence"]
+                        out["confidence"] = max(0, out["confidence"] - dampen)
+                        out["confidence_dampen_applied"] = dampen
+                    # If new dampened confidence dropped below 50 with
+                    # rating=buy, the existing self-contradiction rule
+                    # in the validator handles the downgrade — re-run it.
+                    if out.get("rating") == "buy" and out["confidence"] < 50:
+                        out["rating_raw"] = out.get("rating_raw") or "buy"
+                        out["rating"] = "hold"
+                        out["rating_downgrade_reason"] = (
+                            f"buy + post-bear confidence={out['confidence']} "
+                            f"below 50 -> downgraded to hold"
+                        )
+        except Exception as e:
+            print(f"  bear pass skipped: {type(e).__name__}: {str(e)[:160]}")
 
         # 5. Persist success.
         sb.table("stock_analyses").update({
