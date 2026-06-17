@@ -1277,8 +1277,26 @@ def _grade_stock_analyses() -> None:
         print(f"Stock Analyst grade skipped: {str(e)[:160]}")
 
 
+def _run_paper_trader() -> None:
+    """Phase A paper trader hook. Order matters: mark_to_market first
+    so any newly-closed slot frees sector cap / open count BEFORE
+    eval_signals runs against the freshly-graded stock_analyses rows.
+    Soft-fails so a yfinance/network blip in the paper trader cannot
+    block the rest of the grader pipeline."""
+    try:
+        from analyzer.paper_trader import run_daily as _paper_run
+    except ImportError as e:
+        print(f"Paper trader skipped (import failed): {str(e)[:120]}")
+        return
+    try:
+        _paper_run()
+    except Exception as e:
+        print(f"Paper trader skipped: {str(e)[:160]}")
+
+
 if __name__ == "__main__":
     grade_all(lookback_days=90)
     compute_summaries()
     _grade_stock_analyses()
+    _run_paper_trader()
     _embed_new_predictions()
