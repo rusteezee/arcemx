@@ -336,11 +336,11 @@ Return STRICT JSON only matching this schema:
 {
   "market_mood": "bull" | "bear" | "neutral",
   "confidence": 0-100,
-  "nifty_outlook": {"direction": "up|down|sideways", "range": "string", "drivers": ["..."]},
+  "nifty_outlook": {"direction": "up|down|sideways", "range": "string", "confidence": 0-100, "drivers": ["..."]},
   "nifty_5d_outlook": {"direction": "up|down|sideways", "rationale": "trend over the next ~5 trading sessions"},
   "nifty_20d_outlook": {"direction": "up|down|sideways", "rationale": "trend over the next ~20 trading sessions"},
   "volatility_regime": {"call": "expansion|contraction|normal", "rationale": "expected NIFTY volatility over the next ~5 sessions vs recent, from India VIX + ATR"},
-  "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "drivers": ["..."]},
+  "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "confidence": 0-100, "drivers": ["..."]},
   "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30, "conviction": "A|B|C"}],
   "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "<numeric INR or INR range, e.g. 1750-1800>", "target": "<numeric INR multi-month target, e.g. 2200>", "stop_loss": "<numeric INR thesis-break level, e.g. 1600>", "horizon_months": 6-36, "conviction": "A|B|C"}],
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],

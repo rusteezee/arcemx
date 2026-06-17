@@ -189,6 +189,8 @@ export default function AccuracyPage() {
   const [rangeScatter, setRangeScatter] = useState<ScatterPoint[]>([]);
   const [calibScatter, setCalibScatter] = useState<CalibPoint[]>([]);
   const [calibration, setCalibration] = useState<Calibration | null>(null);
+  const [perDimCalib, setPerDimCalib] = useState<Map<string, CalibPoint[]>>(new Map());
+  const [perDimCalibPick, setPerDimCalibPick] = useState<string>("direction_1d");
   const [loading, setLoading] = useState(true);
   // Per-dimension status grid window. Backed by accuracy_summary's
   // window_days column; the grader computes 7 / 30 / 90 / 180 / 365 /
@@ -280,6 +282,40 @@ export default function AccuracyPage() {
         });
       }
       setCalibScatter(cPts);
+
+      // Per-dim calibration_log scatter. Different spine from the
+      // top-level CalibScatter above: this one reads the explicit
+      // (stated_confidence, realized_score) pairs the grader writes
+      // for each scored prediction per dimension. Confidence comes
+      // from the dim's own outlook (nifty_outlook.confidence, etc),
+      // not from analysis.confidence (which is mood-level), so the
+      // scatter resolves overconfidence per-dim instead of averaging
+      // every dim into one cloud.
+      const { data: calRows } = await sb
+        .from("calibration_log")
+        .select("dimension,stated_confidence,realized_score,prediction_date")
+        .limit(5000);
+      const byDim = new Map<string, CalibPoint[]>();
+      for (const r of (calRows || []) as any[]) {
+        const dim = r.dimension;
+        const s = Number(r.stated_confidence);
+        const real = Number(r.realized_score);
+        if (!dim || !isFinite(s) || !isFinite(real)) continue;
+        const arr = byDim.get(dim) || [];
+        arr.push({ stated: s, realized: real, date: String(r.prediction_date || "").slice(0, 10) });
+        byDim.set(dim, arr);
+      }
+      setPerDimCalib(byDim);
+      // Default to the dim with the most samples so the chart opens
+      // populated instead of empty even when direction_1d has no rows.
+      if (byDim.size) {
+        let best = "direction_1d";
+        let bestN = byDim.get("direction_1d")?.length || 0;
+        for (const [d, pts] of byDim) {
+          if (pts.length > bestN) { bestN = pts.length; best = d; }
+        }
+        setPerDimCalibPick(best);
+      }
 
       // Collapse to one score per prediction date (average if a day has more
       // than one), then walk forward applying a trailing rolling mean so the
@@ -457,7 +493,7 @@ export default function AccuracyPage() {
         </p>
       </div>
 
-      <Section num={calibration ? "001 / 010" : "001 / 009"} title="Overall Last 30 Days" glyph="✦">
+      <Section num={calibration ? "001 / 011" : "001 / 010"} title="Overall Last 30 Days" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
@@ -478,7 +514,7 @@ export default function AccuracyPage() {
 
       {calibration && (
         <Section
-          num="002 / 010"
+          num="002 / 011"
           title="Confidence Calibration"
           glyph="◉"
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
@@ -503,7 +539,7 @@ export default function AccuracyPage() {
       )}
 
       <Section
-        num={calibration ? "003 / 010" : "002 / 009"}
+        num={calibration ? "003 / 011" : "002 / 010"}
         title="New Dimensions"
         glyph="◉"
         description="Headline accuracy on the recently-added graded dims. Empty cells populate once the next grader pass scores them."
@@ -526,7 +562,7 @@ export default function AccuracyPage() {
         </div>
       </Section>
 
-      <Section num={calibration ? "004 / 010" : "003 / 009"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction score, indexed by the date each call was MADE. This is a record of outcomes on a date-by-date basis, not a learning signal: the grader re-scores the whole 90d lookback every run so each point is fixed by how the market actually moved that day. A static engine that never adapted would produce the same shape. For the real engine-improvement signal see Cohort Learning Curve below.">
+      <Section num={calibration ? "004 / 011" : "003 / 010"} title="Score Trend" glyph="⬡" description="Trailing 10-prediction rolling direction score, indexed by the date each call was MADE. This is a record of outcomes on a date-by-date basis, not a learning signal: the grader re-scores the whole 90d lookback every run so each point is fixed by how the market actually moved that day. A static engine that never adapted would produce the same shape. For the real engine-improvement signal see Cohort Learning Curve below.">
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -560,7 +596,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "005 / 010" : "004 / 009"}
+        num={calibration ? "005 / 011" : "004 / 010"}
         title="Cohort Learning Curve"
         glyph="◈"
         description="Bucket each direction_1d call by the ISO week it was MADE, plot the mean grader score per week. An upward slope across cohorts means later-issued predictions outperform earlier ones, which IS engine improvement (corrective_rules + sensei feedback actually moving the needle). A flat or downward slope means in-context feedback is not yet translating into better calls."
@@ -626,7 +662,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "006 / 010" : "005 / 009"}
+        num={calibration ? "006 / 011" : "005 / 010"}
         title="Accuracy Week Over Week"
         glyph="⬡"
         description="Each grader run appends a new accuracy_summary snapshot. This chart trends the 30-day direction accuracy across those snapshots over time. Unlike Score Trend (per-prediction date) and Cohort Learning Curve (per prediction-week), this plots how the rolling-30d measurement itself has moved run over run — the literal answer to 'is my 30d accuracy higher this week than last week'."
@@ -685,7 +721,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "007 / 010" : "006 / 009"}
+        num={calibration ? "007 / 011" : "006 / 010"}
         title="Range Tightness vs Hit Rate"
         glyph="◈"
         description="X-axis: predicted band width as percent of midpoint. Y-axis: grader score 0-100 (tight hit nears 100, miss collapses below 40). Useful cluster sits top-left: tight bands that still hit. The trend line falling left-to-right means width is buying score; a flat or rising line means the engine is calibrated."
@@ -734,7 +770,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "008 / 010" : "007 / 009"}
+        num={calibration ? "008 / 011" : "007 / 010"}
         title="Confidence vs Realized Accuracy"
         glyph="◎"
         description="Each dot is one direction call. X-axis: confidence stated when the call was made. Y-axis: graded score for that day. Both axes 0-100, so the diagonal line is perfect calibration (stated equals delivered). Dots above the line read as underconfident; dots below as overconfident. R is the Pearson correlation; tight to 1 = stated confidence reliably tracks realized hit rate."
@@ -783,7 +819,83 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "009 / 010" : "008 / 009"}
+        num={calibration ? "009 / 011" : "008 / 010"}
+        title="Per-Dim Confidence Calibration"
+        glyph="◐"
+        description="Same diagonal-is-perfect read as the section above, but each dimension on its own axis. Confidence here is the per-dim outlook confidence the grader pairs with the dim's own realized score (calibration_log), not the analysis-level mood confidence. A dim that overclaims confidence shows dots below the diagonal; an underconfident dim sits above."
+      >
+        {(() => {
+          const dims = Array.from(perDimCalib.keys()).sort(
+            (a, b) => (perDimCalib.get(b)?.length || 0) - (perDimCalib.get(a)?.length || 0),
+          );
+          if (dims.length === 0) {
+            return (
+              <EmptyState
+                title="No per-dim calibration data yet"
+                hint="First rows land after next 08:30 IST analysis + 17:00 IST grader pair. nifty_outlook.confidence + sensex_outlook.confidence must be present in the morning call for the spine to populate."
+              />
+            );
+          }
+          const pickedPts = perDimCalib.get(perDimCalibPick) || [];
+          const stat = calibPearson(pickedPts);
+          return (
+            <>
+              <div className="h-scroll flex gap-1.5 -mx-1 px-1 mb-4">
+                {dims.map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setPerDimCalibPick(d)}
+                    className={`shrink-0 px-3 py-1.5 text-xs rounded-md border border-border transition-colors whitespace-nowrap ${
+                      perDimCalibPick === d
+                        ? "bg-foreground text-background"
+                        : "hover:bg-[var(--muted-bg)]"
+                    }`}
+                  >
+                    {DIMENSION_LABELS[d] || d} ({perDimCalib.get(d)?.length || 0})
+                  </button>
+                ))}
+              </div>
+              <motion.div
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                className="card p-6"
+              >
+                {pickedPts.length >= 4 && stat ? (
+                  <>
+                    <div className="mb-4">
+                      <div className="text-sm italic font-medium text-foreground">
+                        R = {stat.r >= 0 ? "+" : ""}
+                        {stat.r.toFixed(3)}, R² = {stat.r2.toFixed(3)}, n = {stat.n}
+                      </div>
+                      <div className="text-xs text-[var(--muted)] mt-1">
+                        Dimension: {DIMENSION_LABELS[perDimCalibPick] || perDimCalibPick}
+                      </div>
+                    </div>
+                    <CalibScatter points={pickedPts} />
+                  </>
+                ) : (
+                  <div
+                    style={{ height: 280 }}
+                    className="flex flex-col items-center justify-center text-center gap-2"
+                  >
+                    <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+                    <p className="text-sm text-[var(--muted)]">
+                      Scatter renders once at least 4 graded predictions land in this dim.
+                    </p>
+                    <p className="text-xs text-[var(--muted)]">
+                      {pickedPts.length} scored so far.
+                    </p>
+                  </div>
+                )}
+              </motion.div>
+            </>
+          );
+        })()}
+      </Section>
+
+      <Section
+        num={calibration ? "010 / 011" : "009 / 010"}
         title="Conviction Tier Performance"
         glyph="◉"
         description="Stratified pick alpha by conviction label. A-tier alpha should exceed B; B should exceed C. Flat results across tiers means the labels carry no signal and the prompt needs tightening."
@@ -825,7 +937,7 @@ export default function AccuracyPage() {
       </Section>
 
       <Section
-        num={calibration ? "010 / 010" : "009 / 009"}
+        num={calibration ? "011 / 011" : "010 / 010"}
         title="Reading These Numbers Honestly"
         glyph="◆"
         description="Where the data is now, what the percentages can and cannot tell you yet, and the milestones each dimension has to clear before a reading becomes a conclusion instead of a directional signal."
