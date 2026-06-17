@@ -445,8 +445,25 @@ def audit_reasoning_breakdown(rb: dict) -> tuple[float, dict]:
 
 
 def _upsert_score(sb, analysis_id: int, dimension: str, horizon_days: int,
-                  predicted, actual, score: float, delta: float, notes: str = ""):
-    sb.table("prediction_scores").upsert({
+                  predicted, actual, score: float, delta: float, notes: str = "",
+                  stated_confidence=None, prediction_date=None):
+    """Upsert a prediction_scores row and, when the caller knows the
+    confidence the model stated at call time, also upsert a paired
+    calibration_log row capturing the (stated_confidence, realized_score)
+    pair for that prediction. The calibration table is the spine for
+    the per-dim "stated vs realized" scatter on the accuracy page and
+    feeds the paper-trader's confidence-recalibration step (map raw
+    confidence to a calibrated number before applying the entry gate).
+
+    stated_confidence + prediction_date are paired: both must be
+    provided for the calibration row to be written. A None on either
+    is a soft-skip with no log row, so existing call sites that have
+    not yet been wired keep working unchanged. The calibration upsert
+    is wrapped in its own try/except so a constraint failure (e.g. a
+    pre-existing duplicate during a re-grade) cannot break the score
+    upsert it shadows.
+    """
+    res = sb.table("prediction_scores").upsert({
         "analysis_id": analysis_id,
         "dimension": dimension,
         "horizon_days": horizon_days,
@@ -456,6 +473,36 @@ def _upsert_score(sb, analysis_id: int, dimension: str, horizon_days: int,
         "delta": float(delta),
         "notes": notes,
     }, on_conflict="analysis_id,dimension,horizon_days").execute()
+
+    if stated_confidence is None or prediction_date is None:
+        return
+    ps_id = None
+    if getattr(res, "data", None):
+        ps_id = (res.data[0] or {}).get("id")
+    if ps_id is None:
+        try:
+            existing = sb.table("prediction_scores").select("id").eq(
+                "analysis_id", analysis_id
+            ).eq("dimension", dimension).eq("horizon_days", horizon_days).limit(1).execute()
+            if existing.data:
+                ps_id = existing.data[0].get("id")
+        except Exception:
+            pass
+    if ps_id is None:
+        return
+    pdate = prediction_date
+    if hasattr(pdate, "date"):
+        pdate = pdate.date()
+    try:
+        sb.table("calibration_log").upsert({
+            "prediction_score_id": ps_id,
+            "dimension": dimension,
+            "stated_confidence": float(stated_confidence),
+            "realized_score": float(score),
+            "prediction_date": str(pdate),
+        }, on_conflict="prediction_score_id").execute()
+    except Exception as e:
+        print(f"  calibration_log upsert skip ({dimension}): {str(e)[:120]}")
 
 
 def grade_all(lookback_days: int = 90):
@@ -497,20 +544,26 @@ def grade_all(lookback_days: int = 90):
             nifty_anchor = _session_bounds("^NSEI", run_at)
             if nifty_anchor:
                 last_close, next_close, target_d = nifty_anchor
-                pred_dir = (raw.get("nifty_outlook") or {}).get("direction", "")
-                pred_rng = _parse_range((raw.get("nifty_outlook") or {}).get("range", ""))
+                nifty_outlook = raw.get("nifty_outlook") or {}
+                pred_dir = nifty_outlook.get("direction", "")
+                pred_rng = _parse_range(nifty_outlook.get("range", ""))
+                stated_conf = nifty_outlook.get("confidence")
 
                 score, delta = grade_direction(pred_dir, last_close, next_close)
                 _upsert_score(sb, aid, "direction_1d", 1,
                               {"direction": pred_dir}, {"pct": delta},
                               score, delta,
-                              notes=f"target session {target_d}")
+                              notes=f"target session {target_d}",
+                              stated_confidence=stated_conf,
+                              prediction_date=run_at)
                 if pred_rng:
                     rscore, rdelta = grade_range(pred_rng, next_close)
                     _upsert_score(sb, aid, "range_1d", 1,
                                   {"range": list(pred_rng)},
                                   {"close": next_close}, rscore, rdelta,
-                                  notes=f"target session {target_d}")
+                                  notes=f"target session {target_d}",
+                                  stated_confidence=stated_conf,
+                                  prediction_date=run_at)
 
                 # ----- Market mood (bull / bear / neutral on NIFTY 1d) -----
                 # Same horizon-scaled flat band as direction_1d. Mood maps
@@ -530,20 +583,26 @@ def grade_all(lookback_days: int = 90):
             sensex_anchor = _session_bounds("^BSESN", run_at)
             if sensex_anchor:
                 s_last, s_next, s_target = sensex_anchor
-                s_dir = (raw.get("sensex_outlook") or {}).get("direction", "")
-                s_rng = _parse_range((raw.get("sensex_outlook") or {}).get("range", ""))
+                sensex_outlook = raw.get("sensex_outlook") or {}
+                s_dir = sensex_outlook.get("direction", "")
+                s_rng = _parse_range(sensex_outlook.get("range", ""))
+                s_conf = sensex_outlook.get("confidence")
                 if s_dir:
                     sscore, sdelta = grade_direction(s_dir, s_last, s_next)
                     _upsert_score(sb, aid, "sensex_direction_1d", 1,
                                   {"direction": s_dir}, {"pct": sdelta},
                                   sscore, sdelta,
-                                  notes=f"target session {s_target}")
+                                  notes=f"target session {s_target}",
+                                  stated_confidence=s_conf,
+                                  prediction_date=run_at)
                 if s_rng:
                     srscore, srdelta = grade_range(s_rng, s_next)
                     _upsert_score(sb, aid, "sensex_range_1d", 1,
                                   {"range": list(s_rng)},
                                   {"close": s_next}, srscore, srdelta,
-                                  notes=f"target session {s_target}")
+                                  notes=f"target session {s_target}",
+                                  stated_confidence=s_conf,
+                                  prediction_date=run_at)
 
             # ----- NIFTY multi-day direction (5d, 20d): trend, more signal -----
             for h, key in ((5, "nifty_5d_outlook"), (20, "nifty_20d_outlook")):

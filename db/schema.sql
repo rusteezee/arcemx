@@ -204,6 +204,27 @@ create table if not exists sync_log (
 create index if not exists idx_sync_log_user_ts on sync_log(user_id, ts desc);
 
 
+-- Confidence calibration log. One row per scored prediction that carries
+-- a stated confidence at call time, capturing the (stated, realized)
+-- pair for calibration analysis. Lets the dashboard plot per-dim
+-- "stated confidence vs realized hit rate" scatters and surfaces the
+-- gap between what the model claims and what it delivers. Used by the
+-- Phase A paper trader to map raw confidence to a calibrated
+-- confidence before applying the entry gate.
+create table if not exists calibration_log (
+    id bigserial primary key,
+    prediction_score_id bigint not null references prediction_scores(id) on delete cascade,
+    dimension text not null,
+    stated_confidence numeric not null,
+    realized_score numeric not null,
+    prediction_date date not null,
+    graded_at timestamptz not null default now(),
+    meta jsonb,
+    unique (prediction_score_id)
+);
+create index if not exists idx_calibration_dim_date on calibration_log(dimension, prediction_date desc);
+
+
 -- Row Level Security. Defense uniformity: anon (browser, NEXT_PUBLIC) gets
 -- SELECT on the tables the dashboard reads, nothing else. Service role
 -- (bot + GH crons) bypasses RLS so writes keep working unchanged. No INSERT
@@ -223,6 +244,7 @@ alter table calculator_runs      enable row level security;
 alter table portfolio_score_runs enable row level security;
 alter table ticker_enrichment    enable row level security;
 alter table sync_log             enable row level security;
+alter table calibration_log      enable row level security;
 
 do $$
 declare t text;
@@ -230,7 +252,7 @@ begin
   foreach t in array array[
     'prices','analysis','portfolio','wishlist','transactions',
     'prediction_scores','accuracy_summary','sensei_eod',
-    'calculator_runs','portfolio_score_runs','sync_log'
+    'calculator_runs','portfolio_score_runs','sync_log','calibration_log'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('create policy "anon read" on %I for select to anon using (true)', t);
