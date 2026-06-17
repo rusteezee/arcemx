@@ -344,12 +344,28 @@ export default function AccuracyPage() {
         .eq("dimension", "direction_1d")
         .order("computed_at", { ascending: true })
         .limit(2000);
-      const hist: AccTrendPoint[] = ((histRows || []) as any[])
-        .filter((r) => typeof r.accuracy_pct === "number" && r.computed_at)
-        .map((r) => ({
-          date: String(r.computed_at).slice(0, 10),
+      // Dedupe to ONE snapshot per UTC day (the latest by computed_at).
+      // Multiple grader runs in the same day (the 17:00 cron + 17:05
+      // bot scheduler + any manual triggers) each append a row, so the
+      // raw history is ~3-6 points per date with different accuracy
+      // values; plotting them all turns the line into vertical spikes
+      // between intra-day samples (the "weird shape" with 47% -> 66%
+      // straight verticals on the same day). The day's last snapshot
+      // is the one the user cares about for a WoW read; earlier ones
+      // are noise from same-day re-runs. histRows is already ordered
+      // ascending so the last write for each date wins via map set.
+      const dayMap = new Map<string, AccTrendPoint>();
+      for (const r of (histRows || []) as any[]) {
+        if (typeof r.accuracy_pct !== "number" || !r.computed_at) continue;
+        const day = String(r.computed_at).slice(0, 10);
+        dayMap.set(day, {
+          date: day,
           value: Math.round(r.accuracy_pct * 10) / 10,
-        }));
+        });
+      }
+      const hist: AccTrendPoint[] = Array.from(dayMap.values()).sort((a, b) =>
+        a.date < b.date ? -1 : 1
+      );
       setAccTrend(hist);
 
       // ----- Range tightness vs hit rate scatter -----
