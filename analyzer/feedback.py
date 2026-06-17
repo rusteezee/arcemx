@@ -594,11 +594,36 @@ def build_feedback() -> dict | None:
     # the score thresholds have any matches.
     exemplars = {k: v for k, v in exemplars.items() if v}
 
+    # Per-dim accuracy weight (silicon-crowd / wisdom-of-the-crowd
+    # finding: weight signals by demonstrated skill, not raw rank).
+    # Each exemplar bucket gets annotated with the dim's own 30-day
+    # accuracy so the model can prioritise analogies from the dim that
+    # has actually been reliable. Falls back to None per-dim when
+    # accuracy_summary has not scored that dim yet; the prompt is then
+    # silent rather than fabricating a weight. Sort the bucket keys so
+    # higher-accuracy dims appear first in the JSON output (LLMs are
+    # known to skew attention toward earlier list items).
+    dim_accuracy: dict[str, float | None] = {}
+    for dim in list(exemplars.keys()):
+        row = latest.get((30, dim))
+        if row and isinstance(row.get("accuracy_pct"), (int, float)) and row.get("sample_size", 0) >= 5:
+            dim_accuracy[dim] = round(float(row["accuracy_pct"]), 1)
+        else:
+            dim_accuracy[dim] = None
+    # Stable-sort exemplar bucket order by accuracy desc (None ranks
+    # last). Preserves all entries, just reorders for prompt prominence.
+    exemplars = dict(sorted(
+        exemplars.items(),
+        key=lambda kv: (dim_accuracy.get(kv[0]) if dim_accuracy.get(kv[0]) is not None else -1.0),
+        reverse=True,
+    ))
+
     return {
         "track_record": by_window,
         "calibration": calibration,
         "recent_direction_misses": recent_misses,
         "exemplars": exemplars,
+        "dim_accuracy_30d": dim_accuracy,
         "corrective_rules": rules,
         "note": (
             "This is your scored track record, graded brutally against real outcomes. "
@@ -617,7 +642,13 @@ def build_feedback() -> dict | None:
             "ceiling on today's confidence in the same regime, NOT just a "
             "suggestion. When all retrieved exemplars are wins, today's setup is "
             "well-explored and your confidence may run; when all are losses, "
-            "moderate it."
+            "moderate it. DIM-ACCURACY WEIGHT: `dim_accuracy_30d` carries the "
+            "realised 30-day accuracy for each dim whose exemplars appear above. "
+            "Buckets are pre-sorted highest accuracy first. Weight your analogy "
+            "reasoning accordingly: a 72%-accuracy dim's exemplar deserves more "
+            "trust than a 51%-accuracy dim's exemplar even at equal similarity. "
+            "Dims with sample_size < 5 are absent from this map; treat their "
+            "exemplars as informational, not load-bearing."
         ),
     }
 
