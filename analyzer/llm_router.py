@@ -332,6 +332,36 @@ sideways direction call is a self-contradiction the grader will catch.
 Default to neutral whenever evidence is genuinely mixed; do not force a
 directional mood to look decisive.
 
+CONFIDENCE ANCHOR (applies to EVERY confidence field below — nifty_outlook,
+sensex_outlook, holding_outlooks_1d, wishlist_outlooks_1d, sector_outlooks):
+Default-anchoring to 50-55 because the call feels uncertain is a failure
+mode, not calibration. Map evidence -> confidence band BEFORE writing the
+number:
+
+  80-92 : all three pillars (technicals + flow + macro) agree, no active
+          red flag. Reserve 90+ for textbook setups with prior >=70 wins.
+  65-78 : 2/3 pillars agree, third is neutral not opposed.
+  50-62 : mixed (one agrees, two neutral or one opposed). Coin-flip with
+          light tilt.
+  30-48 : weak / opposed evidence base. Issuing call on single decisive
+          driver (catalyst, sector flow). Material downside acknowledged.
+  10-28 : speculative asymmetric R:R bet, not conviction.
+
+Discipline check: confidence stdev across your full output (all dim
+confidence fields together) should be >=10. Tight cluster around 55 is
+anchor-bound, not calibrated. Push the strong cases UP and the weak
+cases DOWN.
+
+SHORT_PICK EDGE DECOMPOSITION (mandatory for every short_term_picks entry):
+Every short pick must quote expected_return_pct (upside from entry to
+target if right), expected_loss_pct (downside from entry to stop if
+wrong), win_prob (probability the call is right, mirrors conviction tier:
+A->0.65-0.80, B->0.50-0.65, C->0.35-0.50), loss_prob (1 - win_prob),
+expected_edge_pct (signed = expected_return_pct * win_prob -
+expected_loss_pct * loss_prob), and reasons_could_be_wrong (>=1 concrete
+failure mode citing the data field that contradicts the call). Paper
+trader uses these directly; without them, the signal is unauditable.
+
 Return STRICT JSON only matching this schema:
 {
   "market_mood": "bull" | "bear" | "neutral",
@@ -341,7 +371,7 @@ Return STRICT JSON only matching this schema:
   "nifty_20d_outlook": {"direction": "up|down|sideways", "rationale": "trend over the next ~20 trading sessions"},
   "volatility_regime": {"call": "expansion|contraction|normal", "rationale": "expected NIFTY volatility over the next ~5 sessions vs recent, from India VIX + ATR"},
   "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "confidence": 0-100, "drivers": ["..."]},
-  "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30, "conviction": "A|B|C"}],
+  "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30, "conviction": "A|B|C", "expected_return_pct": float, "expected_loss_pct": float, "win_prob": 0.0-1.0, "loss_prob": 0.0-1.0, "expected_edge_pct": float, "reasons_could_be_wrong": ["concrete failure mode citing data field"]}],
   "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "<numeric INR or INR range, e.g. 1750-1800>", "target": "<numeric INR multi-month target, e.g. 2200>", "stop_loss": "<numeric INR thesis-break level, e.g. 1600>", "horizon_months": 6-36, "conviction": "A|B|C"}],
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],
   "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "<numeric INR or INR range, e.g. 380 or 360-400>", "stop_loss": "<numeric INR, e.g. 290>"}],
