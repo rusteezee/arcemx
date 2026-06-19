@@ -1298,21 +1298,99 @@ def _grade_stock_analyses() -> None:
         print(f"Stock Analyst grade skipped: {str(e)[:160]}")
 
 
+def _telegram_notify(text: str) -> None:
+    """Thin push helper. POSTs to api.telegram.org sendMessage using
+    TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env. Soft-fails: any error
+    in the notification path must never break the grader pipeline."""
+    import os as _os
+    try:
+        import requests  # noqa: requests is a transitive dep already
+        token = _os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = _os.getenv("TELEGRAM_CHAT_ID")
+        if not token or not chat_id:
+            print("  telegram_notify skipped (env missing)")
+            return
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+        if r.status_code >= 300:
+            print(f"  telegram_notify HTTP {r.status_code}: {r.text[:120]}")
+    except Exception as e:
+        print(f"  telegram_notify skipped ({type(e).__name__}): {str(e)[:120]}")
+
+
 def _run_paper_trader() -> None:
     """Phase A paper trader hook. Order matters: mark_to_market first
     so any newly-closed slot frees sector cap / open count BEFORE
     eval_signals runs against the freshly-graded stock_analyses rows.
     Soft-fails so a yfinance/network blip in the paper trader cannot
-    block the rest of the grader pipeline."""
+    block the rest of the grader pipeline. Pushes a Telegram alert
+    when paper_trades count goes 0 -> >=1 (first ever entry) so the
+    operator does not have to manually poll the dashboard for the
+    moment Phase A exits zero-data purgatory. Also alerts whenever
+    a new trade fires after a quiet stretch (>=7d since last entry)
+    so the iterate cycles produce visible signal."""
     try:
         from analyzer.paper_trader import run_daily as _paper_run
     except ImportError as e:
         print(f"Paper trader skipped (import failed): {str(e)[:120]}")
         return
+    # Snapshot pre-state so we can detect 0 -> >=1 transition without
+    # an extra round-trip after the run.
+    pre_count = 0
+    pre_latest = None
+    try:
+        sb = _sb()
+        c = sb.table("paper_trades").select("*", count="exact").limit(0).execute()
+        pre_count = c.count or 0
+        latest = sb.table("paper_trades").select("entered_at").order(
+            "entered_at", desc=True
+        ).limit(1).execute().data or []
+        pre_latest = latest[0]["entered_at"] if latest else None
+    except Exception as e:
+        print(f"  paper_trader pre-snapshot skip: {str(e)[:120]}")
     try:
         _paper_run()
     except Exception as e:
         print(f"Paper trader skipped: {str(e)[:160]}")
+        return
+    try:
+        sb = _sb()
+        post = sb.table("paper_trades").select(
+            "ticker,fill_px,target_px,stop_px,confidence,expected_edge_pct,entered_at,source_kind"
+        ).order("entered_at", desc=True).limit(5).execute().data or []
+        post_count = len(post)
+        # First-ever entry
+        if pre_count == 0 and post_count > 0:
+            r = post[0]
+            _telegram_notify(
+                f"🎯 *First paper trade fired*\n"
+                f"`{r['ticker']}` via {r.get('source_kind', '?')}\n"
+                f"fill ₹{r.get('fill_px') or 0:.2f} | "
+                f"T ₹{r.get('target_px') or 0:.2f} | "
+                f"SL ₹{r.get('stop_px') or 0:.2f}\n"
+                f"conf {r.get('confidence', '-')} | edge {r.get('expected_edge_pct') or 0:.2f}%"
+            )
+            return
+        # Subsequent entry after >=7d quiet stretch
+        if post_count > 0 and pre_latest:
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            try:
+                pl = _dt.fromisoformat(str(pre_latest).replace("Z", "+00:00"))
+                latest_post = _dt.fromisoformat(str(post[0]["entered_at"]).replace("Z", "+00:00"))
+                if latest_post > pl and (latest_post - pl) >= _td(days=7):
+                    r = post[0]
+                    _telegram_notify(
+                        f"📈 New paper trade after {(latest_post - pl).days}d quiet\n"
+                        f"`{r['ticker']}` via {r.get('source_kind', '?')} | "
+                        f"conf {r.get('confidence', '-')} | edge {r.get('expected_edge_pct') or 0:.2f}%"
+                    )
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"  paper_trader post-notify skip: {str(e)[:120]}")
 
 
 def _snapshot_metrics() -> None:
@@ -1331,6 +1409,17 @@ def _snapshot_metrics() -> None:
         sb = _sb()
         dd = bundle.get("max_drawdown") or {}
         tier_eval = bundle.get("tier_eval") or {}
+        new_tier = int(tier_eval.get("cleared_tier", 0))
+        # Pre-snapshot tier so we can detect a ratchet advance + push.
+        prev_tier = 0
+        try:
+            prev = sb.table("metrics_snapshot").select("cleared_tier").order(
+                "computed_at", desc=True
+            ).limit(1).execute().data or []
+            if prev:
+                prev_tier = int(prev[0].get("cleared_tier") or 0)
+        except Exception:
+            pass
         sb.table("metrics_snapshot").insert({
             "trade_count": int(bundle.get("trade_count", 0)),
             "span_days": int(bundle.get("span_days", 0)),
@@ -1340,13 +1429,30 @@ def _snapshot_metrics() -> None:
             "max_dd_pct": dd.get("max_dd_pct"),
             "calmar": bundle.get("calmar"),
             "psr": bundle.get("psr"),
-            "cleared_tier": int(tier_eval.get("cleared_tier", 0)),
+            "cleared_tier": new_tier,
             "next_tier": int(tier_eval.get("next_tier", 1)),
             "bundle": bundle,
         }).execute()
-        print(f"Metrics snapshot written: tier={tier_eval.get('cleared_tier')}, "
+        print(f"Metrics snapshot written: tier={new_tier}, "
               f"sharpe={bundle.get('sharpe')}, psr={bundle.get('psr')}, "
               f"trades={bundle.get('trade_count')}")
+        # Tier-advance push notification. Every ratchet up is a major
+        # milestone the operator should know about IMMEDIATELY without
+        # opening the dashboard.
+        if new_tier > prev_tier:
+            tier_label = {
+                1: "Phase B unlock",
+                2: "Phase C readiness",
+                3: "Hardening",
+                4: "Peak (Phase B terminal)",
+            }.get(new_tier, f"Tier {new_tier}")
+            _telegram_notify(
+                f"🏆 *Tier ratchet: T{prev_tier} -> T{new_tier}* ({tier_label})\n"
+                f"Sharpe {bundle.get('sharpe')} | "
+                f"max_dd {dd.get('max_dd_pct')}% | "
+                f"PSR {bundle.get('psr')}\n"
+                f"trades {bundle.get('trade_count')} over {bundle.get('span_days')}d"
+            )
     except Exception as e:
         print(f"Metrics snapshot skipped: {str(e)[:160]}")
 
