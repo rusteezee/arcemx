@@ -111,15 +111,33 @@ export default function TraderPage() {
     (async () => {
       const since14 = new Date(Date.now() - 14 * 86400_000).toISOString();
       const since90 = new Date(Date.now() - 90 * 86400_000).toISOString();
-      const [tRes, sRes, pRes] = await Promise.all([
+      const [tRes, sRes] = await Promise.all([
         sb.from("paper_trades").select("*").order("entered_at", { ascending: false }).limit(500),
         sb.from("paper_signals").select("*").gte("evaluated_at", since14).order("evaluated_at", { ascending: false }).limit(500),
-        sb.from("prediction_scores").select("dimension,score,scored_at").gte("scored_at", since90).limit(5000),
       ]);
       const allTrades = (tRes.data || []) as PaperTrade[];
       setTrades(allTrades);
       setSignals((sRes.data || []) as PaperSignal[]);
-      setPredScores((pRes.data || []) as PredictionScoreRow[]);
+
+      // PostgREST caps every response at 1000 rows by default. With
+      // ~26 dims accumulating multiple scores per day, the 90d window
+      // crosses that cap quickly and the heatmap silently loses the
+      // tail (older rows in this case, since we order desc). Paginate
+      // explicitly with .range() until the server returns a short page.
+      const PAGE = 1000;
+      const allScores: PredictionScoreRow[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const pr = await sb
+          .from("prediction_scores")
+          .select("dimension,score,scored_at")
+          .gte("scored_at", since90)
+          .order("scored_at", { ascending: false })
+          .range(from, from + PAGE - 1);
+        const page = (pr.data || []) as PredictionScoreRow[];
+        allScores.push(...page);
+        if (page.length < PAGE) break;
+      }
+      setPredScores(allScores);
 
       // NIFTY benchmark for the equity-curve overlay. Only pull rows
       // spanning the closed-trade range; if there are no closed trades

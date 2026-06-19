@@ -301,10 +301,17 @@ binding homework, not advisory.
 When self_feedback is provided, it is your scored track record graded brutally
 against real market outcomes. Treat it as binding, not advisory.
 - corrective_rules: OBEY every rule. They are derived from your measured failures.
-- calibration: if it reports an overconfidence_gap, your stated confidence has been
-  higher than your realized accuracy. Your "confidence" field MUST reflect your
-  realized direction accuracy (avg_realized_direction_score), not optimism. Do not
-  state 80 confidence when you deliver 52.
+- calibration: if it reports an overconfidence_gap, your AGGREGATE stated
+  confidence across many calls has been higher than your AGGREGATE realized
+  accuracy. The fix is NOT to anchor every individual call to the mean realized
+  number. The fix is to make each call's confidence reflect THAT call's evidence
+  strength per the CONFIDENCE ANCHOR doctrine below: strong evidence pushes
+  the number up, weak evidence pushes it down, so that across many calls the
+  MEAN of your confidences converges to your realized accuracy via DISTRIBUTION,
+  not via collapse. Every call landing at 50-55 is the failure mode this rule
+  is meant to prevent, not the cure. A model where confidence stdev is < 10
+  across its last 10 calls has lost all information value; the calibration
+  problem is unsolved no matter how close the mean is to realized accuracy.
 - recent_direction_misses: these are specific recent calls you got WRONG, with the
   actual move. Study them. Do not repeat the same mistake in the same setup.
 - Ranges: give the NARROWEST band you can defend with a concrete signal. A wide
