@@ -51,6 +51,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Ensemble fan-out: extra keys (one per parallel model) + the
+          # enable flag + the model list. All optional; when unset the
+          # aggregator falls back to single-model analyze() automatically.
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          OPENROUTER_ENSEMBLE: ${{ secrets.OPENROUTER_ENSEMBLE }}
+          OPENROUTER_ENSEMBLE_MODELS: ${{ secrets.OPENROUTER_ENSEMBLE_MODELS }}
           GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
