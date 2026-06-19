@@ -593,8 +593,18 @@ def build_payload() -> dict:
 
 def run(model_name: str | None = None) -> dict:
     payload = build_payload()
-    print("Calling Gemini...")
-    result = analyze(payload, model_name=model_name)
+    # Ensemble path when OPENROUTER_ENSEMBLE=1 and >=2 models configured:
+    # several models vote, consensus is merged. Otherwise single-model
+    # analyze(). The ensemble import is local so a flag-off run never
+    # pays the import cost or risks a partial-module error.
+    from analyzer.llm_router import _ENSEMBLE_ON, _ENSEMBLE_MODELS
+    if _ENSEMBLE_ON and len(_ENSEMBLE_MODELS) >= 2 and model_name is None:
+        from analyzer.llm_router import analyze_ensemble
+        print(f"Calling ensemble: {_ENSEMBLE_MODELS}")
+        result = analyze_ensemble(payload)
+    else:
+        print("Calling single-model analyzer...")
+        result = analyze(payload, model_name=model_name)
     save(result, payload)
     return result
 

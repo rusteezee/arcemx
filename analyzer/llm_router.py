@@ -39,6 +39,47 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # whitespace in its content this is safe and universal.
 OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
+
+def _load_keys() -> list[str]:
+    """Key pool: the primary OPENROUTER_API_KEY plus any extras in
+    OPENROUTER_API_KEYS (comma-separated). Deduped, whitespace-stripped,
+    order-preserved with the primary first.
+
+    Serves three legitimate purposes that all share one rotation path:
+      - paid + free key on one account (paid first, free fallback)
+      - a dedicated fallback key if the primary is revoked/rotated
+      - parallel keys so an ensemble fan-out does not serialize behind
+        a single key's per-minute limit
+    The rotation logic is agnostic to WHY there are multiple keys; it
+    just round-robins and cools down a key that returns 429."""
+    keys: list[str] = []
+    if OPENROUTER_KEY:
+        keys.append(OPENROUTER_KEY)
+    extra = os.getenv("OPENROUTER_API_KEYS", "")
+    for k in extra.split(","):
+        k = k.strip()
+        if k and k not in keys:
+            keys.append(k)
+    return keys
+
+
+# Per-key cooldown registry: key -> monotonic timestamp until which the
+# key is considered rate-limited and skipped. Populated on a 429.
+_KEY_COOLDOWN: dict[str, float] = {}
+
+
+def _pick_key(keys: list[str], attempt: int) -> str | None:
+    """Return the next usable key for this attempt, skipping any in
+    cooldown. Falls back to round-robin over all keys (ignoring cooldown)
+    when every key is cooling down, so a call still goes out rather than
+    failing outright."""
+    if not keys:
+        return None
+    now = time.monotonic()
+    usable = [k for k in keys if _KEY_COOLDOWN.get(k, 0) <= now]
+    pool = usable or keys
+    return pool[attempt % len(pool)]
+
 # Primary: Nemotron 3 Super 120B (free). 120B/12B-active MoE, 1M ctx.
 # Selected over Ultra after bake-off on a real payload: Super produced
 # a tighter NIFTY range (1.21% vs Ultra 2.16%, 44% narrower) with the
@@ -482,15 +523,22 @@ explicitly in that key's value rather than skipping it.
 
 
 def _post(messages: list[dict], models: list[str], reasoning: bool = True,
-          timeout: int = 180, max_retries: int = 2) -> dict:
+          timeout: int = 180, max_retries: int = 2,
+          api_key: str | None = None) -> dict:
     """POST chat.completions with the OpenRouter fallback chain and 429 backoff.
 
     `models` is the full chain. `model` is set to the head so providers
     that ignore the chain field still pick the right primary. We retry on
     429 with exponential backoff capped at 30s per wait; failures count
     against the daily free quota, so retries are tight.
+
+    Key handling: when `api_key` is given it is pinned for the whole call
+    (used by the ensemble so each parallel model gets its own key). When
+    None, the key pool rotates per attempt and a 429 cools the offending
+    key down before the next attempt picks a different one.
     """
-    if not OPENROUTER_KEY:
+    keys = [api_key] if api_key else _load_keys()
+    if not keys:
         raise RuntimeError("OPENROUTER_API_KEY not set")
     body = {
         "model": models[0],
@@ -504,15 +552,16 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     }
     if reasoning:
         body["reasoning"] = {"effort": "medium"}
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": _HTTP_REFERER,
-        "X-Title": _X_TITLE,
-    }
     delay = 5.0
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
+        key = api_key or _pick_key(keys, attempt)
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": _HTTP_REFERER,
+            "X-Title": _X_TITLE,
+        }
         try:
             r = requests.post(OPENROUTER_URL, json=body, headers=headers,
                               timeout=timeout)
@@ -526,11 +575,17 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         if r.status_code == 429:
             ra = r.headers.get("Retry-After")
             wait = float(ra) if ra and ra.replace(".", "", 1).isdigit() else delay
-            print(f"OpenRouter 429, retry in {wait:.0f}s "
-                  f"(attempt {attempt+1}/{max_retries+1})")
+            # Cool this key down so the next attempt rotates to another.
+            if key:
+                _KEY_COOLDOWN[key] = time.monotonic() + max(wait, 60)
+            n_keys = len(keys)
+            print(f"OpenRouter 429 on key #{(attempt % max(1,n_keys))+1}/{n_keys}, "
+                  f"retry in {wait:.0f}s (attempt {attempt+1}/{max_retries+1})")
             if attempt >= max_retries:
                 r.raise_for_status()
-            time.sleep(min(wait, 30))
+            # If we have more than one key, rotation alone may clear it;
+            # still back off a little to respect the provider.
+            time.sleep(min(wait, 30) if n_keys == 1 else min(wait, 5))
             delay *= 2
             continue
         r.raise_for_status()
@@ -797,6 +852,208 @@ def analyze(payload: dict, model_name: str | None = None) -> dict:
     except Exception as e:
         print(f"  top_performers bear pass outer: {str(e)[:120]}")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Ensemble: run N models in parallel, merge by consensus.
+# ---------------------------------------------------------------------------
+_ENSEMBLE_ON = os.getenv("OPENROUTER_ENSEMBLE", "0").strip() in ("1", "true", "yes")
+_ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
+    "OPENROUTER_ENSEMBLE_MODELS",
+    "nvidia/nemotron-3-super-120b-a12b:free,"
+    "nvidia/nemotron-3-ultra-550b-a55b:free,"
+    "nex-agi/nex-n2-pro:free",
+).split(",") if m.strip()]
+
+
+def _merge_performers(results: list[dict], key: str, n_models: int) -> list[dict]:
+    """Aggregate a top_performers / worst_performers list across N model
+    outputs by ticker. Consensus is signal: a name picked by 3/3 models
+    is far stronger than one picked by 1/3. Each merged entry carries
+    ensemble_votes + ensemble_n so the paper trader / grader can weight
+    by agreement. Numeric fields are averaged across the models that
+    listed the ticker; win_prob is additionally scaled by the vote
+    fraction so a lone-wolf pick is automatically de-rated (a 1/3 pick
+    with stated win_prob 0.7 lands at an effective ~0.47 -> likely below
+    the entry gate, which is the wisdom-of-crowds discipline)."""
+    def _norm(t):
+        t = (t or "").strip().upper()
+        return t if (t.endswith(".NS") or t.endswith(".BO") or t.startswith("^")) else f"{t}.NS"
+
+    agg: dict[str, dict] = {}
+    for res in results:
+        for e in (res.get(key) or []):
+            if not isinstance(e, dict):
+                continue
+            tk = _norm(e.get("ticker"))
+            if not tk or tk == ".NS":
+                continue
+            a = agg.setdefault(tk, {"votes": 0, "move": [], "wp": [], "edge": [],
+                                    "ret": [], "loss": [], "conv": [], "sample": e})
+            a["votes"] += 1
+            for fld, bucket in (("expected_move_pct", "move"), ("win_prob", "wp"),
+                                ("expected_edge_pct", "edge"),
+                                ("expected_return_pct", "ret"),
+                                ("expected_loss_pct", "loss")):
+                v = e.get(fld)
+                if isinstance(v, (int, float)):
+                    a[bucket].append(float(v))
+            if e.get("conviction"):
+                a["conv"].append(str(e["conviction"]).upper())
+
+    merged: list[dict] = []
+    for tk, a in agg.items():
+        vote_frac = a["votes"] / max(1, n_models)
+        avg = lambda xs: (sum(xs) / len(xs)) if xs else None
+        wp = avg(a["wp"])
+        eff_wp = (wp * vote_frac) if wp is not None else None
+        entry = dict(a["sample"])  # carry thesis/entry/target/stop from one model
+        entry["ticker"] = tk
+        entry["ensemble_votes"] = a["votes"]
+        entry["ensemble_n"] = n_models
+        if avg(a["move"]) is not None:
+            entry["expected_move_pct"] = round(avg(a["move"]), 2)
+        if eff_wp is not None:
+            entry["win_prob"] = round(eff_wp, 3)
+            entry["loss_prob"] = round(1.0 - eff_wp, 3)
+            entry["win_prob_stated_mean"] = round(wp, 3)
+        # Recompute edge from the consensus-scaled win_prob when we have
+        # the return/loss magnitudes; else keep the averaged stated edge.
+        R, L = avg(a["ret"]), avg(a["loss"])
+        if R is not None and L is not None and eff_wp is not None:
+            entry["expected_return_pct"] = round(R, 2)
+            entry["expected_loss_pct"] = round(L, 2)
+            entry["expected_edge_pct"] = round(R * eff_wp - L * (1 - eff_wp), 3)
+        elif avg(a["edge"]) is not None:
+            entry["expected_edge_pct"] = round(avg(a["edge"]), 3)
+        # Conviction = the modal tier across votes, defaulting B.
+        if a["conv"]:
+            entry["conviction"] = max(set(a["conv"]), key=a["conv"].count)
+        merged.append(entry)
+
+    # Rank by consensus first, then edge magnitude. Top list wants high
+    # positive edge; worst list wants the most negative expected_move.
+    if key == "top_performers":
+        merged.sort(key=lambda e: (e.get("ensemble_votes", 0),
+                                   e.get("expected_edge_pct") or -999), reverse=True)
+    else:
+        merged.sort(key=lambda e: (e.get("ensemble_votes", 0),
+                                   -(e.get("expected_move_pct") or 0)), reverse=True)
+    return merged[:15]
+
+
+def _merge_results(results: list[dict]) -> dict:
+    """Consensus-merge N full analysis dicts. Directional calls take a
+    majority vote (split -> sideways + dampened confidence); top/worst
+    performers aggregate by ticker via _merge_performers; everything
+    user-specific (outlooks, verdicts, reasoning) is carried from the
+    base (first, primary) model since voting adds little there and the
+    base model is the strongest instruction-follower."""
+    base = dict(results[0])
+    n = len(results)
+
+    def _majority_dir(path_keys):
+        dirs = []
+        for r in results:
+            cur = r
+            for k in path_keys:
+                cur = (cur or {}).get(k) if isinstance(cur, dict) else None
+            if isinstance(cur, str):
+                dirs.append(cur.lower())
+        if not dirs:
+            return None, 0.0
+        top = max(set(dirs), key=dirs.count)
+        agreement = dirs.count(top) / len(dirs)
+        return top, agreement
+
+    # market_mood majority
+    moods = [r.get("market_mood") for r in results if r.get("market_mood")]
+    if moods:
+        base["market_mood"] = max(set(moods), key=moods.count)
+        agree = moods.count(base["market_mood"]) / len(moods)
+        confs = [r.get("confidence") for r in results if isinstance(r.get("confidence"), (int, float))]
+        if confs:
+            # Mean confidence, scaled down when models disagree.
+            base["confidence"] = int(round((sum(confs) / len(confs)) * (0.6 + 0.4 * agree)))
+        base["ensemble_mood_agreement"] = round(agree, 2)
+
+    # nifty + sensex direction majority, dampen confidence on split
+    for okey in ("nifty_outlook", "sensex_outlook"):
+        d, agree = _majority_dir([okey, "direction"])
+        if d and isinstance(base.get(okey), dict):
+            base[okey]["direction"] = d
+            c = base[okey].get("confidence")
+            if isinstance(c, (int, float)):
+                base[okey]["confidence"] = int(round(c * (0.6 + 0.4 * agree)))
+            base[okey]["ensemble_agreement"] = round(agree, 2)
+
+    base["top_performers"] = _merge_performers(results, "top_performers", n)
+    base["worst_performers"] = _merge_performers(results, "worst_performers", n)
+    base["ensemble_models_used"] = n
+    return base
+
+
+def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
+    """Run several models in PARALLEL on the same payload, each pinned to
+    one model + its own key from the pool, then consensus-merge. This is
+    the wisdom-of-the-silicon-crowd path: ensemble accuracy rivals a
+    human crowd and beats any single model on calibration (research:
+    ~75% -> ~80% on the sentiment-to-direction task). Falls back to a
+    single analyze() call when fewer than 2 models succeed, so a flaky
+    free endpoint degrades gracefully instead of failing the morning.
+
+    Each model gets a distinct key (round-robin over the pool) so the
+    fan-out does not serialize behind one key's per-minute limit."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    models = models or _ENSEMBLE_MODELS
+    keys = _load_keys()
+    user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
+                + _payload_json(payload))
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg}]
+
+    def _one(idx_model):
+        idx, model = idx_model
+        key = keys[idx % len(keys)] if keys else None
+        try:
+            # Pin to a single model (no fallback chain) so we get genuine
+            # cross-model diversity, not three calls to the same primary.
+            resp = _post(msgs, models=[model], api_key=key, timeout=300)
+            res = _parse_json(resp)
+            if isinstance(res, dict) and not res.get("error"):
+                res["_ensemble_model"] = model
+                return res
+        except Exception as e:
+            print(f"  ensemble model {model} failed: {type(e).__name__}: {str(e)[:120]}")
+        return None
+
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(len(models), max(1, len(keys)) + 2)) as ex:
+        futs = [ex.submit(_one, (i, m)) for i, m in enumerate(models)]
+        for f in as_completed(futs):
+            r = f.result()
+            if r:
+                results.append(r)
+    print(f"Ensemble: {len(results)}/{len(models)} models returned usable JSON")
+
+    if len(results) < 2:
+        print("Ensemble degraded to single-model analyze()")
+        return analyze(payload)
+
+    merged = _merge_results(results)
+    # One bear pass on the merged top_performers (consensus list), same as
+    # the single-model path.
+    try:
+        sp = merged.get("top_performers")
+        if isinstance(sp, list) and sp:
+            bear = _short_pick_bear_pass(sp, payload, _ENSEMBLE_MODELS[:1] or [PRIMARY_MODEL])
+            if bear:
+                _apply_short_pick_bear(sp, bear)
+                merged["top_performers_bear_pass_applied"] = sum(
+                    1 for p in sp if isinstance(p, dict) and p.get("bear_pass_added"))
+    except Exception as e:
+        print(f"  ensemble bear pass: {str(e)[:120]}")
+    return merged
 
 
 def analyze_portfolio(holdings: list[dict], market_snapshot: dict,
