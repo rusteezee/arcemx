@@ -658,12 +658,17 @@ def save(result: dict, payload: dict) -> None:
         print(f"Saved local: {out_path}")
         return
     sb = create_client(url, key)
+    # top_performers / worst_performers are the new primary pick output.
+    # Keep writing the legacy short_term_picks / long_term_picks columns
+    # (nullable) for backward compat with any reader not yet migrated;
+    # they fall back to the new keys so a transition-period row is never
+    # empty on either schema. raw_json always carries the full new shape.
     sb.table("analysis").insert({
         "market_mood": result.get("market_mood"),
         "nifty_outlook": json.dumps(result.get("nifty_outlook")),
         "sensex_outlook": json.dumps(result.get("sensex_outlook")),
-        "short_term_picks": result.get("short_term_picks"),
-        "long_term_picks": result.get("long_term_picks"),
+        "short_term_picks": result.get("short_term_picks") or result.get("top_performers"),
+        "long_term_picks": result.get("long_term_picks") or result.get("worst_performers"),
         "reasoning": result.get("reasoning"),
         "raw_json": result,
     }).execute()

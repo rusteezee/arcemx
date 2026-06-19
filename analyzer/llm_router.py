@@ -203,7 +203,7 @@ pulls FII money OUT), DXY direction (strong dollar = EM outflows), and US10Y
 (rising yields pull FII money OUT). Cite >=2 numbers in rationale. This call
 is graded next day against actual flows.
 
-CONVICTION TIERING (binding for every short_term_picks and long_term_picks row):
+CONVICTION TIERING (binding for every top_performers and worst_performers row):
 Every pick MUST carry a "conviction" tier A, B, or C. The tiers are scored
 stratified by the grader so an inflated A label will surface as poor tier-A
 performance and will be punished in self_feedback.
@@ -359,15 +359,35 @@ confidence fields together) should be >=10. Tight cluster around 55 is
 anchor-bound, not calibrated. Push the strong cases UP and the weak
 cases DOWN.
 
-SHORT_PICK EDGE DECOMPOSITION (mandatory for every short_term_picks entry):
-Every short pick must quote expected_return_pct (upside from entry to
-target if right), expected_loss_pct (downside from entry to stop if
-wrong), win_prob (probability the call is right, mirrors conviction tier:
-A->0.65-0.80, B->0.50-0.65, C->0.35-0.50), loss_prob (1 - win_prob),
-expected_edge_pct (signed = expected_return_pct * win_prob -
-expected_loss_pct * loss_prob), and reasons_could_be_wrong (>=1 concrete
-failure mode citing the data field that contradicts the call). Paper
-trader uses these directly; without them, the signal is unauditable.
+TOP / WORST PERFORMERS DOCTRINE (this is your primary daily output — own it):
+You are an INDEPENDENT market analyst. Each day you predict the stocks most
+likely to be the day's TOP PERFORMERS (largest positive move vs NIFTY) and
+WORST PERFORMERS (largest negative move vs NIFTY) over the stated horizon.
+
+UNIVERSE = the WHOLE liquid NSE market, not a handed-to-you shortlist. The
+technical_bullish_top / technical_bearish_top blocks are a SCREENED STARTING
+POINT (momentum + technicals on a base universe), not your boundary. You MUST
+also draw on your own knowledge of any liquid NSE-listed stock (NIFTY 500
+breadth) when the news_digest, sector rotation, FII flows, or a catalyst points
+somewhere the screen did not surface. Do NOT restrict picks to user_holdings or
+user_wishlist — those are the user's existing exposure, a SEPARATE concern from
+"who wins today". A good day's top_performers list should mostly be names the
+user does NOT already hold; that is the engine doing independent research.
+
+Each top_performers / worst_performers entry MUST quote:
+- ticker (NSE symbol, with or without .NS)
+- thesis (one line, cite >=2 concrete data points: a technical + a catalyst/flow)
+- horizon_days (1 for same-day; 1-10 for a short swing)
+- expected_move_pct (signed: + for top, - for worst, the move vs prior close you expect)
+- conviction A|B|C (per the tiering doctrine below)
+- win_prob (probability the directional call is right; A->0.65-0.80, B->0.50-0.65,
+  C->0.35-0.50), loss_prob (1 - win_prob)
+- expected_return_pct (upside magnitude if right), expected_loss_pct (downside if wrong)
+- expected_edge_pct (signed = expected_return_pct * win_prob - expected_loss_pct * loss_prob)
+- reasons_could_be_wrong (>=1 concrete failure mode citing the data field that contradicts)
+Aim for 8-15 names in EACH list. The paper trader consumes top_performers
+directly as long entries and scores every call against the next session's actual
+move, so an unaudited or vague entry is a wasted, ungraded signal.
 
 Return STRICT JSON only matching this schema:
 {
@@ -378,8 +398,8 @@ Return STRICT JSON only matching this schema:
   "nifty_20d_outlook": {"direction": "up|down|sideways", "rationale": "trend over the next ~20 trading sessions"},
   "volatility_regime": {"call": "expansion|contraction|normal", "rationale": "expected NIFTY volatility over the next ~5 sessions vs recent, from India VIX + ATR"},
   "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "confidence": 0-100, "drivers": ["..."]},
-  "short_term_picks": [{"ticker": "...", "thesis": "...", "entry": "...", "stop_loss": "...", "target": "...", "horizon_days": 1-30, "conviction": "A|B|C", "expected_return_pct": float, "expected_loss_pct": float, "win_prob": 0.0-1.0, "loss_prob": 0.0-1.0, "expected_edge_pct": float, "reasons_could_be_wrong": ["concrete failure mode citing data field"]}],
-  "long_term_picks": [{"ticker": "...", "thesis": "...", "entry_zone": "<numeric INR or INR range, e.g. 1750-1800>", "target": "<numeric INR multi-month target, e.g. 2200>", "stop_loss": "<numeric INR thesis-break level, e.g. 1600>", "horizon_months": 6-36, "conviction": "A|B|C"}],
+  "top_performers": [{"ticker": "...", "thesis": "...", "horizon_days": 1, "expected_move_pct": float (positive), "entry": "<numeric INR>", "target": "<numeric INR>", "stop_loss": "<numeric INR>", "conviction": "A|B|C", "expected_return_pct": float, "expected_loss_pct": float, "win_prob": 0.0-1.0, "loss_prob": 0.0-1.0, "expected_edge_pct": float, "reasons_could_be_wrong": ["concrete failure mode citing data field"]}],
+  "worst_performers": [{"ticker": "...", "thesis": "...", "horizon_days": 1, "expected_move_pct": float (negative), "conviction": "A|B|C", "win_prob": 0.0-1.0, "loss_prob": 0.0-1.0, "reasons_could_be_wrong": ["concrete failure mode citing data field"]}],
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],
   "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "<numeric INR or INR range, e.g. 380 or 360-400>", "stop_loss": "<numeric INR, e.g. 290>"}],
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
@@ -406,12 +426,11 @@ Return STRICT JSON only matching this schema:
 If user_holdings empty, return empty portfolio_verdicts.
 If user_wishlist empty, return empty wishlist_signals.
 
-CRITICAL - every short_term_picks and long_term_picks row MUST include
-concrete numeric INR values for entry / entry_zone, target, AND stop_loss.
-The dashboard renders these as actionable prices and will display blank
-cells if any of the three is missing. Long-term picks especially must
-not skip target and stop_loss just because the horizon is months out -
-project a reasonable multi-month target and a thesis-break stop level.
+CRITICAL - every top_performers row MUST include concrete numeric INR values
+for entry, target, AND stop_loss (worst_performers are short-side calls scored
+on direction, so they need expected_move_pct but not a tradeable entry/stop).
+The dashboard + paper trader render these as actionable prices and will skip
+the row if any of the three is missing on a top_performers entry.
 
 CRITICAL - portfolio_verdicts target / stop_loss MUST be concrete numeric INR
 values, never "N/A" or prose. This applies to EVERY verdict including HOLD:
@@ -759,24 +778,24 @@ def analyze(payload: dict, model_name: str | None = None) -> dict:
         models=chain,
     )
     result = _parse_json(resp)
-    # Adversarial bear pass on short_term_picks. Mirrors the Stock
-    # Analyst bear pass: a second LLM call audits the bull's A/B picks,
-    # splices concrete failure modes into each pick's
-    # reasons_could_be_wrong, and dampens win_prob + edge accordingly.
-    # Soft-fails: any error preserves the bull result unchanged so a
-    # bear-pass hiccup never blocks the morning pipeline. Doubles the
-    # short-pick LLM cost on days picks land but free quota covers it.
+    # Adversarial bear pass on top_performers. Mirrors the Stock Analyst
+    # bear pass: a second LLM call audits the A/B picks, splices concrete
+    # failure modes into each entry's reasons_could_be_wrong, and dampens
+    # win_prob + edge accordingly. Soft-fails: any error preserves the
+    # bull result unchanged so a bear-pass hiccup never blocks the morning
+    # pipeline. Doubles the pick-audit LLM cost on days picks land but
+    # free quota covers it.
     try:
-        sp = result.get("short_term_picks") if isinstance(result, dict) else None
+        sp = result.get("top_performers") if isinstance(result, dict) else None
         if isinstance(sp, list) and sp:
             bear = _short_pick_bear_pass(sp, payload, chain)
             if bear:
                 _apply_short_pick_bear(sp, bear)
-                result["short_picks_bear_pass_applied"] = sum(
+                result["top_performers_bear_pass_applied"] = sum(
                     1 for p in sp if isinstance(p, dict) and p.get("bear_pass_added")
                 )
     except Exception as e:
-        print(f"  short_pick bear pass outer: {str(e)[:120]}")
+        print(f"  top_performers bear pass outer: {str(e)[:120]}")
     return result
 
 

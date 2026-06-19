@@ -582,7 +582,7 @@ def eval_signals(now: datetime | None = None) -> dict:
         else:
             skips[outcome] = skips.get(outcome, 0) + 1
 
-    # Source 2: Morning analysis outlook signals
+    # Source 2: Morning analysis outlook signals + top_performers
     a_rows = sb.table("analysis").select(
         "id,run_at,raw_json"
     ).gte("run_at", since).order("run_at", desc=True).limit(5).execute().data or []
@@ -600,15 +600,196 @@ def eval_signals(now: datetime | None = None) -> dict:
                     pass
                 else:
                     skips[outcome] = skips.get(outcome, 0) + 1
+        # top_performers: the model's INDEPENDENT market-wide long picks.
+        # This is the source that breaks the portfolio/wishlist tunnel
+        # vision — names here are chosen from the whole NSE universe, not
+        # the user's existing exposure.
+        for tp in (raw.get("top_performers") or []):
+            counts["evaluated"] += 1
+            outcome = _evaluate_top_performer(sb, a, tp, now,
+                                              portfolio_base=portfolio_base)
+            if outcome == "enter":
+                counts["entered"] += 1
+            elif outcome == "already_evaluated":
+                pass
+            else:
+                skips[outcome] = skips.get(outcome, 0) + 1
 
     counts["skips"] = skips
     print(f"paper_trader.eval_signals: {counts}")
     return counts
 
 
+def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
+                            portfolio_base: float) -> str:
+    """Gate-stack a single top_performers entry. Unlike outlook signals
+    (which synthesize geometry from a range band), top_performers carry
+    the model's explicit entry / target / stop_loss + a pre-computed
+    expected_edge_pct, so this evaluator trusts those directly and runs
+    the same gate order as the Stock Analyst path. source_kind is
+    'top_performer' so the per-source breakdown isolates the engine's
+    independent picks from holdings/wishlist exposure."""
+    a_id = analysis_row["id"]
+    raw_ticker = (tp.get("ticker") or "").strip().upper()
+    if not raw_ticker:
+        return "no_ticker"
+    if not raw_ticker.endswith(".NS") and not raw_ticker.endswith(".BO") \
+            and not raw_ticker.startswith("^"):
+        ticker = raw_ticker + ".NS"
+    else:
+        ticker = raw_ticker
+
+    def L(action, skip_reason=None, paper_trade_id=None, edge=None, meta=None):
+        _log_signal(sb, ticker, a_id, action, skip_reason=skip_reason,
+                    paper_trade_id=paper_trade_id, confidence=_conf_from_winprob(tp),
+                    edge=edge, meta=meta, source_kind="top_performer")
+
+    existing = sb.table("paper_signals").select("id").eq(
+        "source_kind", "top_performer"
+    ).eq("source_run_id", a_id).eq("ticker", ticker).limit(1).execute()
+    if existing.data:
+        return "already_evaluated"
+
+    conf = _conf_from_winprob(tp)
+    edge = tp.get("expected_edge_pct")
+    if not isinstance(edge, (int, float)):
+        L("skip", "pre_schema")
+        return "pre_schema"
+    if conf < MIN_CONF:
+        L("skip", "low_conf", edge=edge)
+        return "low_conf"
+    if edge < MIN_EDGE_PCT:
+        L("skip", "low_edge", edge=edge)
+        return "low_edge"
+
+    intent_px = _parse_inr(tp.get("entry"))
+    target_px = _parse_inr(tp.get("target"))
+    stop_px = _parse_inr(tp.get("stop_loss"))
+    if not intent_px or intent_px <= 0:
+        L("skip", "no_intent_px", edge=edge)
+        return "no_intent_px"
+    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
+        L("skip", "no_target_stop", edge=edge)
+        return "no_target_stop"
+    if _has_open_position(sb, ticker):
+        L("skip", "already_open", edge=edge)
+        return "already_open"
+    frozen, freeze_meta = _ticker_is_frozen(sb, ticker, now)
+    if frozen:
+        L("skip", "ticker_freeze", edge=edge, meta=freeze_meta)
+        return "ticker_freeze"
+
+    risk_per_share = abs(intent_px - stop_px)
+    if risk_per_share <= 0:
+        L("skip", "bad_risk", edge=edge)
+        return "bad_risk"
+
+    avg_turnover = _yf_avg_turnover(ticker)
+    if avg_turnover is None:
+        L("skip", "no_liquidity_data", edge=edge)
+        return "no_liquidity_data"
+    if (avg_turnover / 1e7) < LIQUIDITY_MIN_CR:
+        L("skip", "liquidity", edge=edge, meta={"avg_turnover_inr": avg_turnover})
+        return "liquidity"
+
+    sector, cap_tier = _ticker_sector_and_cap(sb, ticker)
+    if sector and _open_in_sector(sb, sector) >= SECTOR_CAP:
+        L("skip", "sector_cap", edge=edge, meta={"sector": sector})
+        return "sector_cap"
+
+    risk_budget = portfolio_base * RISK_PER_TRADE
+    qty = max(1, min(int(risk_budget / risk_per_share),
+                     int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
+    horizon = int(tp.get("horizon_days") or 1)
+
+    run_at = analysis_row.get("run_at") or now.isoformat()
+    try:
+        ra_dt = datetime.fromisoformat(str(run_at).replace("Z", "+00:00"))
+    except Exception:
+        ra_dt = now
+    next_open = _yf_next_open(ticker, ra_dt)
+    anchor = next_open if next_open else intent_px
+    fill_px, slippage_cost = _apply_slippage(anchor, qty, "buy", cap_tier, avg_turnover)
+    buy_friction, _ = _broker_friction(fill_px * qty, "buy")
+
+    try:
+        t_res = sb.table("paper_trades").insert({
+            "source_kind": "top_performer",
+            "source_run_id": a_id,
+            "ticker": ticker,
+            "side": "long",
+            "entered_at": now.isoformat(),
+            "intent_px": float(intent_px),
+            "fill_px": float(fill_px),
+            "qty": int(qty),
+            "target_px": float(target_px),
+            "stop_px": float(stop_px),
+            "horizon_days": horizon,
+            "brokerage": float(buy_friction),
+            "stt": 0.0,
+            "slippage_cost": float(slippage_cost),
+            "confidence": int(conf),
+            "expected_edge_pct": float(edge),
+            "status": "open",
+            "meta": {
+                "sector": sector, "cap_tier": cap_tier,
+                "avg_turnover_inr": avg_turnover, "next_open_anchor": next_open,
+                "conviction": (tp.get("conviction") or "").upper(),
+                "expected_move_pct": tp.get("expected_move_pct"),
+                "thesis": (tp.get("thesis") or "")[:200],
+            },
+        }).execute()
+        trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
+    except Exception as e:
+        print(f"  top_performer insert failed ({ticker}): {str(e)[:200]}")
+        L("skip", "insert_failed", edge=edge)
+        return "insert_failed"
+
+    L("enter", paper_trade_id=trade_id, edge=edge,
+      meta={"sector": sector, "conviction": (tp.get("conviction") or "").upper()})
+    return "enter"
+
+
 # ---------------------------------------------------------------------------
 # Outlook signal evaluator (B5): holding_outlooks_1d + wishlist_outlooks_1d
 # ---------------------------------------------------------------------------
+def _conf_from_winprob(entry: dict) -> float:
+    """Resolve a 0-100 confidence for a top_performer entry. Prefer an
+    explicit confidence field; else derive from win_prob (0-1 -> 0-100);
+    else 0 so the conf gate rejects an unscored entry rather than
+    fabricating a number."""
+    c = entry.get("confidence")
+    if isinstance(c, (int, float)) and c > 1:
+        return float(c)
+    wp = entry.get("win_prob")
+    if isinstance(wp, (int, float)):
+        return float(wp) * 100.0
+    return 0.0
+
+
+def _parse_inr(v) -> float | None:
+    """Parse a numeric INR value from a model string like '₹1,280' or
+    '1280-1300' (takes the midpoint of a range) or a bare number.
+    Returns None when nothing numeric is present."""
+    if isinstance(v, (int, float)):
+        return float(v) if v > 0 else None
+    if not isinstance(v, str):
+        return None
+    cleaned = v.replace("₹", "").replace(",", "").strip()
+    if not cleaned:
+        return None
+    parts = [p.strip() for p in cleaned.replace("to", "-").split("-") if p.strip()]
+    nums: list[float] = []
+    for p in parts:
+        try:
+            nums.append(float(p))
+        except ValueError:
+            continue
+    if not nums:
+        return None
+    return sum(nums) / len(nums)
+
+
 def _parse_range_band(s) -> tuple[float, float] | None:
     """Parse a tight INR band string like '320-330' or '₹320 - ₹330' into
     (lo, hi) floats. Returns None on any failure. The morning prompt

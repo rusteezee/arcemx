@@ -6,7 +6,7 @@ import { MoodPill } from "@/components/MoodPill";
 import { EmptyState } from "@/components/EmptyState";
 import { DirPill } from "@/components/DirPill";
 import { sb } from "@/lib/supabase";
-import { formatINR, formatNumber, formatPct, polishMarketText } from "@/lib/utils";
+import { formatINR, formatNumber, formatPct, polishMarketText, stripTicker } from "@/lib/utils";
 
 export default function TodayPage() {
   const [analysis, setAnalysis] = useState<any>(null);
@@ -186,16 +186,29 @@ export default function TodayPage() {
         </div>
       </Section>
 
-      <Section num="003 / 006" title="Picks" glyph="◉">
+      <Section
+        num="003 / 006"
+        title="Top & Worst Performers"
+        glyph="◉"
+        description="The engine's independent daily call on which names lead and lag the market vs NIFTY, drawn from the whole liquid NSE universe — not the user's holdings. Each call is scored next session and feeds the paper trader."
+      >
         {/*
           items-start lets each table size to its own row count instead
-          of stretching to the taller sibling. Short Term with 3 picks
-          and Long Term with 2 picks no longer leave dead space below
-          the shorter card.
+          of stretching to the taller sibling. Falls back to the legacy
+          short_term_picks / long_term_picks keys for analysis rows
+          written before the top/worst-performers schema landed.
         */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          <PickTable title="Short Term" rows={raw.short_term_picks || []} />
-          <PickTable title="Long Term" rows={raw.long_term_picks || []} />
+          <PerformerTable
+            title="Top Performers"
+            side="top"
+            rows={raw.top_performers || raw.short_term_picks || []}
+          />
+          <PerformerTable
+            title="Worst Performers"
+            side="worst"
+            rows={raw.worst_performers || raw.long_term_picks || []}
+          />
         </div>
       </Section>
 
@@ -447,7 +460,8 @@ function RunAnalysisButton({
   );
 }
 
-function PickTable({ title, rows }: { title: string; rows: any[] }) {
+function PerformerTable({ title, side, rows }: { title: string; side: "top" | "worst"; rows: any[] }) {
+  const moveColor = side === "top" ? "text-[var(--gain)]" : "text-[var(--loss)]";
   return (
     <div className="card overflow-hidden">
       <div className="p-5 border-b border-border">
@@ -460,21 +474,38 @@ function PickTable({ title, rows }: { title: string; rows: any[] }) {
               <tr>
                 <th>Ticker</th>
                 <th>Tier</th>
-                <th>Entry</th>
-                <th>Target</th>
-                <th>Stop Loss</th>
+                <th>Exp Move</th>
+                <th>Win %</th>
+                {side === "top" && <th>Edge</th>}
+                <th>Thesis</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td className="font-medium whitespace-nowrap">{r.ticker}</td>
-                  <td><ConvictionPill tier={r.conviction} /></td>
-                  <td className="num">{formatINR(r.entry || r.entry_zone)}</td>
-                  <td className="num text-[var(--gain)]">{formatINR(r.target)}</td>
-                  <td className="num text-[var(--loss)]">{formatINR(r.stop_loss)}</td>
-                </tr>
-              ))}
+              {rows.map((r, i) => {
+                // expected_move_pct is the new field; fall back to a
+                // legacy pick's target-vs-entry sign so old rows still
+                // render a direction.
+                const move = r.expected_move_pct;
+                const winPct = typeof r.win_prob === "number" ? Math.round(r.win_prob * 100) : null;
+                return (
+                  <tr key={i}>
+                    <td className="font-medium whitespace-nowrap">{stripTicker(r.ticker || "")}</td>
+                    <td><ConvictionPill tier={r.conviction} /></td>
+                    <td className={`num whitespace-nowrap ${moveColor}`}>
+                      {typeof move === "number" ? formatPct(move) : "·"}
+                    </td>
+                    <td className="num">{winPct != null ? `${winPct}%` : "·"}</td>
+                    {side === "top" && (
+                      <td className="num whitespace-nowrap">
+                        {typeof r.expected_edge_pct === "number" ? formatPct(r.expected_edge_pct) : "·"}
+                      </td>
+                    )}
+                    <td>
+                      <div className="clamp-3">{polishMarketText(r.thesis || "")}</div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

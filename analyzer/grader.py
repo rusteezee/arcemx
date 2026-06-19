@@ -706,6 +706,82 @@ def grade_all(lookback_days: int = 90):
                                           {"alphas": t_alphas}, t_score, t_avg,
                                           notes=f"tier-{tier} avg alpha vs NIFTY: {t_avg:+.2f}% n={len(items)}")
 
+            # ----- TOP / WORST performers (1 session, alpha vs NIFTY) -----
+            # The model's INDEPENDENT market-wide daily call: which names
+            # lead (top_performers) and lag (worst_performers) the next
+            # session vs NIFTY. Scored as average alpha so a top pick that
+            # merely tracked the index scores ~50, one that out-ran it
+            # scores high, one that fell scores low. worst_performers are
+            # graded on the MIRROR: credit for lagging NIFTY (we called
+            # them weak), penalty for rallying. calibration_log captures
+            # the (avg win_prob, realized) pair so the per-dim confidence
+            # scatter covers these too. 1-session horizon = the "single
+            # day" framing; needs the next session closed (age >= 1).
+            if age >= 1:
+                tops = raw.get("top_performers", []) or []
+                worsts = raw.get("worst_performers", []) or []
+
+                top_alphas, top_results, top_wins, top_confs = [], [], 0, []
+                for p in tops[:15]:
+                    tk = p.get("ticker")
+                    if not tk:
+                        continue
+                    pick_pct, nifty_pct = grade_pick(tk, run_at, 1)
+                    if pick_pct is None:
+                        continue
+                    alpha = pick_pct - (nifty_pct or 0)
+                    top_alphas.append(alpha)
+                    if alpha > 0:
+                        top_wins += 1
+                    wp = p.get("win_prob")
+                    if isinstance(wp, (int, float)):
+                        top_confs.append(float(wp) * 100.0)
+                    top_results.append({"ticker": tk, "pick_pct": round(pick_pct, 2),
+                                        "nifty_pct": round(nifty_pct or 0, 2),
+                                        "alpha": round(alpha, 2),
+                                        "conviction": (p.get("conviction") or "").upper()})
+                if top_alphas:
+                    avg_alpha = sum(top_alphas) / len(top_alphas)
+                    score = max(0, min(100, 50 + avg_alpha * 10))
+                    stated = sum(top_confs) / len(top_confs) if top_confs else None
+                    _upsert_score(sb, aid, "top_performer_1d", 1,
+                                  {"picks": [r["ticker"] for r in top_results]},
+                                  {"results": top_results,
+                                   "hit_rate": round(top_wins / len(top_alphas), 3)},
+                                  score, avg_alpha,
+                                  notes=f"avg top-performer alpha vs NIFTY {avg_alpha:+.2f}%, "
+                                        f"{top_wins}/{len(top_alphas)} beat index",
+                                  stated_confidence=stated, prediction_date=run_at)
+
+                worst_alphas, worst_results, worst_wins = [], [], 0
+                for p in worsts[:15]:
+                    tk = p.get("ticker")
+                    if not tk:
+                        continue
+                    pick_pct, nifty_pct = grade_pick(tk, run_at, 1)
+                    if pick_pct is None:
+                        continue
+                    # We predicted underperformance: lag = how far BELOW
+                    # NIFTY the name landed. Positive lag = correct call.
+                    lag = (nifty_pct or 0) - pick_pct
+                    worst_alphas.append(lag)
+                    if lag > 0:
+                        worst_wins += 1
+                    worst_results.append({"ticker": tk, "pick_pct": round(pick_pct, 2),
+                                          "nifty_pct": round(nifty_pct or 0, 2),
+                                          "lag": round(lag, 2),
+                                          "conviction": (p.get("conviction") or "").upper()})
+                if worst_alphas:
+                    avg_lag = sum(worst_alphas) / len(worst_alphas)
+                    score = max(0, min(100, 50 + avg_lag * 10))
+                    _upsert_score(sb, aid, "worst_performer_1d", 1,
+                                  {"picks": [r["ticker"] for r in worst_results]},
+                                  {"results": worst_results,
+                                   "hit_rate": round(worst_wins / len(worst_alphas), 3)},
+                                  score, avg_lag,
+                                  notes=f"avg worst-performer lag vs NIFTY {avg_lag:+.2f}%, "
+                                        f"{worst_wins}/{len(worst_alphas)} lagged index")
+
             # ----- Short pick target/SL hit (did it hit target before stop) -----
             if age >= 11:
                 picks = raw.get("short_term_picks", []) or []
