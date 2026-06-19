@@ -858,11 +858,29 @@ def analyze(payload: dict, model_name: str | None = None) -> dict:
 # Ensemble: run N models in parallel, merge by consensus.
 # ---------------------------------------------------------------------------
 _ENSEMBLE_ON = os.getenv("OPENROUTER_ENSEMBLE", "0").strip() in ("1", "true", "yes")
+# Best-of-the-best free OpenRouter models picked for cross-family
+# diversity (verified live on the openrouter free-models collection,
+# 2026-06-19). Each entry is a different lab, each is >=30B active
+# params, each carries 130K+ context. Diverse training corpora is what
+# makes wisdom-of-crowds work; same-family ensembles (e.g. 2 Nemotrons)
+# correlate too much to lift accuracy meaningfully.
+#
+#   nvidia/nemotron-3-super-120b-a12b   NVIDIA, 120B/12B-active MoE, 1M ctx (proven tight ranges)
+#   openai/gpt-oss-120b                 OpenAI open-weight, 117B/5.1B-active, 131K ctx
+#   google/gemma-4-31b-it               Google, 30.7B dense, 256K ctx
+#   qwen/qwen3-next-80b-a3b-instruct    Alibaba Qwen, 80B/3B-active, 262K ctx (math-heavy)
+#   meta-llama/llama-3.3-70b-instruct   Meta, 70B dense, 131K ctx
+#
+# Override with OPENROUTER_ENSEMBLE_MODELS to add Nous Hermes 405B or
+# nex-agi if you provision more keys; default kept at 5 so it works
+# cleanly with 3-5 keys via key-pool round-robin + cooldown.
 _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     "OPENROUTER_ENSEMBLE_MODELS",
     "nvidia/nemotron-3-super-120b-a12b:free,"
-    "nvidia/nemotron-3-ultra-550b-a55b:free,"
-    "nex-agi/nex-n2-pro:free",
+    "openai/gpt-oss-120b:free,"
+    "google/gemma-4-31b-it:free,"
+    "qwen/qwen3-next-80b-a3b-instruct:free,"
+    "meta-llama/llama-3.3-70b-instruct:free",
 ).split(",") if m.strip()]
 
 
