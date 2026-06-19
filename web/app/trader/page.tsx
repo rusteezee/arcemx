@@ -74,6 +74,9 @@ const SKIP_LABEL: Record<string, string> = {
   liquidity: "Below liquidity floor",
   sector_cap: "Sector cap hit",
   insert_failed: "Insert failed",
+  pre_schema: "Pre-schema row (legacy)",
+  ticker_freeze: "Ticker frozen (3+ losses 90d)",
+  no_ticker: "Missing ticker",
 };
 
 const EXIT_LABEL: Record<string, string> = {
@@ -100,11 +103,22 @@ function fmtDate(iso: string | null): string {
   });
 }
 
+interface MetricsSnapshot {
+  computed_at: string;
+  trade_count: number;
+  sharpe: number | null;
+  max_dd_pct: number | null;
+  psr: number | null;
+  calmar: number | null;
+  cleared_tier: number | null;
+}
+
 export default function TraderPage() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [signals, setSignals] = useState<PaperSignal[]>([]);
   const [predScores, setPredScores] = useState<PredictionScoreRow[]>([]);
   const [niftyPrices, setNiftyPrices] = useState<PriceRow[]>([]);
+  const [tierHistory, setTierHistory] = useState<MetricsSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -138,6 +152,17 @@ export default function TraderPage() {
         if (page.length < PAGE) break;
       }
       setPredScores(allScores);
+
+      // Tier-progress history from metrics_snapshot. Each row is a
+      // grader-pass snapshot, so a sparse line plot of Sharpe / PSR /
+      // max_DD over time shows whether the iterate-and-ratchet doctrine
+      // is moving the needle. Empty until first grader pass writes.
+      const msRes = await sb
+        .from("metrics_snapshot")
+        .select("computed_at,trade_count,sharpe,max_dd_pct,psr,calmar,cleared_tier")
+        .order("computed_at", { ascending: true })
+        .limit(500);
+      setTierHistory((msRes.data || []) as MetricsSnapshot[]);
 
       // NIFTY benchmark for the equity-curve overlay. Only pull rows
       // spanning the closed-trade range; if there are no closed trades
@@ -233,7 +258,7 @@ export default function TraderPage() {
         </p>
       </div>
 
-      <Section num="001 / 008" title="Realised P&L" glyph="✦">
+      <Section num="001 / 009" title="Realised P&L" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat label="Open Positions" value={open.length.toString()} />
           <Stat label="Closed Trades" value={closed.length.toString()} />
@@ -272,7 +297,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="002 / 008"
+        num="002 / 009"
         title="Equity Curve vs NIFTY"
         glyph="⬡"
         description="Cumulative net P&L on the trader's working capital versus a NIFTY 50 baseline over the same date span. Both series rebased to 100 at the first closed-trade date so the comparison is a pure relative-return read. Trader above NIFTY = positive alpha after friction; below NIFTY = the gates are letting noise through."
@@ -313,7 +338,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="003 / 008"
+        num="003 / 009"
         title="Edge Metrics"
         glyph="◇"
         description="Sharpe, max drawdown, and Probabilistic Sharpe (Bailey-Lopez de Prado, skew + kurt adjusted). PSR is the probability the true Sharpe exceeds zero given the sample. Risk-free leg = 6.5% RBI repo proxy."
@@ -387,7 +412,81 @@ export default function TraderPage() {
         </div>
       </Section>
 
-      <Section num="004 / 008" title="Open Positions" glyph="◈">
+      <Section
+        num="004 / 009"
+        title="Tier Progress"
+        glyph="◬"
+        description="Every grader pass writes one snapshot. Lines plot Sharpe, PSR, and max drawdown across snapshots so the iterate-and-ratchet loop is visible. Flat at zero = no closed trades yet; bend upward = a fix moved the needle; downward bend = a fix regressed and warrants rollback or further diagnosis."
+      >
+        {tierHistory.length === 0 ? (
+          <EmptyState
+            title="No metric snapshots yet"
+            hint="Snapshots write on every 17:00 IST grader pass."
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+              <Stat label="Snapshots" value={tierHistory.length.toString()} />
+              <Stat
+                label="First Snapshot"
+                value={fmtDate(tierHistory[0]?.computed_at || null)}
+              />
+              <Stat
+                label="Latest Snapshot"
+                value={fmtDate(tierHistory[tierHistory.length - 1]?.computed_at || null)}
+              />
+              <Stat
+                label="Cleared Tier"
+                value={(tierHistory[tierHistory.length - 1]?.cleared_tier ?? 0).toString()}
+                deltaPositive={(tierHistory[tierHistory.length - 1]?.cleared_tier ?? 0) >= 1}
+              />
+            </div>
+            <div className="card p-6">
+              {(() => {
+                const series: Series[] = [
+                  {
+                    key: "sharpe",
+                    label: "Sharpe",
+                    color: "var(--foreground)",
+                    points: tierHistory.map((m) => ({
+                      date: m.computed_at,
+                      value: m.sharpe ?? 0,
+                    })),
+                  },
+                  {
+                    key: "psr",
+                    label: "PSR",
+                    color: "var(--gain)",
+                    points: tierHistory.map((m) => ({
+                      date: m.computed_at,
+                      value: m.psr ?? 0,
+                    })),
+                  },
+                  {
+                    key: "max_dd",
+                    label: "Max DD %",
+                    color: "var(--loss)",
+                    points: tierHistory.map((m) => ({
+                      date: m.computed_at,
+                      value: m.max_dd_pct ?? 0,
+                    })),
+                  },
+                ];
+                return (
+                  <MultiLineChart
+                    series={series}
+                    visibleKeys={new Set(["sharpe", "psr", "max_dd"])}
+                    normalize
+                    height={300}
+                  />
+                );
+              })()}
+            </div>
+          </>
+        )}
+      </Section>
+
+      <Section num="005 / 009" title="Open Positions" glyph="◈">
         {open.length === 0 ? (
           <EmptyState
             title="No open positions"
@@ -431,7 +530,7 @@ export default function TraderPage() {
         )}
       </Section>
 
-      <Section num="005 / 008" title="Closed Trades" glyph="⬡">
+      <Section num="006 / 009" title="Closed Trades" glyph="⬡">
         {closed.length === 0 ? (
           <EmptyState
             title="No closed trades yet"
@@ -486,7 +585,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="006 / 008"
+        num="007 / 009"
         title="Slippage Attribution Waterfall"
         glyph="◮"
         description="Where the gross P&L went. Friction layers stripped from gross in order: slippage (spread + market impact, modeled per cap tier), brokerage (INDstocks flat ₹5/order + exchange + SEBI + GST), STT (0.1% delivery sell). Below 30% of gross = healthy. Above = the gates are letting illiquid or oversized signals through."
@@ -582,7 +681,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="007 / 008"
+        num="008 / 009"
         title="Per-Dim Skill Heatmap"
         glyph="◉"
         description="Skill ratio = (mean accuracy - 50) / stdev. Above 1.0 = dim's accuracy distribution sits comfortably above coin-flip noise. Below 0 = worse than guessing. Cells colored by skill: green = positive, red = negative, intensity tracks magnitude. Reading across rows shows whether a dim's skill is improving or decaying. Low-sample cells (<5) shown as dim text."
@@ -638,7 +737,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="008 / 008"
+        num="009 / 009"
         title="Signal Activity"
         glyph="◐"
         description="Last 14 days. Every Stock Analyst buy is logged here even when skipped, so gate stack attribution stays computable."
@@ -651,8 +750,82 @@ export default function TraderPage() {
             value={totalEvaluated ? formatPct((enteredCount / totalEvaluated) * 100, false) : "·"}
           />
         </div>
+        {(() => {
+          // Per-source breakdown: which signal source has the highest
+          // entry rate + which skip reason dominates per source. Tells
+          // the operator where to look first when entries lag (e.g.
+          // wishlist_outlook_1d skipping 100% on not_buy means morning
+          // analysis is calling wishlist bearish; that's a prompt
+          // doctrine question, not a gate-tuning one).
+          const bySource = new Map<string, {
+            total: number;
+            enter: number;
+            skips: Map<string, number>;
+          }>();
+          for (const s of signals) {
+            const src = s.source_kind || "unknown";
+            const bucket = bySource.get(src) || {
+              total: 0, enter: 0, skips: new Map<string, number>(),
+            };
+            bucket.total += 1;
+            if (s.action === "enter") bucket.enter += 1;
+            else if (s.skip_reason) {
+              bucket.skips.set(s.skip_reason, (bucket.skips.get(s.skip_reason) || 0) + 1);
+            }
+            bySource.set(src, bucket);
+          }
+          if (bySource.size === 0) return null;
+          return (
+            <div className="card overflow-hidden mb-5">
+              <div className="px-5 py-4 border-b border-border">
+                <div className="text-sm font-medium">Per-Source Breakdown</div>
+                <div className="text-xs text-[var(--muted)] mt-1">
+                  Each row aggregates one signal source. Top skip = the dominant gate that source hits.
+                </div>
+              </div>
+              <div className="table-scroll">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Total</th>
+                      <th>Enter</th>
+                      <th>Entry Rate</th>
+                      <th>Top Skip</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from(bySource.entries())
+                      .sort((a, b) => b[1].total - a[1].total)
+                      .map(([src, b]) => {
+                        const topSkip = Array.from(b.skips.entries()).sort((a, c) => c[1] - a[1])[0];
+                        const rate = b.total ? (b.enter / b.total) * 100 : 0;
+                        return (
+                          <tr key={src}>
+                            <td className="font-medium whitespace-nowrap">{src}</td>
+                            <td className="num">{b.total}</td>
+                            <td className={`num ${b.enter > 0 ? "text-[var(--gain)]" : "text-[var(--muted)]"}`}>{b.enter}</td>
+                            <td className="num">{formatPct(rate, false)}</td>
+                            <td className="whitespace-nowrap">
+                              {topSkip ? `${humaniseSkip(topSkip[0])} (${topSkip[1]})` : "·"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
         {skipCounts.length > 0 && (
           <div className="card overflow-hidden mb-5">
+            <div className="px-5 py-4 border-b border-border">
+              <div className="text-sm font-medium">All Skip Reasons</div>
+              <div className="text-xs text-[var(--muted)] mt-1">
+                Pooled across all sources. Cross-reference against the breakdown above to see which source drives each reason.
+              </div>
+            </div>
             <div className="table-scroll">
               <table className="data">
                 <thead>
