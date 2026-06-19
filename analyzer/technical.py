@@ -95,16 +95,32 @@ def compute_signals(df: pd.DataFrame) -> dict:
     }
 
 
-def screen_universe(tickers: list[str]) -> dict:
-    data = yf.download(tickers, period="1y", interval="1d", group_by="ticker",
-                       auto_adjust=True, threads=True, progress=False)
-    out = {}
-    for t in tickers:
+def screen_universe(tickers: list[str], chunk_size: int = 75) -> dict:
+    """Compute per-ticker technical signals across a universe.
+
+    Downloads in chunks rather than one giant yf.download call. The
+    universe grew from 88 to the full NIFTY 500 (~502 names); a single
+    500-ticker request is slow, memory-heavy, and rate-limit prone on
+    Render's free tier. Chunking to ~75 keeps each request light and
+    lets a partial failure (one bad chunk) lose only that slice instead
+    of the whole screen. A failed chunk is skipped, not fatal."""
+    out: dict = {}
+    for i in range(0, len(tickers), chunk_size):
+        batch = tickers[i:i + chunk_size]
         try:
-            sub = data[t].dropna()
-            out[t] = compute_signals(sub)
-        except (KeyError, AttributeError):
+            data = yf.download(batch, period="1y", interval="1d",
+                               group_by="ticker", auto_adjust=True,
+                               threads=True, progress=False)
+        except Exception as e:
+            print(f"  screen_universe chunk {i//chunk_size} download fail: {str(e)[:120]}")
             continue
+        for t in batch:
+            try:
+                # Single-ticker batch returns a flat frame (no ticker level).
+                sub = data[t].dropna() if len(batch) > 1 else data.dropna()
+                out[t] = compute_signals(sub)
+            except (KeyError, AttributeError):
+                continue
     return out
 
 
