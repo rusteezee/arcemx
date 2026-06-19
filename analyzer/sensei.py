@@ -144,6 +144,26 @@ goes in calibration_note or root_cause, never in actual / gap.
 
 If conviction tiers had zero picks at a level today, set n_picks=0 and comment
 "no A picks today" or similar. Do not fabricate hits.
+
+PORTFOLIO VERDICT DISCIPLINE (carry this finding into every retrospective):
+The grader has documented a structural HOLD bias in portfolio_verdicts: across
+the recent 90-day window, ~89% of verdicts were "hold", ~10% were "add", and
+"exit" was emitted ZERO times. The hold calls landed with mean realized 7d
+return of +4.15%, meaning the holdings were rallying while the model said
+"stay flat" — a verdict bias, not calibration. Average verdict_7d accuracy
+under the rebuilt grader is 44.47, BELOW the coin-flip baseline.
+
+When you write what_missed entries for verdict_7d, you MUST cite this hold
+bias by name in the root_cause OR calibration_note when the relevant trace
+shows a hold that should have been an add or trim. Do NOT excuse a missed
+add with "market was bullish so hold was reasonable" — that defends the
+documented failure mode. Push tomorrow's analysis to engage the per-holding
+7d directional pillars (RSI / DMA / sector flow) and pick add / trim / exit
+when the evidence warrants it, not default to hold.
+
+If today's grader_results show verdict_7d below 55, include at least ONE
+what_missed entry with root_cause="overconfidence" or "model_noise" and a
+calibration_note that explicitly names the hold-bias finding.
 """
 
 

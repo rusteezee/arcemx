@@ -640,6 +640,112 @@ def _payload_json(payload: dict, max_chars: int = 120000) -> str:
     return s[:max_chars]
 
 
+_SHORT_PICK_BEAR_PROMPT = """You are an adversarial bear auditor for a list of intraday-to-30d short-term equity picks. Each pick has a thesis, entry, stop, target, horizon_days, conviction tier (A=highest, B=mid, C=speculative), expected_return_pct, expected_loss_pct, win_prob, loss_prob, expected_edge_pct, and a reasons_could_be_wrong list the bull analyst already produced.
+
+Your job: for each pick (only conviction A and B — skip C since C is explicitly speculative), find 1-3 CONCRETE additional failure modes the bull missed, citing payload fields they did not address. Be skeptical by default. Each failure mode must:
+- Be concrete: cite a number (RSI, DMA, sector index, FII flow, P/E, etc.) from the payload or the pick itself
+- Be distinct: do not echo entries already in the pick's reasons_could_be_wrong
+- Be material: plausibly cost more than the pick's expected_loss_pct over its horizon
+- Be anti-hindsight: never reference data dated after run_at
+
+Output STRICT JSON only:
+{
+  "by_ticker": {
+    "TICKER1": ["concrete failure mode 1 citing data field", "concrete failure mode 2"],
+    "TICKER2": ["..."]
+  }
+}
+
+Empty list per ticker is allowed if the bull case is airtight. Lying about an airtight case to please the validator is worse than admitting it."""
+
+
+def _short_pick_bear_pass(short_picks: list[dict], payload_excerpt: dict,
+                          model_chain: list[str]) -> dict:
+    """One LLM call covering the entire short_term_picks list. Returns
+    dict[ticker -> list[failure_mode_str]]. Empty dict on any failure."""
+    if not isinstance(short_picks, list) or not short_picks:
+        return {}
+    audit_picks = [p for p in short_picks if isinstance(p, dict)
+                   and (p.get("conviction") or "").upper() in ("A", "B")]
+    if not audit_picks:
+        return {}
+    try:
+        slim = {
+            "picks": audit_picks,
+            "market_snapshot_excerpt": {
+                "indices": payload_excerpt.get("indices"),
+                "flows": payload_excerpt.get("flows"),
+                "sectors": payload_excerpt.get("sectors"),
+            },
+        }
+        resp = _post(
+            [{"role": "system", "content": _SHORT_PICK_BEAR_PROMPT},
+             {"role": "user", "content": json.dumps(slim, default=str)}],
+            models=model_chain,
+        )
+        parsed = _parse_json(resp)
+        if not isinstance(parsed, dict):
+            return {}
+        out_raw = parsed.get("by_ticker")
+        if not isinstance(out_raw, dict):
+            return {}
+        out: dict[str, list[str]] = {}
+        for k, v in out_raw.items():
+            if isinstance(k, str) and isinstance(v, list):
+                out[k.upper()] = [str(x) for x in v if isinstance(x, str)]
+        return out
+    except Exception as e:
+        print(f"  short_pick bear pass skipped: {type(e).__name__}: {str(e)[:120]}")
+        return {}
+
+
+def _apply_short_pick_bear(short_picks: list[dict], bear_by_ticker: dict) -> None:
+    """Splice bear findings into each pick's reasons_could_be_wrong (skip
+    near-duplicates) and dampen win_prob + recompute expected_edge_pct
+    per added material finding. Modifies short_picks in place.
+
+    Dampen schedule: 0.04 per material (>=20 char) added entry, capped at
+    -0.12 absolute. A pick that goes from win_prob 0.65 -> 0.53 after a
+    strong bear pass yields a recalibrated edge that may then fail the
+    paper trader's edge floor — exactly the discipline the bear is meant
+    to enforce."""
+    for p in short_picks or []:
+        if not isinstance(p, dict):
+            continue
+        tk = (p.get("ticker") or "").strip().upper()
+        if not tk:
+            continue
+        bear_list = bear_by_ticker.get(tk) or []
+        if not bear_list:
+            continue
+        existing = p.get("reasons_could_be_wrong") or []
+        merged: list[str] = list(existing)
+        added = 0
+        for r_new in bear_list:
+            if not isinstance(r_new, str) or len(r_new.strip()) < 20:
+                continue
+            if any(r_new.strip().lower()[:60] in e.lower() for e in merged):
+                continue
+            merged.append(r_new.strip())
+            added += 1
+        if not added:
+            continue
+        p["reasons_could_be_wrong"] = merged
+        p["bear_pass_added"] = added
+        # Dampen win_prob; recompute loss_prob; recompute expected_edge_pct.
+        wp_orig = p.get("win_prob")
+        if isinstance(wp_orig, (int, float)):
+            dampen = min(0.12, 0.04 * added)
+            p["win_prob_raw"] = float(wp_orig)
+            p["win_prob"] = max(0.0, float(wp_orig) - dampen)
+            p["loss_prob"] = 1.0 - p["win_prob"]
+            R = p.get("expected_return_pct")
+            L = p.get("expected_loss_pct")
+            if isinstance(R, (int, float)) and isinstance(L, (int, float)):
+                p["expected_edge_pct_raw"] = p.get("expected_edge_pct")
+                p["expected_edge_pct"] = float(R) * p["win_prob"] - float(L) * p["loss_prob"]
+
+
 def analyze(payload: dict, model_name: str | None = None) -> dict:
     """Run the strict-JSON market analysis. Signature preserved from
     analyzer.llm so callers swap with a one-line import change."""
@@ -652,7 +758,26 @@ def analyze(payload: dict, model_name: str | None = None) -> dict:
          {"role": "user", "content": user_msg}],
         models=chain,
     )
-    return _parse_json(resp)
+    result = _parse_json(resp)
+    # Adversarial bear pass on short_term_picks. Mirrors the Stock
+    # Analyst bear pass: a second LLM call audits the bull's A/B picks,
+    # splices concrete failure modes into each pick's
+    # reasons_could_be_wrong, and dampens win_prob + edge accordingly.
+    # Soft-fails: any error preserves the bull result unchanged so a
+    # bear-pass hiccup never blocks the morning pipeline. Doubles the
+    # short-pick LLM cost on days picks land but free quota covers it.
+    try:
+        sp = result.get("short_term_picks") if isinstance(result, dict) else None
+        if isinstance(sp, list) and sp:
+            bear = _short_pick_bear_pass(sp, payload, chain)
+            if bear:
+                _apply_short_pick_bear(sp, bear)
+                result["short_picks_bear_pass_applied"] = sum(
+                    1 for p in sp if isinstance(p, dict) and p.get("bear_pass_added")
+                )
+    except Exception as e:
+        print(f"  short_pick bear pass outer: {str(e)[:120]}")
+    return result
 
 
 def analyze_portfolio(holdings: list[dict], market_snapshot: dict,
