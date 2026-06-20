@@ -41,28 +41,32 @@ OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
 
 def _load_keys() -> list[str]:
-    """Key pool, three sources in priority order:
-
-      1. OPENROUTER_API_KEY (primary, kept for backward compat)
-      2. OPENROUTER_API_KEY_1 ... OPENROUTER_API_KEY_9 (one key per
-         numbered slot; unambiguous when the user wants exactly N keys
-         each in its own secret with its own dashboard label)
-      3. OPENROUTER_API_KEYS (comma-separated, legacy; still parsed for
-         backward compat but the numbered slots are the recommended path)
-
-    Deduped, whitespace-stripped, order-preserved. The numbered slots
-    win over the comma-separated list when both contain the same key.
+    """SINGLE-MODEL key pool. Returns only the primary OPENROUTER_API_KEY,
+    which is reserved for the Nemotron Super single-model path and the
+    bot's individual one-off calls. The ensemble fan-out has its own
+    separate pool (`_load_ensemble_keys`) so the primary key is never
+    burned by a 6-model fan-out and stays fully available for the
+    single-model fallback path it serves.
     """
     keys: list[str] = []
     if OPENROUTER_KEY:
         keys.append(OPENROUTER_KEY)
-    # Numbered explicit slots. Range to 9 covers any realistic pool size.
+    return keys
+
+
+def _load_ensemble_keys() -> list[str]:
+    """ENSEMBLE-ONLY key pool. Reads the numbered slots
+    OPENROUTER_API_KEY_1 ... OPENROUTER_API_KEY_9 and the legacy
+    OPENROUTER_API_KEYS comma-separated var. Deliberately EXCLUDES the
+    primary OPENROUTER_API_KEY so the single-model path retains its own
+    quota. Numbered slots are the recommended form; comma-separated is
+    kept for backward compat. Deduped, whitespace-stripped.
+    """
+    keys: list[str] = []
     for i in range(1, 10):
         v = (os.getenv(f"OPENROUTER_API_KEY_{i}", "") or "").strip()
         if v and v not in keys:
             keys.append(v)
-    # Legacy comma-separated. Kept so an existing OPENROUTER_API_KEYS
-    # secret still works while the user migrates to numbered slots.
     extra = os.getenv("OPENROUTER_API_KEYS", "")
     for k in extra.split(","):
         k = k.strip()
@@ -1173,7 +1177,19 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     fan-out does not serialize behind one key's per-minute limit."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     models = models or _ENSEMBLE_MODELS
-    keys = _load_keys()
+    # Ensemble uses its own dedicated key pool, NOT the primary key. The
+    # primary key is reserved for the Nemotron Super single-model path
+    # and must not get burned by a 6-model fan-out. Numbered slots
+    # OPENROUTER_API_KEY_1..3 (or the legacy OPENROUTER_API_KEYS list)
+    # carry the ensemble-only keys.
+    keys = _load_ensemble_keys()
+    if not keys:
+        # No ensemble keys configured at all. Degrade gracefully to the
+        # single-model path (which uses the primary key) instead of
+        # crashing the morning run.
+        print("Ensemble keys not configured (OPENROUTER_API_KEY_1..3 / "
+              "OPENROUTER_API_KEYS); falling back to single-model path")
+        return analyze(payload, model_name=PRIMARY_MODEL)
     # Word-form key count so GitHub Actions secret masking does not
     # redact the digit. Helps confirm whether OPENROUTER_API_KEYS is
     # actually loaded as a multi-key pool rather than just the primary.
