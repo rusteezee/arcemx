@@ -50,6 +50,19 @@ interface ModelRow {
   appearances: number;
 }
 
+// Slugs currently in the ensemble fleet (analyzer/llm_router.py default).
+// History rows for retired slugs (nemotron-ultra, nemotron-nano-*,
+// dolphin-mistral, llama-3.3-70b, hermes-3-405b, qwen3-coder, gemma-4-*,
+// nex-n2-pro) stay in the DB so the audit trail is intact, but the
+// rankings page hides them because they no longer represent live signal:
+// a 0% usable rate on a slug we no longer call would otherwise drag the
+// leaderboard sort and the pool stats into a misleading shape.
+const ACTIVE_MODELS = new Set<string>([
+  "openai/gpt-oss-120b:free",
+  "openai/gpt-oss-20b:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+]);
+
 const LAB_FROM_SLUG = (slug: string): { lab: string; short: string } => {
   const s = slug.toLowerCase();
   if (s.startsWith("nvidia/")) return { lab: "NVIDIA", short: slug.replace("nvidia/", "").replace(":free", "") };
@@ -129,6 +142,14 @@ export default function RankingsPage() {
     };
   }, []);
 
+  // Restrict every attempts-derived view to the currently-active slugs.
+  // Retired slugs are filtered before any aggregation so they cannot
+  // skew leaderboard order, pool usable rate, or recent-failure lists.
+  const activeAttempts = useMemo(
+    () => attempts.filter((a) => ACTIVE_MODELS.has(a.model_slug)),
+    [attempts],
+  );
+
   // Build per-model row from attempts + per_model_votes consensus diff
   const modelRows = useMemo<ModelRow[]>(() => {
     const byModel = new Map<string, ModelRow>();
@@ -161,7 +182,7 @@ export default function RankingsPage() {
 
     const latencySum = new Map<string, { sum: number; n: number }>();
 
-    for (const a of attempts) {
+    for (const a of activeAttempts) {
       const r = ensureRow(a.model_slug);
       r.attempts += 1;
       const bucket = (r as any)[a.status];
@@ -189,6 +210,7 @@ export default function RankingsPage() {
       };
       for (const [slug, v] of Object.entries(votes)) {
         if (slug === "unknown") continue;
+        if (!ACTIVE_MODELS.has(slug)) continue;
         const vv: any = v;
         ensureRow(slug).appearances += 1;
         const s = agreeStats.get(slug) || { match: 0, total: 0 };
@@ -219,7 +241,7 @@ export default function RankingsPage() {
       const bscore = b.usable_pct * (b.consensus_agreement_pct ?? 50) / 100;
       return bscore - ascore;
     });
-  }, [attempts, analyses]);
+  }, [activeAttempts, analyses]);
 
   // Per-dim improvement: rolling skill (mean score) 7d vs 30d vs 90d
   const dimTrends = useMemo(() => {
@@ -272,10 +294,11 @@ export default function RankingsPage() {
     return { runs, applied, totalFlips };
   }, [analyses]);
 
-  // Overall pool stats
+  // Overall pool stats. Restricted to the active fleet so the usable
+  // rate reflects the live engine, not historic-only retired slugs.
   const poolStats = useMemo(() => {
-    const total = attempts.length;
-    const ok = attempts.filter((a) => a.status === "ok").length;
+    const total = activeAttempts.length;
+    const ok = activeAttempts.filter((a) => a.status === "ok").length;
     const ensembleRuns = analyses.filter(
       (a) => typeof a.raw_json?.ensemble_models_used === "number"
     ).length;
@@ -293,7 +316,7 @@ export default function RankingsPage() {
       ensembleRuns,
       meanModelsPerRun,
     };
-  }, [attempts, analyses]);
+  }, [activeAttempts, analyses]);
 
   if (loading) {
     return (
@@ -332,8 +355,8 @@ export default function RankingsPage() {
           <Stat
             label="Avg Models / Run"
             value={poolStats.meanModelsPerRun.toFixed(1)}
-            delta={poolStats.meanModelsPerRun >= 4 ? "Healthy" : "Degraded"}
-            deltaPositive={poolStats.meanModelsPerRun >= 4}
+            delta={poolStats.meanModelsPerRun >= ACTIVE_MODELS.size ? "Healthy" : "Degraded"}
+            deltaPositive={poolStats.meanModelsPerRun >= ACTIVE_MODELS.size}
           />
         </div>
       </Section>
@@ -484,7 +507,7 @@ export default function RankingsPage() {
         description="Last 30 non-OK attempts. Use this to spot a specific model slug going bad before it kills the daily run."
       >
         {(() => {
-          const fails = attempts.filter((a) => a.status !== "ok").slice(0, 30);
+          const fails = activeAttempts.filter((a) => a.status !== "ok").slice(0, 30);
           if (fails.length === 0) {
             return (
               <EmptyState
