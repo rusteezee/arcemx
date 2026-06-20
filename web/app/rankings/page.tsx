@@ -429,46 +429,7 @@ export default function RankingsPage() {
             hint="Need >= 5 graded rows per dimension over 90 days."
           />
         ) : (
-          <div className="card p-0 overflow-x-auto">
-            <table className="data">
-              <thead>
-                <tr className="text-left text-[var(--muted)] section-num border-b border-border">
-                  <th className="px-4 py-3">Dimension</th>
-                  <th className="px-4 py-3 text-right">7d Mean</th>
-                  <th className="px-4 py-3 text-right">30d Mean</th>
-                  <th className="px-4 py-3 text-right">90d Mean</th>
-                  <th className="px-4 py-3 text-right">Trend</th>
-                  <th className="px-4 py-3 text-right">n (90d)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dimTrends.slice(0, 30).map((d) => (
-                  <tr key={d.dim} className="border-b border-border last:border-0">
-                    <td className="px-4 py-3 font-medium">{d.dim}</td>
-                    <td className="px-4 py-3 text-right num">{d.m7?.toFixed(1) ?? "·"}</td>
-                    <td className="px-4 py-3 text-right num">{d.m30?.toFixed(1) ?? "·"}</td>
-                    <td className="px-4 py-3 text-right num">{d.m90?.toFixed(1) ?? "·"}</td>
-                    <td
-                      className={`px-4 py-3 text-right num font-medium ${
-                        d.trend == null
-                          ? "text-[var(--muted)]"
-                          : d.trend > 0
-                          ? "text-[var(--gain)]"
-                          : d.trend < 0
-                          ? "text-[var(--loss)]"
-                          : ""
-                      }`}
-                    >
-                      {d.trend != null ? `${d.trend > 0 ? "+" : ""}${d.trend.toFixed(1)}` : "·"}
-                    </td>
-                    <td className="px-4 py-3 text-right num text-xs text-[var(--muted)]">
-                      {d.n90}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DimTrendChart dims={dimTrends.slice(0, 30)} />
         )}
       </Section>
 
@@ -493,5 +454,106 @@ export default function RankingsPage() {
       </Section>
 
     </main>
+  );
+}
+
+interface DimTrendRow {
+  dim: string;
+  n7: number;
+  n30: number;
+  n90: number;
+  m7: number | null;
+  m30: number | null;
+  m90: number | null;
+  trend: number | null;
+}
+
+// Per-dimension trend chart: one horizontal divergent bar per dim.
+// Bar grows right (green) when 7d > 30d (improving) or left (red) when
+// 7d < 30d (regressing). Width is proportional to |trend| scaled to
+// the largest absolute trend in the cohort. Dim name + value sit
+// outside the bar so the bar itself stays clean; hover tooltip shows
+// the underlying 7d / 30d / 90d / n values.
+function DimTrendChart({ dims }: { dims: DimTrendRow[] }) {
+  const maxAbs = Math.max(
+    0.5,
+    ...dims.map((d) => Math.abs(d.trend ?? 0)),
+  );
+
+  return (
+    <div className="card p-5 space-y-2">
+      {/* Axis legend: shows the symmetric scale the bars are drawn against. */}
+      <div className="flex items-center text-[10px] uppercase tracking-wider text-[var(--muted)] pb-2 border-b border-border">
+        <div style={{ width: "32%" }}>Dimension</div>
+        <div className="flex-1 flex items-center justify-between gap-2 px-3">
+          <span className="num">-{maxAbs.toFixed(1)}</span>
+          <span>Regressing ← Trend (7d minus 30d) → Improving</span>
+          <span className="num">+{maxAbs.toFixed(1)}</span>
+        </div>
+        <div style={{ width: "12%" }} className="text-right">Value</div>
+        <div style={{ width: "8%" }} className="text-right">n</div>
+      </div>
+      {dims.map((d) => {
+        const trend = d.trend ?? 0;
+        const pct = Math.min(100, (Math.abs(trend) / maxAbs) * 100);
+        const positive = trend > 0;
+        const color = positive ? "var(--gain)" : trend < 0 ? "var(--loss)" : "var(--muted)";
+        return (
+          <div
+            key={d.dim}
+            className="flex items-center py-2 group hover:bg-[var(--muted-bg)] rounded-md transition-colors"
+            title={`7d ${d.m7?.toFixed(1) ?? '·'} | 30d ${d.m30?.toFixed(1) ?? '·'} | 90d ${d.m90?.toFixed(1) ?? '·'} | n(90d) ${d.n90}`}
+          >
+            <div
+              className="text-sm font-medium pl-2 truncate"
+              style={{ width: "32%" }}
+            >
+              {d.dim}
+            </div>
+            {/* Bar track. Centre line is the literal middle of this
+                column. Two flex halves: left half holds a right-aligned
+                bar for negative trends, right half holds a left-aligned
+                bar for positive trends. Centre divider is a 1px line. */}
+            <div className="flex-1 flex items-center px-3 relative h-5">
+              <div className="flex-1 h-2.5 flex justify-end">
+                {!positive && trend < 0 && (
+                  <div
+                    className="h-full rounded-l-full"
+                    style={{ width: `${pct}%`, background: color }}
+                  />
+                )}
+              </div>
+              {/* Centre tick */}
+              <div
+                className="w-px h-3 mx-px"
+                style={{ background: "var(--border)" }}
+              />
+              <div className="flex-1 h-2.5">
+                {positive && (
+                  <div
+                    className="h-full rounded-r-full"
+                    style={{ width: `${pct}%`, background: color }}
+                  />
+                )}
+              </div>
+            </div>
+            <div
+              className="text-sm num font-medium text-right pr-2"
+              style={{ width: "12%", color }}
+            >
+              {d.trend != null
+                ? `${d.trend > 0 ? "+" : ""}${d.trend.toFixed(1)}`
+                : "·"}
+            </div>
+            <div
+              className="text-xs num text-[var(--muted)] text-right pr-2"
+              style={{ width: "8%" }}
+            >
+              {d.n90}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
