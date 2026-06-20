@@ -538,7 +538,8 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
           timeout: int = 180, max_retries: int = 2,
           api_key: str | None = None,
           json_format: bool = True,
-          max_tokens: int | None = None) -> dict:
+          max_tokens: int | None = None,
+          no_rotate: bool = False) -> dict:
     """POST chat.completions with the OpenRouter fallback chain and 429 backoff.
 
     `models` is the full chain. `model` is set to the head so providers
@@ -581,11 +582,13 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
         # First attempt honors the caller's seed key; later attempts
-        # rotate over the full pool, skipping any key in cooldown via
-        # _pick_key. This is the rotation fix: previously every retry
-        # reused the pinned key, so a single 429'd key absorbed all 5
-        # retries instead of falling back to a sibling with quota left.
-        if attempt == 0:
+        # rotate over the full pool when no_rotate=False, otherwise stick
+        # to the seed key. Ensemble fan-out uses no_rotate=True so each
+        # model stays tied to its assigned key: a 429 from one model
+        # (e.g. Gemma hitting the provider's per-model throttle) must
+        # not cascade retries onto a sibling key meant for a different
+        # model, which would idle the third key and overload the others.
+        if attempt == 0 or no_rotate:
             key = seed_key
         else:
             key = _pick_key(pool, attempt) or seed_key
@@ -608,22 +611,26 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         if r.status_code == 429:
             ra = r.headers.get("Retry-After")
             wait = float(ra) if ra and ra.replace(".", "", 1).isdigit() else delay
-            # Cool this key down so the next attempt rotates to another.
-            if key:
+            # Cool this key only when the 429 likely came from OpenRouter
+            # itself (Retry-After header present), not from a per-model
+            # upstream provider throttle. Cooling the key for any 429
+            # caused Gemma's instant provider-side throttle to lock out
+            # an entire key for 60s even though the key had RPM quota
+            # left for other models; that wasted the third key while
+            # the other two absorbed all retries.
+            if key and no_rotate is False and ra:
                 _KEY_COOLDOWN[key] = time.monotonic() + max(wait, 60)
             n_keys = len(pool)
-            # Word-form pool size so GitHub Actions secret masking does
-            # not redact the digit. Digits inside secret-derived strings
-            # are masked to ***; "three" survives the mask.
             words = ["zero","one","two","three","four","five","six","seven","eight"]
             pool_label = words[n_keys] if 0 <= n_keys < len(words) else f"n={n_keys}"
-            print(f"OpenRouter 429 pool={pool_label} cooled-down, "
+            print(f"OpenRouter 429 pool={pool_label} attempt {attempt+1}, "
                   f"retry in {wait:.0f}s")
             if attempt >= max_retries:
                 r.raise_for_status()
-            # If we have more than one key, rotation alone may clear it;
-            # still back off a little to respect the provider.
-            time.sleep(min(wait, 30) if len(pool) == 1 else min(wait, 5))
+            # Longer back-off when sticky-pinned: rotation can't bail us
+            # out, so we must wait for the actual rate window to clear.
+            sleep_for = min(wait, 30) if (no_rotate or len(pool) == 1) else min(wait, 5)
+            time.sleep(sleep_for)
             delay *= 2
             continue
         r.raise_for_status()
@@ -1170,9 +1177,8 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             return "timeout"
         return "other"
 
-    def _one(idx_model):
-        idx, model = idx_model
-        key = keys[idx % len(keys)] if keys else None
+    def _one(model_key):
+        model, key = model_key
         # Disable reasoning trace for ensemble fan-out entirely. Even with
         # max_tokens=32000, Nemotron Ultra still truncated at char 13310
         # on a real run because the provider treats max_tokens as a hard
@@ -1189,13 +1195,13 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
         try:
             # Pin to a single model (no fallback chain) so we get genuine
             # cross-model diversity, not three calls to the same primary.
-            # max_retries bumped to 5 for ensemble: free-tier 429s recover
-            # within seconds, so a single model deserves a longer backoff
-            # walk than the morning analysis single-model path needs.
+            # no_rotate=True keeps retries on the same key so a per-model
+            # upstream throttle does not steal retries from a sibling key.
             resp = _post(msgs, models=[model], api_key=key, timeout=300,
-                         max_retries=5, reasoning=use_reasoning,
+                         max_retries=4, reasoning=use_reasoning,
                          json_format=use_json_format,
-                         max_tokens=16000)
+                         max_tokens=16000,
+                         no_rotate=True)
             res = _parse_json(resp)
             latency_ms = int((time.monotonic() - t0) * 1000)
             if isinstance(res, dict) and not res.get("error"):
@@ -1228,20 +1234,35 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
                              "error_snippet": snippet})
         return None
 
-    # Cap concurrency to keys, NOT models. Each key handles >=1 model in
-    # parallel only triggers the 20-req/min per-key throttle. With
-    # workers = len(keys), each key processes its assigned models
-    # sequentially (round-robin idx % len(keys)) so the throttle never
-    # fires intra-batch. Wall-clock cost: ceil(models / keys) batches.
-    # 6 models with 3 keys -> 2 batches of 3 instead of 6 parallel.
-    workers = max(1, len(keys)) if keys else 1
+    # Per-key worker groups. Round-robin assigns models to keys, then
+    # each key gets its own thread that processes its assigned models
+    # SEQUENTIALLY. With 6 models + 3 keys: key[0]=[m0,m3], key[1]=[m1,m4],
+    # key[2]=[m2,m5]. Three threads run in parallel; within each thread
+    # models execute one at a time so we never exceed 1 in-flight request
+    # per key (well under the 20 RPM per-key OpenRouter cap). Eliminates
+    # the bug where one key absorbed both other keys' retries when their
+    # first attempt 429'd, leaving the third key idle.
+    if keys:
+        groups: list[list[tuple[str, str]]] = [[] for _ in range(len(keys))]
+        for i, m in enumerate(models):
+            groups[i % len(keys)].append((m, keys[i % len(keys)]))
+    else:
+        groups = [[(m, None) for m in models]]  # type: ignore[list-item]
+
+    def _run_group(group: list[tuple[str, str]]) -> list[dict]:
+        out: list[dict] = []
+        for mk in group:
+            r = _one(mk)
+            if r:
+                out.append(r)
+        return out
+
+    workers = max(1, len(groups))
     results: list[dict] = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(_one, (i, m)) for i, m in enumerate(models)]
+        futs = [ex.submit(_run_group, g) for g in groups]
         for f in as_completed(futs):
-            r = f.result()
-            if r:
-                results.append(r)
+            results.extend(f.result())
     print(f"Ensemble: {len(results)}/{len(models)} models returned usable JSON")
 
     if len(results) < 2:
