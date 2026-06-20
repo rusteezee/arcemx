@@ -694,6 +694,33 @@ def _parse_json(resp: dict) -> dict:
     except (KeyError, IndexError, TypeError):
         return {"error": "no_choices", "raw": str(resp)[:500]}
     used = resp.get("model")
+    # Some free providers (observed: openai/gpt-oss-120b:free under
+    # large reasoning load) return choices[0].message.content == None
+    # instead of an empty string. json.loads(None) raises TypeError
+    # which the caller logged as "non-dict / empty". Treat as a clean
+    # empty-content error so the ensemble path classifies it under the
+    # "empty" status with a real reason.
+    if content is None or (isinstance(content, str) and not content.strip()):
+        # When content is empty but the model returned a reasoning trace,
+        # try pulling the trace as a last-ditch parse target. Reasoning
+        # models occasionally emit JSON inside the trace when the final
+        # message content is dropped.
+        rtrace = None
+        try:
+            rtrace = resp["choices"][0]["message"].get("reasoning")
+        except (KeyError, IndexError, TypeError):
+            pass
+        if isinstance(rtrace, str) and rtrace.strip():
+            try:
+                out = json.loads(_strip_fences(rtrace))
+                if isinstance(out, dict) and used:
+                    out.setdefault("_model_used", used)
+                return out
+            except json.JSONDecodeError:
+                pass
+        return {"error": "empty_content",
+                "raw": "content was None / empty",
+                "_model_used": used}
     try:
         out = json.loads(content)
     except json.JSONDecodeError:
@@ -1146,7 +1173,17 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     def _one(idx_model):
         idx, model = idx_model
         key = keys[idx % len(keys)] if keys else None
-        use_reasoning = any(tag in model for tag in _REASONING_OK)
+        # Disable reasoning trace for ensemble fan-out entirely. Even with
+        # max_tokens=32000, Nemotron Ultra still truncated at char 13310
+        # on a real run because the provider treats max_tokens as a hard
+        # total cap and reasoning chews most of it before the final JSON
+        # starts. Ensemble accuracy depends on the JSON answer landing
+        # complete, not on visible chain-of-thought we never read; the
+        # underlying model still reasons internally without us asking it
+        # to emit the trace. Single-model PRIMARY path keeps reasoning on
+        # because it has the full 1M ctx and we read the trace for
+        # debugging there.
+        use_reasoning = False
         use_json_format = any(tag in model for tag in _JSON_FORMAT_OK)
         t0 = time.monotonic()
         try:
@@ -1155,16 +1192,10 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             # max_retries bumped to 5 for ensemble: free-tier 429s recover
             # within seconds, so a single model deserves a longer backoff
             # walk than the morning analysis single-model path needs.
-            # Reasoning models generate large hidden traces before the
-            # final JSON. Default OpenRouter completion cap is ~8k which
-            # truncated Nemotron Ultra mid-JSON (JSONDecodeError at char
-            # 33310 on a real run). Bump headroom for any reasoning model
-            # so the final JSON answer has room to land after the trace.
-            mt = 32000 if use_reasoning else 8000
             resp = _post(msgs, models=[model], api_key=key, timeout=300,
                          max_retries=5, reasoning=use_reasoning,
                          json_format=use_json_format,
-                         max_tokens=mt)
+                         max_tokens=16000)
             res = _parse_json(resp)
             latency_ms = int((time.monotonic() - t0) * 1000)
             if isinstance(res, dict) and not res.get("error"):
