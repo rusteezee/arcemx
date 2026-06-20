@@ -822,7 +822,18 @@ def _apply_short_pick_bear(short_picks: list[dict], bear_by_ticker: dict) -> Non
 
 def analyze(payload: dict, model_name: str | None = None) -> dict:
     """Run the strict-JSON market analysis. Signature preserved from
-    analyzer.llm so callers swap with a one-line import change."""
+    analyzer.llm so callers swap with a one-line import change.
+
+    Routes to analyze_ensemble when OPENROUTER_ENSEMBLE=1 so the env
+    flag actually flips the pipeline. Without this guard the ensemble
+    helpers existed but the entry point never called them. An explicit
+    model_name override always uses the single-model path so a caller
+    that pins a specific model (e.g. portfolio_score_llm) gets exactly
+    what it asked for, not a 6-model fan-out."""
+    if _ENSEMBLE_ON and model_name is None:
+        print(f"OpenRouter ensemble mode ON; fanning out to "
+              f"{len(_ENSEMBLE_MODELS)} models")
+        return analyze_ensemble(payload)
     chain = _chain(model_name)
     print(f"OpenRouter primary: {chain[0]} | fallbacks: {chain[1:]}")
     user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
@@ -1063,7 +1074,10 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
 
     if len(results) < 2:
         print("Ensemble degraded to single-model analyze()")
-        return analyze(payload)
+        # Pin a model so analyze() takes the single-model path; without
+        # this, analyze() sees _ENSEMBLE_ON=True and routes back into
+        # analyze_ensemble, creating an infinite loop.
+        return analyze(payload, model_name=PRIMARY_MODEL)
 
     merged = _merge_results(results)
     # One bear pass on the merged top_performers (consensus list), same as
