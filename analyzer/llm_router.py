@@ -1033,21 +1033,28 @@ _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     # throttle counter with the PRIMARY single-model call. Acceptable
     # because nano-omni and nano-30b are smaller checkpoints than
     # Super, so wisdom-of-crowds still gets distinct error signals.
-    # nemotron-3-ultra-550b-a55b dropped 2026-06-20 after run 27871102615
-    # showed it (a) burning 31 minutes of wall clock and (b) returning a
-    # prose preamble ("The user wants a detailed market analysis JSON
-    # output...") instead of JSON despite response_format=json_object
-    # being set. The OpenRouter route ignored the format hint, so the
-    # parser saw raw prose and rejected the call. Net negative: slowest
-    # model in the fleet + parse_failed payload. The single-model PRIMARY
-    # path already runs nemotron-3-super-120b-a12b which is the same
-    # family at a faster checkpoint, so dropping Ultra costs nothing in
-    # provider diversity. Ensemble is now 5 models, round-robined across
-    # 3 keys as 2 / 2 / 1.
+    # Fleet trimmed to 3 proven models 2026-06-20. History:
+    #  - nemotron-3-ultra-550b-a55b dropped after run 27871102615: 31min
+    #    wall clock + prose preamble instead of JSON (OpenRouter route
+    #    ignored response_format=json_object).
+    #  - nemotron-3-nano-omni-30b-a3b-reasoning AND nemotron-3-nano-30b-a3b
+    #    dropped after runs 27871102615 + 27872599028: both returned
+    #    empty_content with finish_reason=length at BOTH max_tokens=16000
+    #    and 32000. On a ~58k-token prompt these small checkpoints never
+    #    terminate the JSON within budget; bumping tokens just doubled the
+    #    burn. Token tuning exhausted, so they are out.
+    # The three survivors each returned usable JSON on every recent run:
+    #  - openai/gpt-oss-120b   (OK 308-313s)
+    #  - openai/gpt-oss-20b    (OK 311-602s)
+    #  - nvidia/nemotron-3-super-120b-a12b (OK 303-323s; same checkpoint
+    #    as the single-model PRIMARY brain, known reliable).
+    # Round-robined across the 3 keys as 1 model per key, so every key
+    # runs exactly one in-flight request: maximum parallelism, no key
+    # doubles up, and a per-model upstream throttle can never starve a
+    # sibling. Consensus voting on 3 distinct families (OpenAI x2 sizes +
+    # NVIDIA) is enough signal for the top/worst-performer merge.
     "openai/gpt-oss-120b:free,"
     "openai/gpt-oss-20b:free,"
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"
-    "nvidia/nemotron-3-nano-30b-a3b:free,"
     "nvidia/nemotron-3-super-120b-a12b:free",
 ).split(",") if m.strip()]
 
