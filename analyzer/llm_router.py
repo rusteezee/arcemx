@@ -522,9 +522,22 @@ explicitly in that key's value rather than skipping it.
 """
 
 
+# Models that natively support OpenAI-style response_format=json_object.
+# Sending it to a provider that does not recognize the field returns a
+# 400 Bad Request (observed: meta-llama/llama-3.3-70b-instruct,
+# nousresearch/hermes-3-llama-3.1-405b on certain OpenRouter routes).
+# Default to NO response_format for any model not on this list; the
+# system prompt already instructs JSON output so well-behaved models
+# still comply. Single-model path keeps response_format on because the
+# primary Nemotron checkpoint supports it.
+_JSON_FORMAT_OK = ("nemotron-3-ultra", "nemotron-3-super",
+                   "qwen3-next", "gpt-oss", "gpt-5", "o1", "gemma-4")
+
+
 def _post(messages: list[dict], models: list[str], reasoning: bool = True,
           timeout: int = 180, max_retries: int = 2,
-          api_key: str | None = None) -> dict:
+          api_key: str | None = None,
+          json_format: bool = True) -> dict:
     """POST chat.completions with the OpenRouter fallback chain and 429 backoff.
 
     `models` is the full chain. `model` is set to the head so providers
@@ -544,12 +557,13 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         "model": models[0],
         "models": models,
         "messages": messages,
-        "response_format": {"type": "json_object"},
         # Explicitly non-streaming. Some free providers default to SSE for
         # reasoning models depending on the routed provider; we still
         # defensively parse SSE below in case the provider ignores this.
         "stream": False,
     }
+    if json_format:
+        body["response_format"] = {"type": "json_object"}
     if reasoning:
         body["reasoning"] = {"effort": "medium"}
     delay = 5.0
@@ -1102,6 +1116,7 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
         idx, model = idx_model
         key = keys[idx % len(keys)] if keys else None
         use_reasoning = any(tag in model for tag in _REASONING_OK)
+        use_json_format = any(tag in model for tag in _JSON_FORMAT_OK)
         t0 = time.monotonic()
         try:
             # Pin to a single model (no fallback chain) so we get genuine
@@ -1110,7 +1125,8 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             # within seconds, so a single model deserves a longer backoff
             # walk than the morning analysis single-model path needs.
             resp = _post(msgs, models=[model], api_key=key, timeout=300,
-                         max_retries=5, reasoning=use_reasoning)
+                         max_retries=5, reasoning=use_reasoning,
+                         json_format=use_json_format)
             res = _parse_json(resp)
             latency_ms = int((time.monotonic() - t0) * 1000)
             if isinstance(res, dict) and not res.get("error"):
