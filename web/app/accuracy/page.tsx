@@ -524,19 +524,26 @@ export default function AccuracyPage() {
     return out;
   }, [perDimCalib, cutoff, globalWindow]);
 
-  // Top-level calibration block (Stated / Realized / Gap) re-derived
-  // from the date-filtered cloud so the Section 002 numbers match the
-  // picked window instead of the all-time average.
-  const calibrationW = useMemo<Calibration | null>(() => {
-    if (calibScatterW.length < 5) return null;
-    const stated = calibScatterW.reduce((a, p) => a + p.stated, 0) / calibScatterW.length;
-    const realized = calibScatterW.reduce((a, p) => a + p.realized, 0) / calibScatterW.length;
-    return {
-      stated: Math.round(stated * 10) / 10,
-      realized: Math.round(realized * 10) / 10,
-      gap: Math.round((stated - realized) * 10) / 10,
-      n: calibScatterW.length,
-    };
+  // Confidence-over-time series for the chart under the calibration
+  // boxes. Unlike the three headline boxes (which stay fixed on the
+  // standing all-time calibration, window-independent by design), this
+  // trend IS windowed: it groups the date-filtered calibration cloud
+  // by prediction date and plots the mean stated confidence per day so
+  // the line redraws as the window swiper changes.
+  const confidenceTrendW = useMemo(() => {
+    const byDate = new Map<string, number[]>();
+    for (const p of calibScatterW) {
+      if (!p.date) continue;
+      const arr = byDate.get(p.date) ?? [];
+      arr.push(p.stated);
+      byDate.set(p.date, arr);
+    }
+    return Array.from(byDate.entries())
+      .map(([date, arr]) => ({
+        date,
+        value: Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10,
+      }))
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
   }, [calibScatterW]);
 
   // WoW chart: pick out the rows for the chosen window from the raw
@@ -566,11 +573,7 @@ export default function AccuracyPage() {
       </div>
 
       <Section num={calibration ? "001 / 011" : "001 / 010"} title="Overall Accuracy" glyph="✦">
-        <WindowSwiper
-          value={globalWindow}
-          onChange={setGlobalWindow}
-        />
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat
             label="Direction accuracy"
             value={dirAcc == null ? "·" : `${dirAcc.toFixed(1)}%`}
@@ -589,32 +592,64 @@ export default function AccuracyPage() {
             delta={windowOpt.fullLabel}
             glyph="⬡"
           />
+          <WindowSwiper value={globalWindow} onChange={setGlobalWindow} />
         </div>
       </Section>
 
-      {calibrationW && (
+      {calibration && (
         <Section
           num="002 / 011"
           title="Confidence Calibration"
           glyph="◉"
-          description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
+          description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero. The three boxes show the standing calibration and do not move with the window; the chart below tracks stated confidence over time and redraws to the picked window."
         >
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            <Stat label="Stated confidence" value={`${calibrationW.stated.toFixed(1)}%`} glyph="◎" />
-            <Stat label="Realized accuracy" value={`${calibrationW.realized.toFixed(1)}%`} glyph="◈" />
+            <Stat label="Stated confidence" value={`${calibration.stated.toFixed(1)}%`} glyph="◎" />
+            <Stat label="Realized accuracy" value={`${calibration.realized.toFixed(1)}%`} glyph="◈" />
             <Stat
-              label={calibrationW.gap > 0 ? "Overconfident by" : calibrationW.gap < 0 ? "Underconfident by" : "Calibration gap"}
-              value={`${Math.abs(calibrationW.gap).toFixed(1)} pts`}
+              label={calibration.gap > 0 ? "Overconfident by" : calibration.gap < 0 ? "Underconfident by" : "Calibration gap"}
+              value={`${Math.abs(calibration.gap).toFixed(1)} pts`}
               delta={
-                Math.abs(calibrationW.gap) <= 8
+                Math.abs(calibration.gap) <= 8
                   ? "well calibrated"
-                  : calibrationW.gap > 0
+                  : calibration.gap > 0
                   ? "stated > delivered"
                   : "stated < delivered"
               }
               glyph="⬡"
             />
           </div>
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.14 }}
+            className="card p-6 mt-4"
+          >
+            <div className="section-num mb-3">Stated Confidence Over Time · {windowOpt.label}</div>
+            {confidenceTrendW.length >= TREND_MIN_POINTS ? (
+              <LineChart
+                data={confidenceTrendW}
+                height={300}
+                color="var(--foreground)"
+                valueLabel="Stated Confidence"
+                yTickFormatter={(v) => `${Math.round(v)}%`}
+                valueFormatter={(v) => `${v.toFixed(1)}%`}
+              />
+            ) : (
+              <div
+                style={{ height: 300 }}
+                className="flex flex-col items-center justify-center text-center gap-2"
+              >
+                <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
+                <p className="text-sm text-[var(--muted)]">
+                  Confidence trend appears once at least {TREND_MIN_POINTS} calls with stated confidence are scored in the {windowOpt.fullLabel} window.
+                </p>
+                <p className="text-xs text-[var(--muted)]">
+                  {confidenceTrendW.length} day{confidenceTrendW.length === 1 ? "" : "s"} so far.
+                </p>
+              </div>
+            )}
+          </motion.div>
         </Section>
       )}
 
@@ -1292,12 +1327,13 @@ export default function AccuracyPage() {
   );
 }
 
-// Swipeable window picker. Each option renders as a big card in a
-// horizontal scroll-snap track; the user swipes (touch) or drags
-// (mouse) to bring an option to the centre of the track, and the
-// centred card becomes the selection. Tapping a card also selects
-// it. Active card is highlighted with the foreground swatch so the
-// picked window is obvious without reading the headline.
+// Window picker styled as one of the Overall Accuracy stat boxes. The
+// box itself is a single-slide swipe carousel: only ONE window shows at
+// a time, and a horizontal swipe (touch) or drag (mouse) snaps to the
+// next/previous window, which becomes the selection. Dots below double
+// as an affordance and as tap targets to jump to any window. Matches
+// the Stat card layout (label row + big value) so it reads as the 4th
+// box in the grid, not a separate full-width strip.
 function WindowSwiper({
   value,
   onChange,
@@ -1306,32 +1342,32 @@ function WindowSwiper({
   onChange: (days: number) => void;
 }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
-  // Suppress the scroll-driven onChange while we are programmatically
-  // scrolling the track on mount or after a tap, so the scroll handler
-  // does not flip the selection mid-animation.
+  // Suppress the scroll-driven onChange while we programmatically scroll
+  // the track (mount / dot tap / external change) so the scroll handler
+  // does not fight the smooth-scroll animation mid-flight.
   const suppressScrollRef = useRef<number>(0);
+  const rafRef = useRef<number | null>(null);
 
-  // On mount + when the value changes via tap, centre the active card
-  // in the visible track. Behaviour is "auto" so the initial render
-  // does not animate, "smooth" thereafter.
+  const activeIdx = WINDOW_OPTS.findIndex((o) => o.days === value);
+
+  // Snap the active slide into view whenever the value changes (mount,
+  // dot tap, or a change driven from elsewhere). Each slide is exactly
+  // the track width, so scrolling to the slide's offsetLeft lands it
+  // flush.
   useEffect(() => {
     const track = trackRef.current;
     if (!track) return;
     const idx = WINDOW_OPTS.findIndex((o) => o.days === value);
     if (idx < 0) return;
-    const card = track.children[idx] as HTMLElement | undefined;
-    if (!card) return;
-    const left =
-      card.offsetLeft - track.clientWidth / 2 + card.clientWidth / 2;
+    const slide = track.children[idx] as HTMLElement | undefined;
+    if (!slide) return;
     suppressScrollRef.current = Date.now() + 600;
-    track.scrollTo({ left, behavior: "smooth" });
+    track.scrollTo({ left: slide.offsetLeft, behavior: "smooth" });
   }, [value]);
 
-  // Scroll handler: pick the card whose centre is closest to the
-  // viewport centre and emit its days value if it differs from the
-  // current selection. Debounced via requestAnimationFrame so quick
-  // swipes do not thrash setState.
-  const rafRef = useRef<number | null>(null);
+  // On settle, pick the slide whose centre is closest to the track
+  // centre and emit it. rAF-debounced so a fast swipe does not thrash
+  // setState on every scroll tick.
   const onScroll = () => {
     if (Date.now() < suppressScrollRef.current) return;
     if (rafRef.current != null) return;
@@ -1343,10 +1379,10 @@ function WindowSwiper({
       let bestIdx = 0;
       let bestDist = Infinity;
       for (let i = 0; i < WINDOW_OPTS.length; i++) {
-        const card = track.children[i] as HTMLElement | undefined;
-        if (!card) continue;
-        const cardCenter = card.offsetLeft + card.clientWidth / 2;
-        const d = Math.abs(cardCenter - center);
+        const slide = track.children[i] as HTMLElement | undefined;
+        if (!slide) continue;
+        const slideCenter = slide.offsetLeft + slide.clientWidth / 2;
+        const d = Math.abs(slideCenter - center);
         if (d < bestDist) {
           bestDist = d;
           bestIdx = i;
@@ -1358,43 +1394,50 @@ function WindowSwiper({
   };
 
   return (
-    <div className="card p-4 mb-4">
-      <div className="section-num mb-3 flex items-center gap-2">
-        <span>Window</span>
-        <span className="text-[var(--muted)] normal-case tracking-normal">· swipe to change</span>
+    <div className="card p-5 overflow-hidden">
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <div className="section-num whitespace-nowrap">Window · swipe</div>
+        <span className="glyph text-sm shrink-0">◉</span>
       </div>
+      {/* One slide visible at a time. Each slide is min-width 100% of
+          the track so a swipe moves exactly one window. scroll-snap
+          keeps it from resting between slides. */}
       <div
         ref={trackRef}
         onScroll={onScroll}
-        className="h-scroll flex gap-3 -mx-1 px-1 pb-1"
+        className="h-scroll flex"
         style={{ scrollSnapType: "x mandatory" }}
       >
-        {WINDOW_OPTS.map(({ label, days, fullLabel }) => {
-          const active = value === days;
-          return (
-            <button
-              key={days}
-              type="button"
-              onClick={() => onChange(days)}
-              className="shrink-0 rounded-2xl border p-5 flex flex-col items-start gap-1 transition-colors text-left"
-              style={{
-                scrollSnapAlign: "center",
-                minWidth: 160,
-                borderColor: active ? "var(--foreground)" : "var(--border)",
-                background: active ? "var(--foreground)" : "transparent",
-                color: active ? "var(--background)" : "var(--foreground)",
-              }}
-            >
-              <span className="text-3xl font-semibold num">{label}</span>
-              <span
-                className="text-xs"
-                style={{ color: active ? "var(--background)" : "var(--muted)" }}
-              >
-                {fullLabel}
-              </span>
-            </button>
-          );
-        })}
+        {WINDOW_OPTS.map(({ label, days, fullLabel }) => (
+          <div
+            key={days}
+            style={{ minWidth: "100%", flexShrink: 0, scrollSnapAlign: "center" }}
+          >
+            <div className="text-xl sm:text-2xl font-semibold tracking-tight num">
+              {fullLabel}
+            </div>
+            <div className="text-xs mt-1 num font-medium text-[var(--muted)]">
+              {label}
+            </div>
+          </div>
+        ))}
+      </div>
+      {/* Position dots. Active dot stretches into a pill; tapping any
+          dot jumps to that window. */}
+      <div className="flex gap-1.5 mt-3">
+        {WINDOW_OPTS.map((o, i) => (
+          <button
+            key={o.days}
+            type="button"
+            aria-label={o.fullLabel}
+            onClick={() => onChange(o.days)}
+            className="h-1.5 rounded-full transition-all"
+            style={{
+              width: i === activeIdx ? 18 : 6,
+              background: i === activeIdx ? "var(--foreground)" : "var(--border)",
+            }}
+          />
+        ))}
       </div>
     </div>
   );
