@@ -170,6 +170,20 @@ table.data th { font-weight: 500; color: var(--muted); font-size: 0.7rem; text-t
 table.data tr:last-child td { border-bottom: none; }
 table.data tr:hover td { background: var(--muted-bg); }
 table.data td.num { white-space: nowrap; }
+/* Uniform row height across every page so a numeric-only row and a
+ * three-line prose row look like the same table, not two stacked
+ * tables. Combined with vertical-align: middle (set above) short
+ * cells center within the fixed height; long cells fit the .clamp-3
+ * three-line box without overflow. Tables without prose cells just
+ * get extra breathing room around their content - no cropping.
+ *
+ * Height math: 0.875rem font * 1.375 line-height (leading-snug) * 3
+ * lines = 3.6rem content + 1.4rem cell padding (0.7rem * 2) = 5.0rem.
+ * Adding ~0.5rem buffer so the descender on the third line ('g', 'p')
+ * does not kiss the bottom border. 5.5rem locks the visual cadence
+ * across portfolio, performers, signals, rankings, and trader tables.
+ */
+table.data tbody tr { height: 5.5rem; }
 
 /* Scroll wrapper for wide tables.
  *

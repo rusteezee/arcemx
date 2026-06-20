@@ -193,12 +193,14 @@ export default function TodayPage() {
         description="The engine's independent daily call on which names lead and lag the market vs NIFTY, drawn from the whole liquid NSE universe — not the user's holdings. Each call is scored next session and feeds the paper trader."
       >
         {/*
-          items-start lets each table size to its own row count instead
-          of stretching to the taller sibling. Falls back to the legacy
-          short_term_picks / long_term_picks keys for analysis rows
-          written before the top/worst-performers schema landed.
+          Tables stack vertically (Top then Worst) so each gets the full
+          page width. Side-by-side cramped both tables into ~50% width
+          on desktop and forced ticker / thesis text to wrap awkwardly.
+          Falls back to the legacy short_term_picks / long_term_picks
+          keys for analysis rows written before the top/worst-performers
+          schema landed.
         */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className="flex flex-col gap-6">
           <PerformerTable
             title="Top Performers"
             side="top"
@@ -288,7 +290,11 @@ function moodOneLiner(mood: string, niftyOutlook: any): string {
     .map((d) => (d || "").trim().replace(/[\.;,]+$/, ""))
     .filter(Boolean);
   if (clean.length) {
-    const polished = clean.slice(0, 2).map((d) => polishMarketText(d) + ".");
+    // Bullet each driver so multiple lines read as a list, not as one
+    // run-on blob. whitespace-pre-line on the <p> tag below preserves
+    // the "\n" boundary, and a leading "•" turns each segment into a
+    // distinct readable point.
+    const polished = clean.slice(0, 2).map((d) => "• " + polishMarketText(d) + ".");
     return polished.join("\n");
   }
   const m = (mood || "").toLowerCase();

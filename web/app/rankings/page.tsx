@@ -350,7 +350,7 @@ export default function RankingsPage() {
           />
         ) : (
           <div className="card p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="data">
               <thead>
                 <tr className="text-left text-[var(--muted)] section-num border-b border-border">
                   <th className="px-4 py-3">Lab / Model</th>
@@ -416,7 +416,7 @@ export default function RankingsPage() {
           />
         ) : (
           <div className="card p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="data">
               <thead>
                 <tr className="text-left text-[var(--muted)] section-num border-b border-border">
                   <th className="px-4 py-3">Dimension</th>
@@ -495,7 +495,7 @@ export default function RankingsPage() {
           }
           return (
             <div className="card p-0 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="data">
                 <thead>
                   <tr className="text-left text-[var(--muted)] section-num border-b border-border">
                     <th className="px-4 py-3">When</th>
