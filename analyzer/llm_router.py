@@ -1363,7 +1363,12 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             err_msg = ""
             if isinstance(res, dict) and res.get("error"):
                 err_obj = res.get("error")
-                err_msg = json.dumps(err_obj)[:240] if not isinstance(err_obj, str) else err_obj[:240]
+                # Surface BOTH error key + raw diagnostic so finish_reason,
+                # usage, and any preview content actually reaches the log
+                # and the ensemble_attempts.error_snippet column.
+                err_label = err_obj if isinstance(err_obj, str) else json.dumps(err_obj)
+                err_raw = res.get("raw") or ""
+                err_msg = f"{err_label} | {str(err_raw)[:200]}"[:300]
                 status = "empty"
             else:
                 err_msg = f"non-dict / empty: {type(res).__name__}"
