@@ -1204,8 +1204,12 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     # pool here. Also confirms the dedup did not silently collapse two
     # keys that look different but are actually identical.
     fps = _key_fingerprints(keys)
+    # 1-indexed display matches the OPENROUTER_API_KEY_1/2/3 secret
+    # names. Internal pool index stays 0-based (Python list), but the
+    # log uses N+1 so the user can map a fingerprint to a secret name
+    # without mental arithmetic.
     for i, fp in enumerate(fps):
-        print(f"  key[{i}] fp=sha256:{fp}")
+        print(f"  key #{i+1} fp=sha256:{fp}")
     user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
                 + _payload_json(payload))
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
@@ -1328,17 +1332,18 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
         fps = _key_fingerprints(keys)
         key_to_fp = dict(zip(keys, fps))
         for grp_idx, group in enumerate(groups):
-            for model, key in group:
-                fp = key_to_fp.get(key or "", "noop")
-                slot = f"key[{grp_idx}] fp=sha256:{fp}"
-                hits = sum(1 for a in attempts if a.get("model_slug") in [m for m, _ in group])
-                oks = sum(1 for a in attempts
-                          if a.get("model_slug") in [m for m, _ in group]
-                          and a.get("status") == "ok")
-                by_key[slot] = hits
-                by_key_ok[slot] = oks
-        for slot, total in by_key.items():
-            print(f"  {slot} attempts={total} ok={by_key_ok[slot]}")
+            slot_label = f"key #{grp_idx+1}"
+            fp = key_to_fp.get(group[0][1] if group else "", "noop")
+            group_models = [m for m, _ in group]
+            hits = sum(1 for a in attempts if a.get("model_slug") in group_models)
+            oks = sum(1 for a in attempts
+                      if a.get("model_slug") in group_models
+                      and a.get("status") == "ok")
+            by_key[slot_label] = hits
+            by_key_ok[slot_label] = oks
+            print(f"  {slot_label} fp=sha256:{fp} "
+                  f"models={','.join(m.split('/')[-1].replace(':free','') for m in group_models)} "
+                  f"attempts={hits} ok={oks}")
 
     if len(results) < 2:
         print("Ensemble degraded to single-model analyze()")
