@@ -757,7 +757,17 @@ export function StockAnalyst() {
                         : <span className="text-[var(--muted)] text-xs">grading at +{h.horizon_days}d</span>}
                     </td>
                     <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
-                    <td className="text-right pr-12">
+                    <td
+                      className="text-right"
+                      // Inline style beats the globals.css td default
+                      // padding (0.7rem 1rem) on specificity. Pushing
+                      // the right padding from 16px down to 4px shifts
+                      // the X visibly to the far right edge of the row,
+                      // and the wider col (130px set in colgroup above)
+                      // gives the icon its own clear column away from
+                      // the When timestamp.
+                      style={{ paddingRight: "4px", paddingLeft: "4px" }}
+                    >
                       <button
                         type="button"
                         aria-label={`Remove ${tk} analysis`}
