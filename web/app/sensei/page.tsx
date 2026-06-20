@@ -126,6 +126,19 @@ function fmtDate(iso: string | null): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
+// Long-form date ("June 20 2026") used in the Last Sync and Close Date
+// header boxes per the design spec. Everywhere else still uses the
+// terse dd/mm/yyyy form.
+const _MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+function fmtLongDate(iso: string | null): string {
+  if (!iso) return "·";
+  const d = new Date(iso);
+  return `${_MONTHS[d.getMonth()]} ${d.getDate()} ${d.getFullYear()}`;
+}
+
 // 12-hour IST clock formatted to AM/PM uppercase per the brand rules.
 function fmtTime(iso: string | null): string {
   if (!iso) return "·";
@@ -145,12 +158,17 @@ export default function SenseiPage() {
   rowRef.current = row;
 
   const fetchLatest = async (): Promise<SenseiRow | null> => {
+    // Secondary order on run_at desc so a same-day re-run (today,
+    // Saturday, with market_close_date stuck on Friday's close) still
+    // surfaces the latest synthesis instead of the first one written
+    // against that close date.
     const { data } = await sb
       .from("sensei_eod")
       .select(
         "id,run_at,analysis_id,market_close_date,model_used,raw_json,what_worked,what_missed,conviction_review,key_insights,tomorrow_watch,calibration_note,insight_quality_avg"
       )
       .order("market_close_date", { ascending: false })
+      .order("run_at", { ascending: false })
       .limit(1);
     return ((data || [])[0] as SenseiRow) || null;
   };
@@ -253,8 +271,8 @@ export default function SenseiPage() {
               <span className="glyph text-sm">◷</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap mb-3">
-              <div className="text-3xl font-semibold tracking-tight num">
-                {row ? fmtDate(row.run_at) : "·"}
+              <div className="text-3xl font-semibold tracking-tight">
+                {row ? fmtLongDate(row.run_at) : "·"}
               </div>
               {row?.run_at && (
                 <span
@@ -306,8 +324,8 @@ export default function SenseiPage() {
               <div className="section-num">Close Date</div>
               <span className="glyph text-sm">◈</span>
             </div>
-            <div className="text-3xl font-semibold tracking-tight num">
-              {row ? fmtDate(row.market_close_date) : "·"}
+            <div className="text-3xl font-semibold tracking-tight">
+              {row ? fmtLongDate(row.market_close_date) : "·"}
             </div>
             <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
               The market session whose closes, graded scores, and
