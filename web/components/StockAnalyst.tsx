@@ -50,6 +50,13 @@ interface StockAnalysisRow {
   grade_notes: string | null;
 }
 
+// localStorage key for ids the user has hidden from Recent Analyses.
+// Hidden client-side ONLY - the underlying stock_analyses row, its
+// graded score, and any prediction_scores it spawned stay in the DB
+// so accuracy metrics and the next call's prior_self_predictions
+// injection remain whole. Clearing this key shows every row again.
+const HIDDEN_HISTORY_LS_KEY = "arcemx.stockAnalyst.hiddenHistoryIds.v1";
+
 function normalizeTicker(raw: string): string {
   let t = raw.trim().toUpperCase();
   if (!t) return "";
@@ -140,12 +147,23 @@ export function StockAnalyst() {
   // for the table below the result card.
   const loadHistory = async () => {
     try {
+      // Fetch a few extra rows so the displayed list still hits the
+      // 12-row visual cap after hidden ids are filtered out.
       const { data } = await sb
         .from("stock_analyses")
         .select("*")
         .order("requested_at", { ascending: false })
-        .limit(12);
-      setHistory((data || []) as StockAnalysisRow[]);
+        .limit(40);
+      let rows = (data || []) as StockAnalysisRow[];
+      try {
+        const raw = localStorage.getItem(HIDDEN_HISTORY_LS_KEY) || "[]";
+        const hidden: number[] = JSON.parse(raw);
+        if (hidden.length) {
+          const hset = new Set(hidden);
+          rows = rows.filter((r) => !hset.has(r.id));
+        }
+      } catch {}
+      setHistory(rows.slice(0, 12));
     } catch {}
   };
 
@@ -299,29 +317,35 @@ export function StockAnalyst() {
     inputRef.current?.focus();
   };
 
-  // Remove a row from the Recent Analyses list. Drops it from local
-  // state immediately so AnimatePresence runs the exit animation; the
-  // DB delete fires in parallel and soft-fails (RLS may not allow anon
-  // delete on stock_analyses, in which case the row reappears on next
-  // page load - acceptable for now since the local list is what the
-  // user sees right now).
-  const removeHistoryRow = async (id: number) => {
+  // Remove a row from the Recent Analyses list. FRONTEND ONLY - the
+  // stock_analyses row, its grading, and all downstream prediction_
+  // scores must stay intact so accuracy metrics and the next call's
+  // prior_self_predictions injection do not lose history. The hidden
+  // id is persisted to localStorage so the row stays hidden across
+  // page reloads; clearing localStorage brings every hidden row back.
+  const removeHistoryRow = (id: number) => {
     if (removingIds.has(id)) return;
     setRemovingIds((prev) => {
       const next = new Set(prev);
       next.add(id);
       return next;
     });
-    // Optimistically remove from history immediately. AnimatePresence
-    // exit animation runs because the row leaves the rendered list.
+    // Drop from local state so AnimatePresence runs the exit animation.
     setHistory((prev) => prev.filter((r) => r.id !== id));
     // If the removed row was the currently displayed analysis, clear it.
     setCurrentRow((cur) => (cur && cur.id === id ? null : cur));
+    // Persist the hide so loadHistory does not re-surface the row on
+    // the next refetch / page load.
     try {
-      await sb.from("stock_analyses").delete().eq("id", id);
+      const raw = localStorage.getItem(HIDDEN_HISTORY_LS_KEY) || "[]";
+      const list: number[] = JSON.parse(raw);
+      if (!list.includes(id)) {
+        list.push(id);
+        localStorage.setItem(HIDDEN_HISTORY_LS_KEY, JSON.stringify(list));
+      }
     } catch {
-      // Soft-fail: row already left the list, DB row will return on
-      // refresh if RLS blocks the delete. Not worth surfacing an error.
+      // localStorage disabled / quota full: row stays hidden until
+      // refresh, then returns. Acceptable graceful fallback.
     }
   };
 
