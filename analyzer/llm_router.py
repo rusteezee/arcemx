@@ -754,8 +754,21 @@ def _parse_json(resp: dict) -> dict:
                 return out
             except json.JSONDecodeError:
                 pass
+        # Surface finish_reason + token usage so the empty case stops
+        # being a black box. "length" finish_reason means the model
+        # exhausted max_tokens; "content_filter" means the safety
+        # filter ate the response; "stop" with no content means the
+        # provider returned a degenerate empty completion.
+        finish = None
+        usage = None
+        try:
+            finish = resp["choices"][0].get("finish_reason")
+            usage = resp.get("usage")
+        except (KeyError, IndexError, TypeError):
+            pass
         return {"error": "empty_content",
-                "raw": "content was None / empty",
+                "raw": f"finish_reason={finish} usage={usage} "
+                       f"reasoning_len={len(rtrace) if isinstance(rtrace,str) else 0}",
                 "_model_used": used}
     try:
         out = json.loads(content)
@@ -1011,12 +1024,21 @@ _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     # some cross-lab diversity but gained reliability; ensemble
     # accuracy needs 4+/6 alive far more than it needs 6 distinct
     # provider lineages.
+    # qwen3-coder dropped 2026-06-20 after run 27869230462 showed it
+    # returning 429 with no recovery, plus the coder slant is wrong
+    # for market reasoning. Replaced with nemotron-3-super-120b-a12b
+    # which is the same model the single-model PRIMARY path uses, so
+    # we know it's reliable. Trade-off: doubles up on NVIDIA family
+    # (three NVIDIA models now) and shares the global per-model
+    # throttle counter with the PRIMARY single-model call. Acceptable
+    # because nano-omni and nano-30b are smaller checkpoints than
+    # Super, so wisdom-of-crowds still gets distinct error signals.
     "nvidia/nemotron-3-ultra-550b-a55b:free,"
     "openai/gpt-oss-120b:free,"
     "openai/gpt-oss-20b:free,"
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"
     "nvidia/nemotron-3-nano-30b-a3b:free,"
-    "qwen/qwen3-coder:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
 ).split(",") if m.strip()]
 
 
