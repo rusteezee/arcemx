@@ -1026,6 +1026,34 @@ def _merge_results(results: list[dict]) -> dict:
     base["top_performers"] = _merge_performers(results, "top_performers", n)
     base["worst_performers"] = _merge_performers(results, "worst_performers", n)
     base["ensemble_models_used"] = n
+
+    # Per-model compact vote ledger. Lets the grader score each ensemble
+    # member individually and the /rankings page surface leaderboards.
+    # Keep this small: just the directional calls + ticker lists, not
+    # the full schema (raw_json would balloon if we kept all 6 dicts).
+    per_model: dict[str, dict] = {}
+    for r in results:
+        slug = r.get("_ensemble_model") or "unknown"
+        def _tickers(field):
+            v = r.get(field)
+            if not isinstance(v, list):
+                return []
+            out = []
+            for e in v:
+                if isinstance(e, dict) and e.get("ticker"):
+                    out.append(e["ticker"])
+            return out[:20]
+        per_model[slug] = {
+            "market_mood": r.get("market_mood"),
+            "confidence": r.get("confidence"),
+            "nifty_dir": (r.get("nifty_outlook") or {}).get("direction") if isinstance(r.get("nifty_outlook"), dict) else None,
+            "nifty_conf": (r.get("nifty_outlook") or {}).get("confidence") if isinstance(r.get("nifty_outlook"), dict) else None,
+            "sensex_dir": (r.get("sensex_outlook") or {}).get("direction") if isinstance(r.get("sensex_outlook"), dict) else None,
+            "sensex_conf": (r.get("sensex_outlook") or {}).get("confidence") if isinstance(r.get("sensex_outlook"), dict) else None,
+            "top_performers": _tickers("top_performers"),
+            "worst_performers": _tickers("worst_performers"),
+        }
+    base["per_model_votes"] = per_model
     return base
 
 
@@ -1058,10 +1086,23 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     _REASONING_OK = ("nemotron-3-ultra", "nemotron-3-super",
                      "qwen3-next", "deepseek-r1", "gpt-5", "o1")
 
+    attempts: list[dict] = []
+
+    def _classify(err: str) -> str:
+        e = err.lower()
+        if "400" in e:
+            return "http_400"
+        if "429" in e:
+            return "http_429"
+        if "timeout" in e or "read timed out" in e:
+            return "timeout"
+        return "other"
+
     def _one(idx_model):
         idx, model = idx_model
         key = keys[idx % len(keys)] if keys else None
         use_reasoning = any(tag in model for tag in _REASONING_OK)
+        t0 = time.monotonic()
         try:
             # Pin to a single model (no fallback chain) so we get genuine
             # cross-model diversity, not three calls to the same primary.
@@ -1071,15 +1112,27 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             resp = _post(msgs, models=[model], api_key=key, timeout=300,
                          max_retries=5, reasoning=use_reasoning)
             res = _parse_json(resp)
+            latency_ms = int((time.monotonic() - t0) * 1000)
             if isinstance(res, dict) and not res.get("error"):
                 res["_ensemble_model"] = model
+                attempts.append({"model_slug": model, "status": "ok",
+                                 "latency_ms": latency_ms,
+                                 "error_snippet": None})
                 return res
             # Log empty / non-dict responses with the model name so we can
             # diagnose which free endpoint is silently returning None.
             print(f"  ensemble model {model} returned non-dict / empty: "
                   f"{type(res).__name__}")
+            attempts.append({"model_slug": model, "status": "empty",
+                             "latency_ms": latency_ms,
+                             "error_snippet": f"non-dict / empty: {type(res).__name__}"})
         except Exception as e:
-            print(f"  ensemble model {model} failed: {type(e).__name__}: {str(e)[:120]}")
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            snippet = f"{type(e).__name__}: {str(e)[:120]}"
+            print(f"  ensemble model {model} failed: {snippet}")
+            attempts.append({"model_slug": model, "status": _classify(snippet),
+                             "latency_ms": latency_ms,
+                             "error_snippet": snippet})
         return None
 
     # Cap concurrency to keys, NOT models. Each key handles >=1 model in
@@ -1103,9 +1156,15 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
         # Pin a model so analyze() takes the single-model path; without
         # this, analyze() sees _ENSEMBLE_ON=True and routes back into
         # analyze_ensemble, creating an infinite loop.
-        return analyze(payload, model_name=PRIMARY_MODEL)
+        fallback = analyze(payload, model_name=PRIMARY_MODEL)
+        # Keep the attempts list so the /rankings page can still show
+        # why every other model failed even on a degraded run.
+        if isinstance(fallback, dict):
+            fallback["ensemble_attempts"] = attempts
+        return fallback
 
     merged = _merge_results(results)
+    merged["ensemble_attempts"] = attempts
     # One bear pass on the merged top_performers (consensus list), same as
     # the single-model path.
     try:

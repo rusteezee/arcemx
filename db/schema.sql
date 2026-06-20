@@ -104,6 +104,33 @@ create table if not exists prediction_scores (
 );
 create index if not exists idx_pred_scores_dim on prediction_scores(dimension, analysis_id);
 
+-- model_slug attribution. Populated when the source analysis was an
+-- ensemble call (read from analysis.raw_json.per_model_votes). NULL on
+-- pre-ensemble rows and on the merged consensus score. Used by the
+-- /rankings page leaderboard so per-model accuracy can be computed.
+alter table prediction_scores
+    add column if not exists model_slug text;
+create index if not exists idx_pred_scores_model
+    on prediction_scores(model_slug, dimension);
+
+-- ensemble_attempts: one row per (analysis, model) call attempt, success
+-- or fail. Lets the /rankings page show usable-rate per model and
+-- diagnose flaky free endpoints. Written by analyzer.llm_router after
+-- each ensemble fan-out completes.
+create table if not exists ensemble_attempts (
+    id bigserial primary key,
+    analysis_id bigint references analysis(id) on delete cascade,
+    model_slug text not null,
+    status text not null check (status in ('ok','empty','http_400','http_429','timeout','other')),
+    latency_ms int,
+    error_snippet text,
+    attempted_at timestamptz default now()
+);
+create index if not exists idx_ensemble_attempts_model
+    on ensemble_attempts(model_slug, attempted_at desc);
+create index if not exists idx_ensemble_attempts_analysis
+    on ensemble_attempts(analysis_id);
+
 -- accuracy_summary: append-only snapshots per (window, dimension) written by
 -- analyzer.grader.compute_summaries after each grading pass. Readers
 -- (feedback, sensei, dashboard) take the newest row per key by computed_at.
@@ -336,6 +363,7 @@ alter table calibration_log      enable row level security;
 alter table paper_trades         enable row level security;
 alter table paper_signals        enable row level security;
 alter table metrics_snapshot     enable row level security;
+alter table ensemble_attempts    enable row level security;
 
 do $$
 declare t text;
@@ -344,7 +372,7 @@ begin
     'prices','analysis','portfolio','wishlist','transactions',
     'prediction_scores','accuracy_summary','sensei_eod',
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
-    'paper_trades','paper_signals','metrics_snapshot'
+    'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('create policy "anon read" on %I for select to anon using (true)', t);

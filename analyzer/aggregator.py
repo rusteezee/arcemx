@@ -673,7 +673,7 @@ def save(result: dict, payload: dict) -> None:
     # (nullable) for backward compat with any reader not yet migrated;
     # they fall back to the new keys so a transition-period row is never
     # empty on either schema. raw_json always carries the full new shape.
-    sb.table("analysis").insert({
+    ins = sb.table("analysis").insert({
         "market_mood": result.get("market_mood"),
         "nifty_outlook": json.dumps(result.get("nifty_outlook")),
         "sensex_outlook": json.dumps(result.get("sensex_outlook")),
@@ -683,6 +683,30 @@ def save(result: dict, payload: dict) -> None:
         "raw_json": result,
     }).execute()
     print("Saved to Supabase")
+
+    # Persist per-model ensemble attempt records linked to the new
+    # analysis_id so /rankings can show usable-rate per model. Soft-
+    # fails: a row insert error must not kill the run.
+    try:
+        attempts = result.get("ensemble_attempts") or []
+        if attempts and ins.data:
+            analysis_id = ins.data[0].get("id")
+            rows = []
+            for a in attempts:
+                if not isinstance(a, dict) or not a.get("model_slug"):
+                    continue
+                rows.append({
+                    "analysis_id": analysis_id,
+                    "model_slug": a.get("model_slug"),
+                    "status": a.get("status") or "other",
+                    "latency_ms": a.get("latency_ms"),
+                    "error_snippet": a.get("error_snippet"),
+                })
+            if rows:
+                sb.table("ensemble_attempts").insert(rows).execute()
+                print(f"Logged {len(rows)} ensemble attempts")
+    except Exception as e:
+        print(f"ensemble_attempts log skipped: {type(e).__name__}: {str(e)[:120]}")
 
 
 if __name__ == "__main__":
