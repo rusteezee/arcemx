@@ -190,7 +190,7 @@ export default function TodayPage() {
         num="003 / 006"
         title="Top & Worst Performers"
         glyph="◉"
-        description="The engine's independent daily call on which names lead and lag the market vs NIFTY, drawn from the whole liquid NSE universe — not the user's holdings. Each call is scored next session and feeds the paper trader."
+        description="The engine's independent daily call on which names lead and lag the market vs NIFTY, drawn from the whole liquid NSE universe, not the user's holdings. Each call is scored next session and feeds the paper trader."
       >
         {/*
           Tables stack vertically (Top then Worst) so each gets the full

@@ -385,7 +385,7 @@ export default function RankingsPage() {
                     <td className="px-4 py-3 text-right num text-xs">
                       {m.avg_latency_ms != null
                         ? `${(m.avg_latency_ms / 1000).toFixed(1)}s`
-                        : "—"}
+                        : "·"}
                     </td>
                     <td className="px-4 py-3 text-right num text-xs">
                       {m.http_429 || 0}
@@ -431,9 +431,9 @@ export default function RankingsPage() {
                 {dimTrends.slice(0, 30).map((d) => (
                   <tr key={d.dim} className="border-b border-border last:border-0">
                     <td className="px-4 py-3 font-medium">{d.dim}</td>
-                    <td className="px-4 py-3 text-right num">{d.m7?.toFixed(1) ?? "—"}</td>
-                    <td className="px-4 py-3 text-right num">{d.m30?.toFixed(1) ?? "—"}</td>
-                    <td className="px-4 py-3 text-right num">{d.m90?.toFixed(1) ?? "—"}</td>
+                    <td className="px-4 py-3 text-right num">{d.m7?.toFixed(1) ?? "·"}</td>
+                    <td className="px-4 py-3 text-right num">{d.m30?.toFixed(1) ?? "·"}</td>
+                    <td className="px-4 py-3 text-right num">{d.m90?.toFixed(1) ?? "·"}</td>
                     <td
                       className={`px-4 py-3 text-right num font-medium ${
                         d.trend == null
@@ -445,7 +445,7 @@ export default function RankingsPage() {
                           : ""
                       }`}
                     >
-                      {d.trend != null ? `${d.trend > 0 ? "+" : ""}${d.trend.toFixed(1)}` : "—"}
+                      {d.trend != null ? `${d.trend > 0 ? "+" : ""}${d.trend.toFixed(1)}` : "·"}
                     </td>
                     <td className="px-4 py-3 text-right num text-xs text-[var(--muted)]">
                       {d.n90}
@@ -517,7 +517,7 @@ export default function RankingsPage() {
                           {STATUS_LABEL[a.status] || a.status}
                         </td>
                         <td className="px-4 py-3 text-xs text-[var(--muted)] max-w-md truncate">
-                          {a.error_snippet || "—"}
+                          {a.error_snippet || "·"}
                         </td>
                       </tr>
                     );

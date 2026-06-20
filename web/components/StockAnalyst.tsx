@@ -259,7 +259,7 @@ export function StockAnalyst() {
         pollUntilDone(j.run_id);
         return;
       }
-      setStatusMsg("Analyzing — 3 to 8 minutes typical");
+      setStatusMsg("Analyzing, 3 to 8 minutes typical");
       pollUntilDone(j.run_id);
     } catch (e: any) {
       setStatus("error");
@@ -655,13 +655,13 @@ export function StockAnalyst() {
             </colgroup>
             <colgroup>
               <col style={{ width: "18%" }} />
-              <col style={{ width: "9%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "15%" }} />
+              <col style={{ width: "8%" }} />
               <col style={{ width: "10%" }} />
-              <col style={{ width: "11%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "10%" }} />
               <col />
-              <col style={{ width: "44px" }} />
+              <col style={{ width: "76px" }} />
             </colgroup>
             <thead>
               <tr>
@@ -683,11 +683,16 @@ export function StockAnalyst() {
                 return (
                   <motion.tr
                     key={h.id}
-                    layout
+                    layout="position"
                     initial={false}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -30, height: 0 }}
-                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                    animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                    exit={{
+                      opacity: 0,
+                      scale: 0.96,
+                      filter: "blur(2px)",
+                      transition: { duration: 0.45, ease: [0.4, 0, 0.2, 1] }
+                    }}
+                    transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
                     onClick={() => setCurrentRow(h)}
                     className="cursor-pointer hover:bg-[var(--muted-bg)]"
                   >
@@ -724,7 +729,7 @@ export function StockAnalyst() {
                         : <span className="text-[var(--muted)] text-xs">grading at +{h.horizon_days}d</span>}
                     </td>
                     <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
-                    <td className="text-right">
+                    <td className="text-right pr-5">
                       <button
                         type="button"
                         aria-label={`Remove ${tk} analysis`}
@@ -736,13 +741,14 @@ export function StockAnalyst() {
                           removeHistoryRow(h.id);
                         }}
                         className={cn(
-                          "inline-flex items-center justify-center size-7 rounded-full",
+                          "inline-flex items-center justify-center size-9 rounded-full",
                           "border border-border text-[var(--muted)]",
                           "hover:text-[var(--loss)] hover:border-[var(--loss)]",
+                          "hover:bg-[color-mix(in_srgb,var(--loss)_10%,transparent)]",
                           "transition-colors"
                         )}
                       >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                           stroke="currentColor" strokeWidth="2.4"
                           strokeLinecap="round" strokeLinejoin="round">
                           <path d="M18 6L6 18" />

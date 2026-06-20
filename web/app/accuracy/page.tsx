@@ -665,7 +665,7 @@ export default function AccuracyPage() {
         num={calibration ? "006 / 011" : "005 / 010"}
         title="Accuracy Week Over Week"
         glyph="⬡"
-        description="Each grader run appends a new accuracy_summary snapshot. This chart trends the 30-day direction accuracy across those snapshots over time. Unlike Score Trend (per-prediction date) and Cohort Learning Curve (per prediction-week), this plots how the rolling-30d measurement itself has moved run over run — the literal answer to 'is my 30d accuracy higher this week than last week'."
+        description="Each grader run appends a new accuracy_summary snapshot. This chart trends the 30-day direction accuracy across those snapshots over time. Unlike Score Trend (per-prediction date) and Cohort Learning Curve (per prediction-week), this plots how the rolling-30d measurement itself has moved run over run, the literal answer to 'is my 30d accuracy higher this week than last week'."
       >
         <motion.div
           initial={{ opacity: 0, y: 14 }}
