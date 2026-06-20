@@ -1533,6 +1533,31 @@ def _snapshot_metrics() -> None:
         print(f"Metrics snapshot skipped: {str(e)[:160]}")
 
 
+def _prune_ensemble_attempts(retention_days: int = 7) -> None:
+    """Delete ensemble_attempts rows older than retention_days.
+
+    Each row is ~500 bytes (model_slug, status, latency_ms,
+    error_snippet, attempted_at). At a 3-model fleet running once per
+    weekday the table grows by ~15 rows/week, so storage pressure is
+    nil today, but the diagnostic value of a row drops off a cliff
+    once the run it described is out of the rankings view's 2000-row
+    window. A 7-day retention covers a full trading week plus
+    weekend, which is the longest window where 'what failed on this
+    specific call' is still useful for triage. Anything older lives
+    in commit history (via per-call logs) if it ever needs to be
+    re-derived. Soft-fails if the table is missing so a fresh DB
+    without the migration applied does not break the grader.
+    """
+    try:
+        sb = _sb()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        sb.table("ensemble_attempts").delete().lt("attempted_at", cutoff).execute()
+        print(f"Pruned ensemble_attempts older than {retention_days}d "
+              f"(cutoff={cutoff}).")
+    except Exception as e:
+        print(f"ensemble_attempts prune skipped: {str(e)[:160]}")
+
+
 if __name__ == "__main__":
     grade_all(lookback_days=90)
     compute_summaries()
@@ -1540,3 +1565,4 @@ if __name__ == "__main__":
     _run_paper_trader()
     _snapshot_metrics()
     _embed_new_predictions()
+    _prune_ensemble_attempts()
