@@ -78,7 +78,11 @@ export function StockAnalyst() {
   const [currentRow, setCurrentRow] = useState<StockAnalysisRow | null>(null);
   const [history, setHistory] = useState<StockAnalysisRow[]>([]);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  // Each suggestion carries ticker + display name so the typeahead
+  // can match the user's input against either, and render the name
+  // alongside the slug. Sources merged on mount: NIFTY 500+ universe
+  // (web/public/universe.json) + portfolio + wishlist.
+  const [suggestions, setSuggestions] = useState<{ticker: string; name: string}[]>([]);
   // Typeahead state. open=true shows the floating result list under
   // the input; activeIdx tracks the keyboard-highlighted row so
   // ArrowUp / ArrowDown / Enter / Escape work without a mouse.
@@ -86,20 +90,46 @@ export function StockAnalyst() {
   const [activeIdx, setActiveIdx] = useState(0);
   const suggestBoxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Tracks which history row ids are mid fade-out, so the AnimatePresence
+  // exit animation lands before we drop the row from state.
+  const [removingIds, setRemovingIds] = useState<Set<number>>(new Set());
 
-  // Ticker autocomplete: pull from holdings + wishlist on mount so the
-  // user can pick a name they actually care about with one tap.
+  // Ticker autocomplete: full NIFTY 500+ universe (web/public/
+  // universe.json) merged with the user's holdings + wishlist so the
+  // typeahead works for any listed Indian stock, not just names the
+  // user already tracks. Universe carries display names too so a
+  // typed brand ("ATHER") resolves to its slug ("ATHERENERG.NS")
+  // even though the brand and slug do not share a prefix.
   useEffect(() => {
     (async () => {
       try {
-        const [ph, wl] = await Promise.all([
+        const [ph, wl, uniRes] = await Promise.all([
           sb.from("portfolio").select("ticker").eq("user_id", DEFAULT_UID),
           sb.from("wishlist").select("ticker").eq("user_id", DEFAULT_UID),
+          fetch("/universe.json", { cache: "force-cache" }),
         ]);
-        const set = new Set<string>();
-        for (const r of (ph.data || []) as any[]) if (r.ticker) set.add(r.ticker);
-        for (const r of (wl.data || []) as any[]) if (r.ticker) set.add(r.ticker);
-        setSuggestions(Array.from(set).sort());
+        const byTicker = new Map<string, string>();
+        // Hold + wishlist tickers come without display names from
+        // their tables. Inserted first so the universe lookup can
+        // back-fill a name when one matches.
+        for (const r of (ph.data || []) as any[]) {
+          if (r.ticker) byTicker.set(r.ticker, "");
+        }
+        for (const r of (wl.data || []) as any[]) {
+          if (r.ticker) byTicker.set(r.ticker, "");
+        }
+        if (uniRes.ok) {
+          const uni: {ticker: string; name: string}[] = await uniRes.json();
+          for (const e of uni) {
+            // Universe wins for display name; existing portfolio /
+            // wishlist entry gets enriched with the name if it matches.
+            byTicker.set(e.ticker, e.name || "");
+          }
+        }
+        const merged = Array.from(byTicker.entries())
+          .map(([ticker, name]) => ({ ticker, name }))
+          .sort((a, b) => a.ticker.localeCompare(b.ticker));
+        setSuggestions(merged);
       } catch {
         // Soft-fail: suggestions empty, user can still type freely.
       }
@@ -222,25 +252,33 @@ export function StockAnalyst() {
   const tickerCoverage = useMemo(() => {
     const tk = normalizeTicker(ticker);
     if (!tk || !suggestions.length) return null;
-    return suggestions.includes(tk);
+    return suggestions.some((s) => s.ticker === tk);
   }, [ticker, suggestions]);
 
   // Filtered, ranked suggestion list for the typeahead. Empty input
   // shows nothing (avoids a giant default dropdown on focus); typed
-  // input matches anywhere in the slug case-insensitively and ranks
-  // prefix matches above substring matches so a typed "REL" surfaces
-  // RELIANCE.NS before INFRELRENEW.NS.
+  // input matches either the ticker slug OR the display name. Rank
+  // priority: ticker-prefix > name-prefix > ticker-contains >
+  // name-contains, so a typed "REL" surfaces RELIANCE.NS before
+  // INFRELRENEW.NS, and a typed "ATHER" finds ATHERENERG.NS via
+  // its name (Ather Energy Ltd.) even though "ATHER" is not a
+  // prefix of the slug.
   const filteredSuggestions = useMemo(() => {
     const q = ticker.trim().toUpperCase();
     if (!q) return [];
-    const prefix: string[] = [];
-    const contains: string[] = [];
+    const tickerPrefix: typeof suggestions = [];
+    const namePrefix: typeof suggestions = [];
+    const tickerContains: typeof suggestions = [];
+    const nameContains: typeof suggestions = [];
     for (const s of suggestions) {
-      const u = s.toUpperCase();
-      if (u.startsWith(q)) prefix.push(s);
-      else if (u.includes(q)) contains.push(s);
+      const t = s.ticker.toUpperCase();
+      const n = (s.name || "").toUpperCase();
+      if (t.startsWith(q)) tickerPrefix.push(s);
+      else if (n.startsWith(q)) namePrefix.push(s);
+      else if (t.includes(q)) tickerContains.push(s);
+      else if (n.includes(q)) nameContains.push(s);
     }
-    return [...prefix, ...contains].slice(0, 10);
+    return [...tickerPrefix, ...namePrefix, ...tickerContains, ...nameContains].slice(0, 12);
   }, [ticker, suggestions]);
 
   // Close the typeahead when the user clicks anywhere outside of it.
@@ -254,11 +292,37 @@ export function StockAnalyst() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  const pickSuggestion = (s: string) => {
-    setTicker(s);
+  const pickSuggestion = (s: { ticker: string; name: string }) => {
+    setTicker(s.ticker);
     setSuggestOpen(false);
     setActiveIdx(0);
     inputRef.current?.focus();
+  };
+
+  // Remove a row from the Recent Analyses list. Drops it from local
+  // state immediately so AnimatePresence runs the exit animation; the
+  // DB delete fires in parallel and soft-fails (RLS may not allow anon
+  // delete on stock_analyses, in which case the row reappears on next
+  // page load - acceptable for now since the local list is what the
+  // user sees right now).
+  const removeHistoryRow = async (id: number) => {
+    if (removingIds.has(id)) return;
+    setRemovingIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    // Optimistically remove from history immediately. AnimatePresence
+    // exit animation runs because the row leaves the rendered list.
+    setHistory((prev) => prev.filter((r) => r.id !== id));
+    // If the removed row was the currently displayed analysis, clear it.
+    setCurrentRow((cur) => (cur && cur.id === id ? null : cur));
+    try {
+      await sb.from("stock_analyses").delete().eq("id", id);
+    } catch {
+      // Soft-fail: row already left the list, DB row will return on
+      // refresh if RLS blocks the delete. Not worth surfacing an error.
+    }
   };
 
   const llm = currentRow?.llm_json || null;
@@ -326,7 +390,7 @@ export function StockAnalyst() {
                 >
                   {filteredSuggestions.map((s, i) => (
                     <li
-                      key={s}
+                      key={s.ticker}
                       onMouseDown={(e) => {
                         // mouseDown (not click) so the input does not lose
                         // focus and trigger the outside-click close before
@@ -336,13 +400,21 @@ export function StockAnalyst() {
                       }}
                       onMouseEnter={() => setActiveIdx(i)}
                       className={cn(
-                        "px-4 py-2 text-sm font-medium cursor-pointer tracking-wide",
+                        "px-4 py-2 text-sm cursor-pointer flex items-center justify-between gap-3",
                         i === activeIdx
                           ? "bg-foreground text-background"
                           : "text-foreground hover:bg-[var(--muted-bg)]"
                       )}
                     >
-                      {s}
+                      <span className="font-medium tracking-wide">{s.ticker}</span>
+                      {s.name && (
+                        <span className={cn(
+                          "text-xs truncate",
+                          i === activeIdx ? "opacity-80" : "text-[var(--muted)]"
+                        )}>
+                          {s.name}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -557,6 +629,16 @@ export function StockAnalyst() {
               <col style={{ width: "12%" }} />
               <col />
             </colgroup>
+            <colgroup>
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "11%" }} />
+              <col />
+              <col style={{ width: "44px" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>Ticker</th>
@@ -566,15 +648,22 @@ export function StockAnalyst() {
                 <th>Score</th>
                 <th>Grade</th>
                 <th>When</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
+              <AnimatePresence initial={false}>
               {history.map((h) => {
                 const j = h.llm_json || {};
                 const tk = (h.ticker || "").replace(/\.NS$/, "");
                 return (
-                  <tr
+                  <motion.tr
                     key={h.id}
+                    layout
+                    initial={false}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -30, height: 0 }}
+                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
                     onClick={() => setCurrentRow(h)}
                     className="cursor-pointer hover:bg-[var(--muted-bg)]"
                   >
@@ -611,9 +700,36 @@ export function StockAnalyst() {
                         : <span className="text-[var(--muted)] text-xs">grading at +{h.horizon_days}d</span>}
                     </td>
                     <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
-                  </tr>
+                    <td className="text-right">
+                      <button
+                        type="button"
+                        aria-label={`Remove ${tk} analysis`}
+                        title="Remove from list"
+                        onClick={(e) => {
+                          // Prevent the row click handler from loading the
+                          // analysis back into the result card mid-removal.
+                          e.stopPropagation();
+                          removeHistoryRow(h.id);
+                        }}
+                        className={cn(
+                          "inline-flex items-center justify-center size-7 rounded-full",
+                          "border border-border text-[var(--muted)]",
+                          "hover:text-[var(--loss)] hover:border-[var(--loss)]",
+                          "transition-colors"
+                        )}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" strokeWidth="2.4"
+                          strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 6L6 18" />
+                          <path d="M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </td>
+                  </motion.tr>
                 );
               })}
+              </AnimatePresence>
             </tbody>
           </table>
           </div>
