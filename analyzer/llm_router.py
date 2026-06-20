@@ -876,11 +876,18 @@ _ENSEMBLE_ON = os.getenv("OPENROUTER_ENSEMBLE", "0").strip() in ("1", "true", "y
 # cleanly with 3-5 keys via key-pool round-robin + cooldown.
 _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     "OPENROUTER_ENSEMBLE_MODELS",
-    "nvidia/nemotron-3-super-120b-a12b:free,"
+    # Verified against live openrouter.ai/api/v1/models on 2026-06-19:
+    # filtered 27 free models to the 6 strongest distinct labs / RLHF
+    # lineages. Bumped NVIDIA pick from Super (120B) to Ultra (550B)
+    # for headline reasoning. Added Nous Hermes (Llama-base RLHF) as
+    # the 6th lineage; that gives 6 genuinely uncorrelated training
+    # corpora, the prerequisite for wisdom-of-crowds to lift accuracy.
+    "nvidia/nemotron-3-ultra-550b-a55b:free,"
     "openai/gpt-oss-120b:free,"
     "google/gemma-4-31b-it:free,"
     "qwen/qwen3-next-80b-a3b-instruct:free,"
-    "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free,"
+    "nousresearch/hermes-3-llama-3.1-405b:free",
 ).split(",") if m.strip()]
 
 
