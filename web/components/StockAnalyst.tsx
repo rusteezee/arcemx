@@ -665,23 +665,14 @@ export function StockAnalyst() {
           <div className="table-scroll">
           <table className="data" style={{ width: "100%" }}>
             <colgroup>
-              <col style={{ width: "20%" }} />
-              <col style={{ width: "10%" }} />
-              <col style={{ width: "12%" }} />
               <col style={{ width: "16%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "12%" }} />
-              <col />
-            </colgroup>
-            <colgroup>
-              <col style={{ width: "16%" }} />
-              <col style={{ width: "7%" }} />
+              <col style={{ width: "8%" }} />
               <col style={{ width: "10%" }} />
               <col style={{ width: "14%" }} />
               <col style={{ width: "8%" }} />
-              <col style={{ width: "9%" }} />
+              <col style={{ width: "10%" }} />
               <col />
-              <col style={{ width: "130px" }} />
+              <col style={{ width: "52px" }} />
             </colgroup>
             <thead>
               <tr>
@@ -759,16 +750,12 @@ export function StockAnalyst() {
                     <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
                     <td
                       className="text-right"
-                      // Inline style with !important via setProperty
-                      // not available in React style prop; using high-
-                      // specificity inline style instead. globals.css
-                      // td default padding (0.7rem 1rem) is overridden
-                      // entirely. The X cell now has zero right padding
-                      // so the button hugs the rightmost edge of the
-                      // card, and the wider col (130px in colgroup)
-                      // gives it its own clear column away from the
-                      // When timestamp.
-                      style={{ padding: "0.7rem 0 0.7rem 8px" }}
+                      // Zero right padding + tight 52px col + negative
+                      // marginRight on button push the X icon hard against
+                      // the card's inner edge. The translate keeps the
+                      // hover ring inside the rounded card border so the
+                      // 18px corner radius does not clip the focus halo.
+                      style={{ padding: "0.7rem 0 0.7rem 0" }}
                     >
                       <button
                         type="button"
@@ -780,6 +767,7 @@ export function StockAnalyst() {
                           e.stopPropagation();
                           removeHistoryRow(h.id);
                         }}
+                        style={{ marginRight: 6 }}
                         className={cn(
                           "inline-flex items-center justify-center size-10 rounded-full",
                           "border border-border text-[var(--muted)]",
