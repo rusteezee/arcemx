@@ -674,14 +674,14 @@ export function StockAnalyst() {
               <col />
             </colgroup>
             <colgroup>
-              <col style={{ width: "17%" }} />
+              <col style={{ width: "16%" }} />
               <col style={{ width: "7%" }} />
               <col style={{ width: "10%" }} />
               <col style={{ width: "14%" }} />
               <col style={{ width: "8%" }} />
               <col style={{ width: "9%" }} />
               <col />
-              <col style={{ width: "100px" }} />
+              <col style={{ width: "130px" }} />
             </colgroup>
             <thead>
               <tr>
@@ -703,17 +703,22 @@ export function StockAnalyst() {
                 return (
                   <motion.tr
                     key={h.id}
-                    layout="position"
+                    // layout (not "position") animates BOTH position AND
+                    // size, so the sibling rows glide up to fill the gap
+                    // left by an exiting row instead of snapping. The
+                    // longer layout transition (700ms) gives the table
+                    // height collapse its own perceptible motion phase.
+                    layout
                     initial={false}
                     animate={{ opacity: 1, scale: 1, x: 0 }}
                     exit={{
                       opacity: 0,
                       scale: 0.98,
-                      x: 12,
-                      transition: { duration: 0.6, ease: [0.32, 0.72, 0.16, 1] }
+                      x: 16,
+                      transition: { duration: 0.4, ease: [0.32, 0.72, 0.16, 1] }
                     }}
                     transition={{
-                      layout: { duration: 0.55, ease: [0.32, 0.72, 0.16, 1] },
+                      layout: { duration: 0.7, ease: [0.32, 0.72, 0.16, 1] },
                       default: { duration: 0.4, ease: [0.32, 0.72, 0.16, 1] }
                     }}
                     onClick={() => setCurrentRow(h)}
@@ -752,7 +757,7 @@ export function StockAnalyst() {
                         : <span className="text-[var(--muted)] text-xs">grading at +{h.horizon_days}d</span>}
                     </td>
                     <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
-                    <td className="text-right pr-8">
+                    <td className="text-right pr-12">
                       <button
                         type="button"
                         aria-label={`Remove ${tk} analysis`}
