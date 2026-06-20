@@ -1342,56 +1342,68 @@ function WindowSwiper({
   onChange: (days: number) => void;
 }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
-  // Suppress the scroll-driven onChange while we programmatically scroll
-  // the track (mount / dot tap / external change) so the scroll handler
-  // does not fight the smooth-scroll animation mid-flight.
-  const suppressScrollRef = useRef<number>(0);
-  const rafRef = useRef<number | null>(null);
+  // Fires the commit only after scrolling has fully STOPPED (idle).
+  // Reading the resting position instead of mid-flight positions is
+  // what fixes the desync where the track snapped to one slide but the
+  // committed value lagged on another: a per-event rAF could read an
+  // intermediate momentum position and then miss the final settle.
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const activeIdx = WINDOW_OPTS.findIndex((o) => o.days === value);
+  const activeIdx = Math.max(0, WINDOW_OPTS.findIndex((o) => o.days === value));
 
-  // Snap the active slide into view whenever the value changes (mount,
-  // dot tap, or a change driven from elsewhere). Each slide is exactly
-  // the track width, so scrolling to the slide's offsetLeft lands it
-  // flush.
+  // Index of the slide currently nearest the track centre, regardless of
+  // committed value. Read by helpers below.
+  const nearestIdx = (track: HTMLDivElement): number => {
+    const center = track.scrollLeft + track.clientWidth / 2;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < WINDOW_OPTS.length; i++) {
+      const slide = track.children[i] as HTMLElement | undefined;
+      if (!slide) continue;
+      const slideCenter = slide.offsetLeft + slide.clientWidth / 2;
+      const d = Math.abs(slideCenter - center);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  };
+
+  // Keep the active slide aligned with the committed value. Only scrolls
+  // when the track is NOT already on that slide, so a swipe-driven value
+  // change (where the track is already there) does not trigger a second
+  // redundant scroll that fights the native snap. Mount + dot taps DO
+  // scroll because the track starts elsewhere.
   useEffect(() => {
     const track = trackRef.current;
     if (!track) return;
-    const idx = WINDOW_OPTS.findIndex((o) => o.days === value);
-    if (idx < 0) return;
-    const slide = track.children[idx] as HTMLElement | undefined;
+    const slide = track.children[activeIdx] as HTMLElement | undefined;
     if (!slide) return;
-    suppressScrollRef.current = Date.now() + 600;
+    if (Math.abs(track.scrollLeft - slide.offsetLeft) < 2) return;
     track.scrollTo({ left: slide.offsetLeft, behavior: "smooth" });
-  }, [value]);
+  }, [activeIdx]);
 
-  // On settle, pick the slide whose centre is closest to the track
-  // centre and emit it. rAF-debounced so a fast swipe does not thrash
-  // setState on every scroll tick.
+  // On every scroll event, reset an idle timer. When scrolling has been
+  // quiet for 110ms the track has settled on a snap point; read the
+  // resting slide and commit it. A programmatic scroll-to-value settles
+  // on value's own slide, so nearest === value and this no-ops, meaning
+  // there is no echo loop to suppress.
   const onScroll = () => {
-    if (Date.now() < suppressScrollRef.current) return;
-    if (rafRef.current != null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
       const track = trackRef.current;
       if (!track) return;
-      const center = track.scrollLeft + track.clientWidth / 2;
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      for (let i = 0; i < WINDOW_OPTS.length; i++) {
-        const slide = track.children[i] as HTMLElement | undefined;
-        if (!slide) continue;
-        const slideCenter = slide.offsetLeft + slide.clientWidth / 2;
-        const d = Math.abs(slideCenter - center);
-        if (d < bestDist) {
-          bestDist = d;
-          bestIdx = i;
-        }
-      }
-      const next = WINDOW_OPTS[bestIdx].days;
+      const next = WINDOW_OPTS[nearestIdx(track)].days;
       if (next !== value) onChange(next);
-    });
+    }, 110);
   };
+
+  useEffect(() => {
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    };
+  }, []);
 
   return (
     <div className="card p-5 overflow-hidden">
@@ -1401,26 +1413,38 @@ function WindowSwiper({
       </div>
       {/* One slide visible at a time. Each slide is min-width 100% of
           the track so a swipe moves exactly one window. scroll-snap
-          keeps it from resting between slides. */}
+          keeps it from resting between slides; touch-action pan-x lets
+          a horizontal drag swipe the carousel while a vertical drag
+          still scrolls the page. */}
       <div
         ref={trackRef}
         onScroll={onScroll}
         className="h-scroll flex"
-        style={{ scrollSnapType: "x mandatory" }}
+        style={{ scrollSnapType: "x mandatory", touchAction: "pan-x" }}
       >
-        {WINDOW_OPTS.map(({ label, days, fullLabel }) => (
-          <div
-            key={days}
-            style={{ minWidth: "100%", flexShrink: 0, scrollSnapAlign: "center" }}
-          >
-            <div className="text-xl sm:text-2xl font-semibold tracking-tight num">
-              {fullLabel}
+        {WINDOW_OPTS.map(({ label, days, fullLabel }, i) => {
+          const active = i === activeIdx;
+          return (
+            <div
+              key={days}
+              style={{ minWidth: "100%", flexShrink: 0, scrollSnapAlign: "center" }}
+            >
+              {/* Fade + slight lift the active slide so the swipe has a
+                  perceptible state change beyond the scroll itself. */}
+              <div
+                className="transition-opacity duration-300"
+                style={{ opacity: active ? 1 : 0.45 }}
+              >
+                <div className="text-xl sm:text-2xl font-semibold tracking-tight num">
+                  {fullLabel}
+                </div>
+                <div className="text-xs mt-1 num font-medium text-[var(--muted)]">
+                  {label}
+                </div>
+              </div>
             </div>
-            <div className="text-xs mt-1 num font-medium text-[var(--muted)]">
-              {label}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       {/* Position dots. Active dot stretches into a pill; tapping any
           dot jumps to that window. */}
@@ -1431,7 +1455,7 @@ function WindowSwiper({
             type="button"
             aria-label={o.fullLabel}
             onClick={() => onChange(o.days)}
-            className="h-1.5 rounded-full transition-all"
+            className="h-1.5 rounded-full transition-all duration-300 ease-out"
             style={{
               width: i === activeIdx ? 18 : 6,
               background: i === activeIdx ? "var(--foreground)" : "var(--border)",
