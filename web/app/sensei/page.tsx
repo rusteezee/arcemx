@@ -295,7 +295,7 @@ export default function SenseiPage() {
                 </span>
               ) : (
                 <span className="text-xs text-[var(--muted)]">
-                  Sensei standing by; trigger via nav sync.
+                  No fresh synthesis pending. Next refresh after next market close.
                 </span>
               )}
             </div>
