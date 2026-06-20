@@ -546,14 +546,22 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     429 with exponential backoff capped at 30s per wait; failures count
     against the daily free quota, so retries are tight.
 
-    Key handling: when `api_key` is given it is pinned for the whole call
-    (used by the ensemble so each parallel model gets its own key). When
-    None, the key pool rotates per attempt and a 429 cools the offending
-    key down before the next attempt picks a different one.
+    Key handling: `api_key` now seeds the FIRST attempt but subsequent
+    retries fall back to the full key pool. Pinning indefinitely meant a
+    single 429'd key would absorb every retry and never rotate to a
+    sibling key with quota left. The ensemble caller still expresses
+    per-model key affinity via the first attempt, but a stuck key
+    cascades to others instead of dead-ending.
     """
-    keys = [api_key] if api_key else _load_keys()
-    if not keys:
+    pool = _load_keys()
+    if api_key and api_key not in pool:
+        pool = [api_key] + pool
+    if not pool:
         raise RuntimeError("OPENROUTER_API_KEY not set")
+    # First attempt uses the caller's pinned key when given; subsequent
+    # attempts rotate over the full pool starting one index after the
+    # cooldown registry filters out anything still 429'd.
+    seed_key = api_key or pool[0]
     body = {
         "model": models[0],
         "models": models,
@@ -572,7 +580,15 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     delay = 5.0
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
-        key = api_key or _pick_key(keys, attempt)
+        # First attempt honors the caller's seed key; later attempts
+        # rotate over the full pool, skipping any key in cooldown via
+        # _pick_key. This is the rotation fix: previously every retry
+        # reused the pinned key, so a single 429'd key absorbed all 5
+        # retries instead of falling back to a sibling with quota left.
+        if attempt == 0:
+            key = seed_key
+        else:
+            key = _pick_key(pool, attempt) or seed_key
         headers = {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
@@ -595,14 +611,19 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
             # Cool this key down so the next attempt rotates to another.
             if key:
                 _KEY_COOLDOWN[key] = time.monotonic() + max(wait, 60)
-            n_keys = len(keys)
-            print(f"OpenRouter 429 on key #{(attempt % max(1,n_keys))+1}/{n_keys}, "
-                  f"retry in {wait:.0f}s (attempt {attempt+1}/{max_retries+1})")
+            n_keys = len(pool)
+            # Word-form pool size so GitHub Actions secret masking does
+            # not redact the digit. Digits inside secret-derived strings
+            # are masked to ***; "three" survives the mask.
+            words = ["zero","one","two","three","four","five","six","seven","eight"]
+            pool_label = words[n_keys] if 0 <= n_keys < len(words) else f"n={n_keys}"
+            print(f"OpenRouter 429 pool={pool_label} cooled-down, "
+                  f"retry in {wait:.0f}s")
             if attempt >= max_retries:
                 r.raise_for_status()
             # If we have more than one key, rotation alone may clear it;
             # still back off a little to respect the provider.
-            time.sleep(min(wait, 30) if n_keys == 1 else min(wait, 5))
+            time.sleep(min(wait, 30) if len(pool) == 1 else min(wait, 5))
             delay *= 2
             continue
         r.raise_for_status()
@@ -1088,6 +1109,13 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     from concurrent.futures import ThreadPoolExecutor, as_completed
     models = models or _ENSEMBLE_MODELS
     keys = _load_keys()
+    # Word-form key count so GitHub Actions secret masking does not
+    # redact the digit. Helps confirm whether OPENROUTER_API_KEYS is
+    # actually loaded as a multi-key pool rather than just the primary.
+    words = ["zero","one","two","three","four","five","six","seven","eight"]
+    pool_word = words[len(keys)] if 0 <= len(keys) < len(words) else f"n={len(keys)}"
+    print(f"Ensemble key pool size: {pool_word} keys; "
+          f"models per key: ~{(len(models) + max(1,len(keys)) - 1) // max(1,len(keys))}")
     user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
                 + _payload_json(payload))
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
