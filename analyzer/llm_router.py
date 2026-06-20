@@ -1033,7 +1033,17 @@ _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     # throttle counter with the PRIMARY single-model call. Acceptable
     # because nano-omni and nano-30b are smaller checkpoints than
     # Super, so wisdom-of-crowds still gets distinct error signals.
-    "nvidia/nemotron-3-ultra-550b-a55b:free,"
+    # nemotron-3-ultra-550b-a55b dropped 2026-06-20 after run 27871102615
+    # showed it (a) burning 31 minutes of wall clock and (b) returning a
+    # prose preamble ("The user wants a detailed market analysis JSON
+    # output...") instead of JSON despite response_format=json_object
+    # being set. The OpenRouter route ignored the format hint, so the
+    # parser saw raw prose and rejected the call. Net negative: slowest
+    # model in the fleet + parse_failed payload. The single-model PRIMARY
+    # path already runs nemotron-3-super-120b-a12b which is the same
+    # family at a faster checkpoint, so dropping Ultra costs nothing in
+    # provider diversity. Ensemble is now 5 models, round-robined across
+    # 3 keys as 2 / 2 / 1.
     "openai/gpt-oss-120b:free,"
     "openai/gpt-oss-20b:free,"
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"
@@ -1284,8 +1294,18 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     # later. Burns one micro-request per key (4 tokens output, ~ 30
     # tokens input) so the cost is negligible vs an ensemble fan-out.
     _probe_keys(keys, fps)
-    user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
-                + _payload_json(payload))
+    # Hard JSON-only directive at the START of the user message so the
+    # model commits to the output shape before any analysis text. Without
+    # this, nemotron-3-ultra-550b dumped a "The user wants a detailed
+    # market analysis JSON output based on the provided payload..."
+    # narrative into the content field instead of raw JSON, causing
+    # parse_failed on a 31-minute run (verified on run 27871102615).
+    user_msg = (
+        "OUTPUT FORMAT: Respond with ONE raw JSON object only. No prose, "
+        "no preamble, no explanation, no markdown fences. Your entire "
+        "response must be valid JSON starting with { and ending with }.\n\n"
+        "Analyze this market snapshot and return JSON per schema:\n\n"
+        + _payload_json(payload))
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg}]
 
@@ -1345,7 +1365,16 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             resp = _post(msgs, models=[model], api_key=key, timeout=300,
                          max_retries=4, reasoning=use_reasoning,
                          json_format=use_json_format,
-                         max_tokens=16000,
+                         # Bumped 16000 to 32000 after run 27871102615
+                         # showed nemotron-3-nano-30b-a3b hitting the
+                         # 16000 cap with finish_reason=length on a
+                         # 58493-prompt-token payload, and the reasoning
+                         # nano variant truncating mid-JSON at ~16k. The
+                         # 5-model fleet now leans on these two smaller
+                         # nodes more (Ultra removed), so they need head
+                         # room to land complete JSON. Single-model
+                         # PRIMARY path is unaffected.
+                         max_tokens=32000,
                          no_rotate=True)
             res = _parse_json(resp)
             latency_ms = int((time.monotonic() - t0) * 1000)
