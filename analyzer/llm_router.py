@@ -1002,7 +1002,7 @@ _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     # reasoning:free (smaller NVIDIA, less throttled).
     "nvidia/nemotron-3-ultra-550b-a55b:free,"
     "openai/gpt-oss-120b:free,"
-    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free,"
+    "google/gemma-4-26b-a4b-it:free,"
     "qwen/qwen3-next-80b-a3b-instruct:free,"
     "nex-agi/nex-n2-pro:free,"
     "nousresearch/hermes-3-llama-3.1-405b:free",
@@ -1237,6 +1237,10 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             return "timeout"
         return "other"
 
+    # Pre-compute key->fp lookup once so per-call logs map every request
+    # to its key fingerprint without re-hashing six times in the loop.
+    _fp_lookup = dict(zip(keys, _key_fingerprints(keys))) if keys else {}
+
     def _one(model_key):
         model, key = model_key
         # Disable reasoning trace for ensemble fan-out entirely. Even with
@@ -1251,6 +1255,13 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
         # debugging there.
         use_reasoning = False
         use_json_format = any(tag in model for tag in _JSON_FORMAT_OK)
+        fp_short = _fp_lookup.get(key or "", "noop")
+        # Per-call attribution: log the moment a model starts on a key,
+        # and again on result with status + latency. Lets the user trace
+        # any single call back to its key fingerprint without trusting
+        # OpenRouter dashboard caching.
+        print(f"  > start  model={model.split('/')[-1].replace(':free','')} "
+              f"key=fp:{fp_short}")
         t0 = time.monotonic()
         try:
             # Pin to a single model (no fallback chain) so we get genuine
@@ -1269,6 +1280,8 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
                 attempts.append({"model_slug": model, "status": "ok",
                                  "latency_ms": latency_ms,
                                  "error_snippet": None})
+                print(f"  < OK     model={model.split('/')[-1].replace(':free','')} "
+                      f"key=fp:{fp_short} {latency_ms}ms")
                 return res
             # Surface what was actually wrong instead of "non-dict / empty:
             # dict" which hides the embedded error. Distinguish three
@@ -1285,11 +1298,15 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             attempts.append({"model_slug": model, "status": status,
                              "latency_ms": latency_ms,
                              "error_snippet": err_msg})
+            print(f"  < {status:4} model={model.split('/')[-1].replace(':free','')} "
+                  f"key=fp:{fp_short} {latency_ms}ms")
         except Exception as e:
             latency_ms = int((time.monotonic() - t0) * 1000)
             snippet = f"{type(e).__name__}: {str(e)[:120]}"
-            print(f"  ensemble model {model} failed: {snippet}")
-            attempts.append({"model_slug": model, "status": _classify(snippet),
+            status = _classify(snippet)
+            print(f"  < {status:4} model={model.split('/')[-1].replace(':free','')} "
+                  f"key=fp:{fp_short} {latency_ms}ms err={snippet[:60]}")
+            attempts.append({"model_slug": model, "status": status,
                              "latency_ms": latency_ms,
                              "error_snippet": snippet})
         return None
