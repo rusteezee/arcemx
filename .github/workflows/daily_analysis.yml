@@ -51,9 +51,16 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          # Ensemble fan-out: extra keys (one per parallel model) + the
-          # enable flag + the model list. All optional; when unset the
-          # aggregator falls back to single-model analyze() automatically.
+          # Ensemble fan-out: three dedicated keys (one per parallel
+          # worker, two models per key with 6 models + 3 keys) plus
+          # legacy comma-separated var for backward compat. The primary
+          # OPENROUTER_API_KEY above stays untouched - it serves only
+          # the Nemotron Super single-model brain. The numbered slots
+          # are the ensemble pool; deduped by analyzer.llm_router so
+          # an accidentally duplicated key still produces a clean count.
+          OPENROUTER_API_KEY_1: ${{ secrets.OPENROUTER_API_KEY_1 }}
+          OPENROUTER_API_KEY_2: ${{ secrets.OPENROUTER_API_KEY_2 }}
+          OPENROUTER_API_KEY_3: ${{ secrets.OPENROUTER_API_KEY_3 }}
           OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
           OPENROUTER_ENSEMBLE: ${{ secrets.OPENROUTER_ENSEMBLE }}
           OPENROUTER_ENSEMBLE_MODELS: ${{ secrets.OPENROUTER_ENSEMBLE_MODELS }}
