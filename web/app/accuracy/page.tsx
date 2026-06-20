@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Section } from "@/components/Section";
 import { Stat } from "@/components/Stat";
@@ -51,6 +51,28 @@ const DIMENSION_LABELS: Record<string, string> = {
 };
 
 const WINDOWS = [7, 30, 90];
+
+// Global window picker options. accuracy_summary rows are written
+// by the grader at these explicit window_days values, so the buttons
+// map 1:1 to a DB row (no client-side recompute). 99999 is the
+// grader's encoding for MAX (all-time).
+const WINDOW_OPTS = [
+  { label: "7D", days: 7, fullLabel: "7 days" },
+  { label: "30D", days: 30, fullLabel: "30 days" },
+  { label: "90D", days: 90, fullLabel: "90 days" },
+  { label: "180D", days: 180, fullLabel: "180 days" },
+  { label: "1Y", days: 365, fullLabel: "1 year" },
+  { label: "MAX", days: 99999, fullLabel: "All time" },
+] as const;
+
+// "YYYY-MM-DD" cutoff for a window of `days` days ago. For the MAX
+// window (99999) returns an epoch sentinel so every date passes the
+// `point.date >= cutoff` filter.
+function windowCutoffYMD(days: number): string {
+  if (days >= 99999) return "0000-00-00";
+  const t = Date.now() - days * 86_400_000;
+  return new Date(t).toISOString().slice(0, 10);
+}
 
 // A single dot renders as a meaningless vertical line. Require a handful
 // of scored sessions before the trend chart is worth showing.
@@ -156,6 +178,7 @@ function wowDelta(
 interface AccTrendPoint {
   date: string;        // computed_at YYYY-MM-DD
   value: number;       // accuracy_pct snapshot for that grader run
+  window_days?: number; // present in the raw mixed-window history
 }
 
 interface CohortPoint {
@@ -196,6 +219,11 @@ export default function AccuracyPage() {
   // window_days column; the grader computes 7 / 30 / 90 / 180 / 365 /
   // 1095 / 1825 / 99999 (max). Each button maps to one of those.
   const [perDimWindow, setPerDimWindow] = useState<number>(30);
+  // Page-level window. Drives Section 001 (Overall Accuracy stats),
+  // Section 003 (New Dimensions), Section 010 (Conviction Tier),
+  // and date-filters the trend / cohort / scatter / WoW data so the
+  // charts redraw to match the picked window.
+  const [globalWindow, setGlobalWindow] = useState<number>(30);
 
   useEffect(() => {
     (async () => {
@@ -367,42 +395,36 @@ export default function AccuracyPage() {
       setCohortCurve(cohort);
 
       // ----- Accuracy WoW Trend -----
-      // Pull the FULL accuracy_summary history for 30d direction_1d
-      // (the earlier summary query dedupes to one snapshot per
-      // (window, dim) and throws away history; we need the time
-      // series). Each grader pass appends a new snapshot with
-      // computed_at=now() so this is genuinely a record of how the
-      // measured 30d accuracy has moved across runs.
+      // Pull the FULL accuracy_summary history for direction_1d
+      // across EVERY window (the earlier summary query dedupes to
+      // one snapshot per (window, dim) and throws away history; we
+      // need the time series). The page-level window picker then
+      // filters by window_days client-side so the chart redraws
+      // without re-querying. Each grader pass appends a new snapshot
+      // with computed_at=now() so this is a record of how the
+      // measured accuracy at each window has moved across runs.
       const { data: histRows } = await sb
         .from("accuracy_summary")
-        .select("computed_at,accuracy_pct,sample_size")
-        .eq("window_days", 30)
+        .select("computed_at,accuracy_pct,sample_size,window_days")
         .eq("dimension", "direction_1d")
         .order("computed_at", { ascending: true })
-        .limit(2000);
-      // Dedupe to ONE snapshot per UTC day (the latest by computed_at).
+        .limit(8000);
+      // Keep the raw mixed-window history; the per-day dedupe + sort
+      // happens inside a useMemo keyed on globalWindow so the chart
+      // can redraw when the window picker changes without a re-query.
       // Multiple grader runs in the same day (the 17:00 cron + 17:05
       // bot scheduler + any manual triggers) each append a row, so the
-      // raw history is ~3-6 points per date with different accuracy
-      // values; plotting them all turns the line into vertical spikes
-      // between intra-day samples (the "weird shape" with 47% -> 66%
-      // straight verticals on the same day). The day's last snapshot
-      // is the one the user cares about for a WoW read; earlier ones
-      // are noise from same-day re-runs. histRows is already ordered
-      // ascending so the last write for each date wins via map set.
-      const dayMap = new Map<string, AccTrendPoint>();
-      for (const r of (histRows || []) as any[]) {
-        if (typeof r.accuracy_pct !== "number" || !r.computed_at) continue;
-        const day = String(r.computed_at).slice(0, 10);
-        dayMap.set(day, {
-          date: day,
+      // raw history is ~3-6 points per (window, date); the memo keeps
+      // the LAST write per (window, date) which is ordered ascending
+      // so the last value wins via map set.
+      const histAll: AccTrendPoint[] = ((histRows || []) as any[])
+        .filter((r) => typeof r.accuracy_pct === "number" && r.computed_at)
+        .map((r) => ({
+          date: String(r.computed_at).slice(0, 10),
           value: Math.round(r.accuracy_pct * 10) / 10,
-        });
-      }
-      const hist: AccTrendPoint[] = Array.from(dayMap.values()).sort((a, b) =>
-        a.date < b.date ? -1 : 1
-      );
-      setAccTrend(hist);
+          window_days: r.window_days,
+        }));
+      setAccTrend(histAll);
 
       // ----- Range tightness vs hit rate scatter -----
       // Each scored range_1d row carries the predicted [lo, hi] band. Plot
@@ -448,9 +470,12 @@ export default function AccuracyPage() {
   // Headline metrics. Direction is the real KPI: averaging it with Range
   // into a single "accuracy" number flatters the weak dimension and hides
   // that direction calls carry no edge yet. Show each naked instead.
-  const last30 = summary.filter((s) => s.window_days === 30);
-  const dirRow = last30.find((s) => s.dimension === "direction_1d");
-  const rngRow = last30.find((s) => s.dimension === "range_1d");
+  // Window is the page-level picker; the same global window drives the
+  // New Dimensions, Conviction Tier, and WoW chart below.
+  const windowRows = summary.filter((s) => s.window_days === globalWindow);
+  const dirRow = windowRows.find((s) => s.dimension === "direction_1d");
+  const rngRow = windowRows.find((s) => s.dimension === "range_1d");
+  const windowOpt = WINDOW_OPTS.find((o) => o.days === globalWindow) || WINDOW_OPTS[1];
 
   const dirAcc = dirRow?.accuracy_pct ?? null;
   const rngAcc = rngRow?.accuracy_pct ?? null;
@@ -479,6 +504,53 @@ export default function AccuracyPage() {
       ? `±${(rngBandWidth / 2).toFixed(2)}% band · ${rngN} scored`
       : `${rngN} scored`;
 
+  // Date-filtered views for sections that hang off the per-prediction
+  // history (Score Trend, Cohort, scatters, top-level calibration). MAX
+  // window short-circuits to "no filter". Cutoff is a YYYY-MM-DD string
+  // so it compares lexicographically against each point's .date.
+  const cutoff = useMemo(() => windowCutoffYMD(globalWindow), [globalWindow]);
+  const filterByDate = <T extends { date: string }>(arr: T[]) =>
+    globalWindow >= 99999 ? arr : arr.filter((p) => p.date >= cutoff);
+  const trendW = useMemo(() => filterByDate(trend), [trend, cutoff, globalWindow]);
+  const cohortW = useMemo(() => filterByDate(cohortCurve), [cohortCurve, cutoff, globalWindow]);
+  const rangeScatterW = useMemo(() => filterByDate(rangeScatter), [rangeScatter, cutoff, globalWindow]);
+  const calibScatterW = useMemo(() => filterByDate(calibScatter), [calibScatter, cutoff, globalWindow]);
+
+  // Per-dim calibration cohorts also filter to the global window so
+  // the picked dim's scatter matches the headline.
+  const perDimCalibW = useMemo(() => {
+    const out = new Map<string, CalibPoint[]>();
+    for (const [d, pts] of perDimCalib) out.set(d, filterByDate(pts));
+    return out;
+  }, [perDimCalib, cutoff, globalWindow]);
+
+  // Top-level calibration block (Stated / Realized / Gap) re-derived
+  // from the date-filtered cloud so the Section 002 numbers match the
+  // picked window instead of the all-time average.
+  const calibrationW = useMemo<Calibration | null>(() => {
+    if (calibScatterW.length < 5) return null;
+    const stated = calibScatterW.reduce((a, p) => a + p.stated, 0) / calibScatterW.length;
+    const realized = calibScatterW.reduce((a, p) => a + p.realized, 0) / calibScatterW.length;
+    return {
+      stated: Math.round(stated * 10) / 10,
+      realized: Math.round(realized * 10) / 10,
+      gap: Math.round((stated - realized) * 10) / 10,
+      n: calibScatterW.length,
+    };
+  }, [calibScatterW]);
+
+  // WoW chart: pick out the rows for the chosen window from the raw
+  // mixed-window history, then dedupe to the last snapshot per UTC day
+  // (multiple grader runs the same day would otherwise spike the line).
+  const accTrendW = useMemo<AccTrendPoint[]>(() => {
+    const dayMap = new Map<string, AccTrendPoint>();
+    for (const r of accTrend) {
+      if (r.window_days !== globalWindow) continue;
+      dayMap.set(r.date, { date: r.date, value: r.value, window_days: r.window_days });
+    }
+    return Array.from(dayMap.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+  }, [accTrend, globalWindow]);
+
   return (
     <>
       <div className="mb-12">
@@ -493,8 +565,31 @@ export default function AccuracyPage() {
         </p>
       </div>
 
-      <Section num={calibration ? "001 / 011" : "001 / 010"} title="Overall Last 30 Days" glyph="✦">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <Section num={calibration ? "001 / 011" : "001 / 010"} title="Overall Accuracy" glyph="✦">
+        <div className="card p-4 mb-4 flex items-center gap-3 flex-wrap">
+          <div className="section-num shrink-0">Window</div>
+          <div className="h-scroll flex gap-1.5 -mx-1 px-1 flex-1 min-w-0">
+            {WINDOW_OPTS.map(({ label, days }) => {
+              const active = globalWindow === days;
+              return (
+                <button
+                  key={days}
+                  type="button"
+                  onClick={() => setGlobalWindow(days)}
+                  className="shrink-0 text-xs font-medium tracking-wide rounded-full px-4 py-1.5 border transition-colors whitespace-nowrap"
+                  style={{
+                    borderColor: active ? "var(--foreground)" : "var(--border)",
+                    background: active ? "var(--foreground)" : "transparent",
+                    color: active ? "var(--background)" : "var(--muted)",
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           <Stat
             label="Direction accuracy"
             value={dirAcc == null ? "·" : `${dirAcc.toFixed(1)}%`}
@@ -507,12 +602,16 @@ export default function AccuracyPage() {
             delta={rngBandLabel}
             glyph="◈"
           />
-          <Stat label="Sessions scored" value={dirN.toString()} glyph="⬡" />
-          <Stat label="Window" value="30 days" glyph="◉" />
+          <Stat
+            label="Sessions scored"
+            value={dirN.toString()}
+            delta={windowOpt.fullLabel}
+            glyph="⬡"
+          />
         </div>
       </Section>
 
-      {calibration && (
+      {calibrationW && (
         <Section
           num="002 / 011"
           title="Confidence Calibration"
@@ -520,15 +619,15 @@ export default function AccuracyPage() {
           description="Does the stated confidence match the direction accuracy actually delivered? An honest model's gap sits near zero."
         >
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            <Stat label="Stated confidence" value={`${calibration.stated.toFixed(1)}%`} glyph="◎" />
-            <Stat label="Realized accuracy" value={`${calibration.realized.toFixed(1)}%`} glyph="◈" />
+            <Stat label="Stated confidence" value={`${calibrationW.stated.toFixed(1)}%`} glyph="◎" />
+            <Stat label="Realized accuracy" value={`${calibrationW.realized.toFixed(1)}%`} glyph="◈" />
             <Stat
-              label={calibration.gap > 0 ? "Overconfident by" : calibration.gap < 0 ? "Underconfident by" : "Calibration gap"}
-              value={`${Math.abs(calibration.gap).toFixed(1)} pts`}
+              label={calibrationW.gap > 0 ? "Overconfident by" : calibrationW.gap < 0 ? "Underconfident by" : "Calibration gap"}
+              value={`${Math.abs(calibrationW.gap).toFixed(1)} pts`}
               delta={
-                Math.abs(calibration.gap) <= 8
+                Math.abs(calibrationW.gap) <= 8
                   ? "well calibrated"
-                  : calibration.gap > 0
+                  : calibrationW.gap > 0
                   ? "stated > delivered"
                   : "stated < delivered"
               }
@@ -546,7 +645,7 @@ export default function AccuracyPage() {
       >
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {(["market_mood_1d", "insight_quality", "cap_pair_1d", "fii_flow_1d", "index_pair_1d"] as const).map((dim) => {
-            const row = summary.find((s) => s.window_days === 30 && s.dimension === dim);
+            const row = summary.find((s) => s.window_days === globalWindow && s.dimension === dim);
             const acc = row?.accuracy_pct ?? null;
             const n = row?.sample_size ?? 0;
             return (
@@ -554,7 +653,7 @@ export default function AccuracyPage() {
                 key={dim}
                 label={DIMENSION_LABELS[dim]}
                 value={acc == null ? "·" : `${acc.toFixed(1)}%`}
-                delta={acc == null ? "awaiting first grade" : `${n} scored · 30d`}
+                delta={acc == null ? "awaiting first grade" : `${n} scored · ${windowOpt.label}`}
                 glyph="◎"
               />
             );
@@ -569,9 +668,9 @@ export default function AccuracyPage() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.16 }}
           className="card p-6"
         >
-          {trend.length >= TREND_MIN_POINTS ? (
+          {trendW.length >= TREND_MIN_POINTS ? (
             <LineChart
-              data={trend}
+              data={trendW}
               height={320}
               color="var(--foreground)"
               valueLabel="Rolling Accuracy"
@@ -585,10 +684,10 @@ export default function AccuracyPage() {
             >
               <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
               <p className="text-sm text-[var(--muted)]">
-                Collecting data. The trend appears once at least {TREND_MIN_POINTS} sessions are scored.
+                Collecting data. The trend appears once at least {TREND_MIN_POINTS} sessions are scored in the {windowOpt.fullLabel} window.
               </p>
               <p className="text-xs text-[var(--muted)]">
-                {trend.length} scored so far.
+                {trendW.length} scored so far.
               </p>
             </div>
           )}
@@ -607,12 +706,12 @@ export default function AccuracyPage() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.18 }}
           className="card p-6"
         >
-          {cohortCurve.length >= 3 ? (
+          {cohortW.length >= 3 ? (
             <>
               {(() => {
-                const slope = linearSlope(cohortCurve.map((p) => p.value));
-                const first = cohortCurve[0].value;
-                const last = cohortCurve[cohortCurve.length - 1].value;
+                const slope = linearSlope(cohortW.map((p) => p.value));
+                const first = cohortW[0].value;
+                const last = cohortW[cohortW.length - 1].value;
                 const delta = last - first;
                 const verdict =
                   slope == null
@@ -630,13 +729,13 @@ export default function AccuracyPage() {
                     </div>
                     <div className="text-xs text-[var(--muted)] mt-1 num">
                       First cohort {first.toFixed(1)} → latest {last.toFixed(1)}
-                      {" · "}Δ {delta >= 0 ? "+" : ""}{delta.toFixed(1)} pts over {cohortCurve.length} cohort weeks
+                      {" · "}Δ {delta >= 0 ? "+" : ""}{delta.toFixed(1)} pts over {cohortW.length} cohort weeks
                     </div>
                   </div>
                 );
               })()}
               <LineChart
-                data={cohortCurve}
+                data={cohortW}
                 height={320}
                 color="var(--foreground)"
                 valueLabel="Cohort Mean"
@@ -651,10 +750,10 @@ export default function AccuracyPage() {
             >
               <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
               <p className="text-sm text-[var(--muted)]">
-                Cohort curve appears once at least 3 distinct prediction-weeks are scored.
+                Cohort curve appears once at least 3 distinct prediction-weeks are scored in the {windowOpt.fullLabel} window.
               </p>
               <p className="text-xs text-[var(--muted)]">
-                {cohortCurve.length} cohort weeks so far.
+                {cohortW.length} cohort weeks so far.
               </p>
             </div>
           )}
@@ -665,7 +764,7 @@ export default function AccuracyPage() {
         num={calibration ? "006 / 011" : "005 / 010"}
         title="Accuracy Week Over Week"
         glyph="⬡"
-        description="Each grader run appends a new accuracy_summary snapshot. This chart trends the 30-day direction accuracy across those snapshots over time. Unlike Score Trend (per-prediction date) and Cohort Learning Curve (per prediction-week), this plots how the rolling-30d measurement itself has moved run over run, the literal answer to 'is my 30d accuracy higher this week than last week'."
+        description={`Each grader run appends a new accuracy_summary snapshot. This chart trends the ${windowOpt.fullLabel} direction accuracy across those snapshots over time. Unlike Score Trend (per-prediction date) and Cohort Learning Curve (per prediction-week), this plots how the rolling-${windowOpt.label} measurement itself has moved run over run, the literal answer to 'is my ${windowOpt.label} accuracy higher this week than last week'.`}
       >
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -673,13 +772,13 @@ export default function AccuracyPage() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
           className="card p-6"
         >
-          {accTrend.length >= 2 ? (
+          {accTrendW.length >= 2 ? (
             <>
               {(() => {
                 const wow = wowDelta(
-                  accTrend.map((p) => ({ ts: p.date, value: p.value })),
+                  accTrendW.map((p) => ({ ts: p.date, value: p.value })),
                 );
-                const slope = linearSlope(accTrend.map((p) => p.value));
+                const slope = linearSlope(accTrendW.map((p) => p.value));
                 return (
                   <div className="mb-4">
                     <div className="text-sm font-medium text-foreground">
@@ -689,16 +788,16 @@ export default function AccuracyPage() {
                     </div>
                     <div className="text-xs text-[var(--muted)] mt-1 num">
                       Slope: {slope == null ? "·" : `${slope >= 0 ? "+" : ""}${slope.toFixed(2)} pts per snapshot`}
-                      {" · "}n = {accTrend.length} snapshots
+                      {" · "}n = {accTrendW.length} snapshots
                     </div>
                   </div>
                 );
               })()}
               <LineChart
-                data={accTrend}
+                data={accTrendW}
                 height={320}
                 color="var(--foreground)"
-                valueLabel="30d Accuracy"
+                valueLabel={`${windowOpt.label} Accuracy`}
                 yTickFormatter={(v) => `${Math.round(v)}%`}
                 valueFormatter={(v) => `${v.toFixed(1)}%`}
               />
@@ -710,10 +809,10 @@ export default function AccuracyPage() {
             >
               <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
               <p className="text-sm text-[var(--muted)]">
-                WoW trend appears once at least 2 grader runs have written snapshots.
+                WoW trend appears once at least 2 grader runs have written {windowOpt.label} snapshots.
               </p>
               <p className="text-xs text-[var(--muted)]">
-                {accTrend.length} snapshot{accTrend.length === 1 ? "" : "s"} so far.
+                {accTrendW.length} snapshot{accTrendW.length === 1 ? "" : "s"} so far.
               </p>
             </div>
           )}
@@ -732,10 +831,10 @@ export default function AccuracyPage() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.24 }}
           className="card p-6"
         >
-          {rangeScatter.length >= 3 ? (
+          {rangeScatterW.length >= 3 ? (
             <>
               {(() => {
-                const s = rangeStats(rangeScatter);
+                const s = rangeStats(rangeScatterW);
                 if (!s) return null;
                 return (
                   <div className="mb-4">
@@ -750,7 +849,7 @@ export default function AccuracyPage() {
                   </div>
                 );
               })()}
-              <RangeScatter points={rangeScatter} />
+              <RangeScatter points={rangeScatterW} />
             </>
           ) : (
             <div
@@ -759,10 +858,10 @@ export default function AccuracyPage() {
             >
               <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
               <p className="text-sm text-[var(--muted)]">
-                Collecting data. Scatter appears once at least 3 range predictions are scored.
+                Collecting data. Scatter appears once at least 3 range predictions are scored in the {windowOpt.fullLabel} window.
               </p>
               <p className="text-xs text-[var(--muted)]">
-                {rangeScatter.length} scored so far.
+                {rangeScatterW.length} scored so far.
               </p>
             </div>
           )}
@@ -781,10 +880,10 @@ export default function AccuracyPage() {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: 0.26 }}
           className="card p-6"
         >
-          {calibScatter.length >= 4 ? (
+          {calibScatterW.length >= 4 ? (
             <>
               {(() => {
-                const stat = calibPearson(calibScatter);
+                const stat = calibPearson(calibScatterW);
                 if (!stat) return null;
                 return (
                   <div className="mb-4">
@@ -798,7 +897,7 @@ export default function AccuracyPage() {
                   </div>
                 );
               })()}
-              <CalibScatter points={calibScatter} />
+              <CalibScatter points={calibScatterW} />
             </>
           ) : (
             <div
@@ -808,10 +907,10 @@ export default function AccuracyPage() {
               <span className="inline-block size-2 rounded-full bg-[var(--muted)] animate-pulse" />
               <p className="text-sm text-[var(--muted)]">
                 Collecting data. Scatter appears once at least 4 direction calls with stated
-                confidence are scored.
+                confidence are scored in the {windowOpt.fullLabel} window.
               </p>
               <p className="text-xs text-[var(--muted)]">
-                {calibScatter.length} scored so far.
+                {calibScatterW.length} scored so far.
               </p>
             </div>
           )}
@@ -825,18 +924,18 @@ export default function AccuracyPage() {
         description="Same diagonal-is-perfect read as the section above, but each dimension on its own axis. Confidence here is the per-dim outlook confidence the grader pairs with the dim's own realized score (calibration_log), not the analysis-level mood confidence. A dim that overclaims confidence shows dots below the diagonal; an underconfident dim sits above."
       >
         {(() => {
-          const dims = Array.from(perDimCalib.keys()).sort(
-            (a, b) => (perDimCalib.get(b)?.length || 0) - (perDimCalib.get(a)?.length || 0),
+          const dims = Array.from(perDimCalibW.keys()).sort(
+            (a, b) => (perDimCalibW.get(b)?.length || 0) - (perDimCalibW.get(a)?.length || 0),
           );
-          if (dims.length === 0) {
+          if (dims.length === 0 || dims.every((d) => (perDimCalibW.get(d)?.length || 0) === 0)) {
             return (
               <EmptyState
-                title="No per-dim calibration data yet"
-                hint="First rows land after next 08:30 IST analysis + 17:00 IST grader pair. nifty_outlook.confidence + sensex_outlook.confidence must be present in the morning call for the spine to populate."
+                title="No per-dim calibration data in this window"
+                hint="Switch to a longer window above, or wait for the next grader pair (08:30 IST analysis + 17:00 IST grader) to land more rows in the current window."
               />
             );
           }
-          const pickedPts = perDimCalib.get(perDimCalibPick) || [];
+          const pickedPts = perDimCalibW.get(perDimCalibPick) || [];
           const stat = calibPearson(pickedPts);
           return (
             <>
@@ -851,7 +950,7 @@ export default function AccuracyPage() {
                         : "hover:bg-[var(--muted-bg)]"
                     }`}
                   >
-                    {DIMENSION_LABELS[d] || d} ({perDimCalib.get(d)?.length || 0})
+                    {DIMENSION_LABELS[d] || d} ({perDimCalibW.get(d)?.length || 0})
                   </button>
                 ))}
               </div>
@@ -906,7 +1005,7 @@ export default function AccuracyPage() {
             { tier: "B", dim: "short_pick_B_7d" as const, gloss: "Solid setup. Two of three pillars aligned. Bulk of picks.", pill: "pill-mid" },
             { tier: "C", dim: "short_pick_C_7d" as const, gloss: "Speculative / asymmetric. One pillar strong, signal incomplete. Sparingly.", pill: "pill-warn" },
           ]).map(({ tier, dim, gloss, pill }) => {
-            const row = summary.find((s) => s.window_days === 30 && s.dimension === dim);
+            const row = summary.find((s) => s.window_days === globalWindow && s.dimension === dim);
             const acc = row?.accuracy_pct ?? null;
             const n = row?.sample_size ?? 0;
             // Card accent border + tier badge color use the conviction-tier
@@ -925,7 +1024,7 @@ export default function AccuracyPage() {
                     {n} scored
                   </span>
                 </div>
-                <div className="section-num mb-1">7d alpha</div>
+                <div className="section-num mb-1">{windowOpt.label} alpha</div>
                 <div className="text-3xl font-semibold">
                   {acc == null ? "·" : `${acc.toFixed(1)}%`}
                 </div>
