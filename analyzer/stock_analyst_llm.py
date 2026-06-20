@@ -449,16 +449,25 @@ def run(run_id: int) -> dict:
     and the browser polls; a failed row surfaces in the UI as a
     "retry" affordance, not a silent disappearance.
     """
-    sb = _sb()
-    row = sb.table("stock_analyses").select("*").eq("id", run_id).execute().data
-    if not row:
-        raise RuntimeError(f"stock_analyses id={run_id} not found")
-    r = row[0]
-    ticker = r["ticker"]
-    horizon = int(r["horizon_days"])
-    print(f"stock_analyst run_id={run_id} ticker={ticker} horizon={horizon}d")
-
+    # The whole function lives inside one try/except now. Previously
+    # only the LLM call was wrapped: a Supabase read failure or a
+    # KeyError on the row's ticker / horizon_days column escaped the
+    # function unhandled, the bot's _bg_analyst caught it but did not
+    # update the row, and the row stayed PENDING in the database
+    # forever. That was the root cause behind the "newly searched
+    # stocks stay pending" report. Now any error from any line in
+    # this function lands in the except below and writes status=failed
+    # with the error text, so the UI always resolves to a real outcome.
+    sb = None
     try:
+        sb = _sb()
+        row = sb.table("stock_analyses").select("*").eq("id", run_id).execute().data
+        if not row:
+            raise RuntimeError(f"stock_analyses id={run_id} not found")
+        r = row[0]
+        ticker = r["ticker"]
+        horizon = int(r["horizon_days"])
+        print(f"stock_analyst run_id={run_id} ticker={ticker} horizon={horizon}d")
         # 1. Deep fetch.
         t0 = time.time()
         payload = deep_fetch(ticker)

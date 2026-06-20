@@ -1242,8 +1242,25 @@ async def _start_health_server(port: int):
                                     print(f"Background Stock Analyst complete (run_id={rid})")
                                 except Exception as bgerr:
                                     import traceback
-                                    print(f"Background Stock Analyst failed: {bgerr}")
+                                    err_text = f"{type(bgerr).__name__}: {str(bgerr)[:400]}"
+                                    print(f"Background Stock Analyst failed: {err_text}")
                                     traceback.print_exc()
+                                    # Write the failure back to the row so the
+                                    # browser polling resolves to a real error
+                                    # instead of an eternally PENDING pill. The
+                                    # analyzer.run() also tries this internally
+                                    # but its update path may itself fail (the
+                                    # exception that reached here can be a
+                                    # Supabase init / connectivity issue, which
+                                    # would also break its update). Belt-and-
+                                    # suspenders so the row never gets stuck.
+                                    try:
+                                        _sb_local.table("stock_analyses").update({
+                                            "status": "failed",
+                                            "error": err_text,
+                                        }).eq("id", rid).execute()
+                                    except Exception:
+                                        pass
 
                             task = _asyncio.create_task(_bg_analyst(run_id))
                             _BG_TASKS.add(task)
