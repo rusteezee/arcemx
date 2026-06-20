@@ -126,6 +126,17 @@ function fmtDate(iso: string | null): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
+// 12-hour IST clock formatted to AM/PM uppercase per the brand rules.
+function fmtTime(iso: string | null): string {
+  if (!iso) return "·";
+  const d = new Date(iso);
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
 export default function SenseiPage() {
   const [row, setRow] = useState<SenseiRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -216,7 +227,7 @@ export default function SenseiPage() {
         <div>
           <div className="section-num mb-2">000 · Sensei</div>
           <h1 className="headline mb-3">
-            Yesterday&apos;s <span className="italic">Verdict.</span>
+            Sensei&apos;s <span className="italic">Verdict.</span>
           </h1>
           <p className="sub-headline mt-2 max-w-2xl">
             End-of-day synthesis over today&apos;s morning call, actual closes, and graded scores.
@@ -224,25 +235,85 @@ export default function SenseiPage() {
             nav sync button at the top right.
           </p>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
-          <span>Close date: {row ? fmtDate(row.market_close_date) : "·"}</span>
-          <span>·</span>
-          <span>Synthesised: {row ? fmtDate(row.run_at) : "·"}</span>
-          {typeof row?.insight_quality_avg === "number" && (
-            <>
-              <span>·</span>
-              <span>Reasoning quality: {row.insight_quality_avg}</span>
-            </>
-          )}
-          {refreshing && (
-            <>
-              <span>·</span>
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block size-2 rounded-full bg-[var(--gain)] animate-pulse" />
-                Synthesizing a fresh retrospective
-              </span>
-            </>
-          )}
+        {/* Three-box header strip mirrors the Today page's Last Update
+         *  card design so the page reads with the same visual cadence.
+         *  Box 1 carries the synthesis timestamp + a live status line
+         *  with a blinking green dot while a fresh retrospective is in
+         *  flight. Box 2 surfaces the reasoning-quality score. Box 3
+         *  surfaces the market session the row analysed. The old inline
+         *  bullet-separated strip is gone (those facts live in the
+         *  boxes now), so is the synchronising span below it.
+         */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
+          {/* Box 1: Last Sync. Date + green time pill, blinking-dot
+              live status while a fresh run is in flight. */}
+          <div className="card p-7 h-[200px] relative overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="section-num">Last Sync</div>
+              <span className="glyph text-sm">◷</span>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap mb-3">
+              <div className="text-3xl font-semibold tracking-tight num">
+                {row ? fmtDate(row.run_at) : "·"}
+              </div>
+              {row?.run_at && (
+                <span
+                  className="pill num"
+                  style={{
+                    color: "var(--gain)",
+                    borderColor: "color-mix(in srgb, var(--gain) 50%, transparent)",
+                    background: "color-mix(in srgb, var(--gain) 10%, transparent)",
+                  }}
+                >
+                  {fmtTime(row.run_at)}
+                </span>
+              )}
+            </div>
+            <div className="mt-auto min-h-[1.5rem]">
+              {refreshing ? (
+                <span className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                  <span className="inline-block size-2 rounded-full bg-[var(--gain)] animate-pulse" />
+                  <span>Synthesizing a fresh retrospective</span>
+                </span>
+              ) : (
+                <span className="text-xs text-[var(--muted)]">
+                  Sensei standing by; trigger via nav sync.
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Box 2: Reasoning Quality (insight_quality_avg, 0-100). */}
+          <div className="card p-7 h-[200px] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="section-num">Reasoning Quality</div>
+              <span className="glyph text-sm">◎</span>
+            </div>
+            <div className="text-5xl font-semibold tracking-tight num">
+              {typeof row?.insight_quality_avg === "number"
+                ? row.insight_quality_avg
+                : "·"}
+            </div>
+            <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
+              Sensei&apos;s self-rated reasoning strength on the latest
+              synthesis, graded against realized accuracy.
+            </p>
+          </div>
+
+          {/* Box 3: Close Date. Session the retrospective analysed. */}
+          <div className="card p-7 h-[200px] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div className="section-num">Close Date</div>
+              <span className="glyph text-sm">◈</span>
+            </div>
+            <div className="text-3xl font-semibold tracking-tight num">
+              {row ? fmtDate(row.market_close_date) : "·"}
+            </div>
+            <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
+              The market session whose closes, graded scores, and
+              calibration this retrospective rolls up.
+            </p>
+          </div>
         </div>
       </header>
 

@@ -79,6 +79,13 @@ export function StockAnalyst() {
   const [history, setHistory] = useState<StockAnalysisRow[]>([]);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  // Typeahead state. open=true shows the floating result list under
+  // the input; activeIdx tracks the keyboard-highlighted row so
+  // ArrowUp / ArrowDown / Enter / Escape work without a mouse.
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const suggestBoxRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Ticker autocomplete: pull from holdings + wishlist on mount so the
   // user can pick a name they actually care about with one tap.
@@ -218,6 +225,42 @@ export function StockAnalyst() {
     return suggestions.includes(tk);
   }, [ticker, suggestions]);
 
+  // Filtered, ranked suggestion list for the typeahead. Empty input
+  // shows nothing (avoids a giant default dropdown on focus); typed
+  // input matches anywhere in the slug case-insensitively and ranks
+  // prefix matches above substring matches so a typed "REL" surfaces
+  // RELIANCE.NS before INFRELRENEW.NS.
+  const filteredSuggestions = useMemo(() => {
+    const q = ticker.trim().toUpperCase();
+    if (!q) return [];
+    const prefix: string[] = [];
+    const contains: string[] = [];
+    for (const s of suggestions) {
+      const u = s.toUpperCase();
+      if (u.startsWith(q)) prefix.push(s);
+      else if (u.includes(q)) contains.push(s);
+    }
+    return [...prefix, ...contains].slice(0, 10);
+  }, [ticker, suggestions]);
+
+  // Close the typeahead when the user clicks anywhere outside of it.
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!suggestBoxRef.current) return;
+      if (suggestBoxRef.current.contains(e.target as Node)) return;
+      setSuggestOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  const pickSuggestion = (s: string) => {
+    setTicker(s);
+    setSuggestOpen(false);
+    setActiveIdx(0);
+    inputRef.current?.focus();
+  };
+
   const llm = currentRow?.llm_json || null;
 
   return (
@@ -225,26 +268,86 @@ export function StockAnalyst() {
       {/* Input row */}
       <div className="card p-5">
         <div className="flex flex-col md:flex-row md:items-end gap-4">
-          <div className="flex-1">
+          <div className="flex-1" ref={suggestBoxRef}>
             <div className="section-num mb-2">Ticker</div>
-            <input
-              type="text"
-              value={ticker}
-              onChange={(e) => setTicker(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") run(); }}
-              placeholder="e.g. RELIANCE, ANGELONE.NS, ^NSEI"
-              className={cn(
-                "w-full rounded-full border border-border bg-transparent",
-                "px-4 py-2 text-base font-medium tracking-wide outline-none",
-                "focus:border-foreground transition-colors"
+            <div className="relative">
+              <input
+                ref={inputRef}
+                type="text"
+                value={ticker}
+                onChange={(e) => {
+                  setTicker(e.target.value);
+                  setSuggestOpen(true);
+                  setActiveIdx(0);
+                }}
+                onFocus={() => { if (ticker.trim()) setSuggestOpen(true); }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown" && filteredSuggestions.length) {
+                    e.preventDefault();
+                    setSuggestOpen(true);
+                    setActiveIdx((i) => Math.min(i + 1, filteredSuggestions.length - 1));
+                  } else if (e.key === "ArrowUp" && filteredSuggestions.length) {
+                    e.preventDefault();
+                    setActiveIdx((i) => Math.max(i - 1, 0));
+                  } else if (e.key === "Escape") {
+                    setSuggestOpen(false);
+                  } else if (e.key === "Enter") {
+                    if (suggestOpen && filteredSuggestions[activeIdx]) {
+                      e.preventDefault();
+                      pickSuggestion(filteredSuggestions[activeIdx]);
+                    } else {
+                      run();
+                    }
+                  }
+                }}
+                placeholder="Type to search e.g. RELIANCE, ANGELONE, NSEI"
+                autoComplete="off"
+                spellCheck={false}
+                className={cn(
+                  "w-full rounded-full border border-border bg-transparent",
+                  "px-4 py-2 text-base font-medium tracking-wide outline-none",
+                  "focus:border-foreground transition-colors"
+                )}
+              />
+              {/* Custom typeahead. Replaces the native <datalist> dropdown
+               * which (a) only showed after a click on the chevron in
+               * many browsers and (b) could not be styled to match the
+               * card aesthetic. Floats absolutely so it overlays the next
+               * row without expanding the layout, and lives inside the
+               * suggestBoxRef wrapper so an outside-click closes it. */}
+              {suggestOpen && filteredSuggestions.length > 0 && (
+                <ul
+                  className={cn(
+                    "absolute left-0 right-0 top-full mt-1 z-30",
+                    "rounded-2xl border border-border bg-[var(--card)]",
+                    "shadow-[0_10px_30px_rgba(0,0,0,0.18)] overflow-hidden",
+                    "max-h-[280px] overflow-y-auto"
+                  )}
+                >
+                  {filteredSuggestions.map((s, i) => (
+                    <li
+                      key={s}
+                      onMouseDown={(e) => {
+                        // mouseDown (not click) so the input does not lose
+                        // focus and trigger the outside-click close before
+                        // the selection lands.
+                        e.preventDefault();
+                        pickSuggestion(s);
+                      }}
+                      onMouseEnter={() => setActiveIdx(i)}
+                      className={cn(
+                        "px-4 py-2 text-sm font-medium cursor-pointer tracking-wide",
+                        i === activeIdx
+                          ? "bg-foreground text-background"
+                          : "text-foreground hover:bg-[var(--muted-bg)]"
+                      )}
+                    >
+                      {s}
+                    </li>
+                  ))}
+                </ul>
               )}
-              list="stock-analyst-ticker-suggest"
-            />
-            <datalist id="stock-analyst-ticker-suggest">
-              {suggestions.map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
+            </div>
             {tickerCoverage === false && ticker && (
               <p className="text-xs text-[var(--muted)] mt-2">
                 Not in your holdings or wishlist. Analysis still runs; pattern depth is best for names you track.
