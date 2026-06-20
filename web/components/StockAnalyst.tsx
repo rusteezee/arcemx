@@ -759,14 +759,16 @@ export function StockAnalyst() {
                     <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
                     <td
                       className="text-right"
-                      // Inline style beats the globals.css td default
-                      // padding (0.7rem 1rem) on specificity. Pushing
-                      // the right padding from 16px down to 4px shifts
-                      // the X visibly to the far right edge of the row,
-                      // and the wider col (130px set in colgroup above)
-                      // gives the icon its own clear column away from
-                      // the When timestamp.
-                      style={{ paddingRight: "4px", paddingLeft: "4px" }}
+                      // Inline style with !important via setProperty
+                      // not available in React style prop; using high-
+                      // specificity inline style instead. globals.css
+                      // td default padding (0.7rem 1rem) is overridden
+                      // entirely. The X cell now has zero right padding
+                      // so the button hugs the rightmost edge of the
+                      // card, and the wider col (130px in colgroup)
+                      // gives it its own clear column away from the
+                      // When timestamp.
+                      style={{ padding: "0.7rem 0 0.7rem 8px" }}
                     >
                       <button
                         type="button"

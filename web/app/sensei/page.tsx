@@ -264,13 +264,17 @@ export default function SenseiPage() {
          */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
           {/* Box 1: Last Sync. Date + green time pill, blinking-dot
-              live status while a fresh run is in flight. */}
+              live status while a fresh run is in flight. Structure
+              mirrors Box 2 + Box 3 exactly (title row, big content
+              row, mt-auto caption) so all three captions land at
+              the same vertical position and the gap above each
+              caption reads identically. */}
           <div className="card p-7 h-[200px] relative overflow-hidden flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="section-num">Last Sync</div>
               <span className="glyph text-sm">◷</span>
             </div>
-            <div className="flex items-center gap-3 flex-wrap mb-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <div className="text-3xl font-semibold tracking-tight">
                 {row ? fmtLongDate(row.run_at) : "·"}
               </div>
@@ -287,18 +291,16 @@ export default function SenseiPage() {
                 </span>
               )}
             </div>
-            <div className="mt-auto min-h-[1.5rem]">
+            <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
               {refreshing ? (
-                <span className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <span className="flex items-center gap-2">
                   <span className="inline-block size-2 rounded-full bg-[var(--gain)] animate-pulse" />
                   <span>Synthesizing a fresh retrospective</span>
                 </span>
               ) : (
-                <span className="text-xs text-[var(--muted)]">
-                  No fresh synthesis pending. Next refresh after next market close.
-                </span>
+                "No fresh synthesis pending. Next refresh after next market close."
               )}
-            </div>
+            </p>
           </div>
 
           {/* Box 2: Reasoning Quality (insight_quality_avg, 0-100). */}
