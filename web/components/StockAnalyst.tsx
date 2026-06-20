@@ -163,6 +163,26 @@ export function StockAnalyst() {
           rows = rows.filter((r) => !hset.has(r.id));
         }
       } catch {}
+      // Any row still pending 15+ minutes after request was likely
+      // killed by the Render free-tier worker recycle. Mark as failed
+      // visually so the user sees a clear outcome and can re-trigger,
+      // instead of an infinitely-spinning PENDING pill. DB row stays
+      // pending (not touched here); the grader / next sweep can
+      // reconcile real outcomes if they ever land.
+      const now = Date.now();
+      rows = rows.map((r) => {
+        if (r.status === "pending" && r.requested_at) {
+          const ageMin = (now - new Date(r.requested_at).getTime()) / 60000;
+          if (ageMin > 15) {
+            return {
+              ...r,
+              status: "failed" as const,
+              error: r.error || "Bot worker restarted before analysis completed. Re-run to retry.",
+            };
+          }
+        }
+        return r;
+      });
       setHistory(rows.slice(0, 12));
     } catch {}
   };
@@ -259,7 +279,7 @@ export function StockAnalyst() {
         pollUntilDone(j.run_id);
         return;
       }
-      setStatusMsg("Analyzing, 3 to 8 minutes typical");
+      setStatusMsg("Analyzing. Typical wait 3 to 8 minutes.");
       pollUntilDone(j.run_id);
     } catch (e: any) {
       setStatus("error");
@@ -654,14 +674,14 @@ export function StockAnalyst() {
               <col />
             </colgroup>
             <colgroup>
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "8%" }} />
+              <col style={{ width: "17%" }} />
+              <col style={{ width: "7%" }} />
               <col style={{ width: "10%" }} />
               <col style={{ width: "14%" }} />
+              <col style={{ width: "8%" }} />
               <col style={{ width: "9%" }} />
-              <col style={{ width: "10%" }} />
               <col />
-              <col style={{ width: "76px" }} />
+              <col style={{ width: "100px" }} />
             </colgroup>
             <thead>
               <tr>
@@ -685,14 +705,17 @@ export function StockAnalyst() {
                     key={h.id}
                     layout="position"
                     initial={false}
-                    animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                    animate={{ opacity: 1, scale: 1, x: 0 }}
                     exit={{
                       opacity: 0,
-                      scale: 0.96,
-                      filter: "blur(2px)",
-                      transition: { duration: 0.45, ease: [0.4, 0, 0.2, 1] }
+                      scale: 0.98,
+                      x: 12,
+                      transition: { duration: 0.6, ease: [0.32, 0.72, 0.16, 1] }
                     }}
-                    transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+                    transition={{
+                      layout: { duration: 0.55, ease: [0.32, 0.72, 0.16, 1] },
+                      default: { duration: 0.4, ease: [0.32, 0.72, 0.16, 1] }
+                    }}
                     onClick={() => setCurrentRow(h)}
                     className="cursor-pointer hover:bg-[var(--muted-bg)]"
                   >
@@ -729,7 +752,7 @@ export function StockAnalyst() {
                         : <span className="text-[var(--muted)] text-xs">grading at +{h.horizon_days}d</span>}
                     </td>
                     <td className="text-[var(--muted)] text-sm whitespace-nowrap">{timeAgo(h.requested_at)}</td>
-                    <td className="text-right pr-5">
+                    <td className="text-right pr-8">
                       <button
                         type="button"
                         aria-label={`Remove ${tk} analysis`}
@@ -741,14 +764,14 @@ export function StockAnalyst() {
                           removeHistoryRow(h.id);
                         }}
                         className={cn(
-                          "inline-flex items-center justify-center size-9 rounded-full",
+                          "inline-flex items-center justify-center size-10 rounded-full",
                           "border border-border text-[var(--muted)]",
                           "hover:text-[var(--loss)] hover:border-[var(--loss)]",
                           "hover:bg-[color-mix(in_srgb,var(--loss)_10%,transparent)]",
                           "transition-colors"
                         )}
                       >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
                           stroke="currentColor" strokeWidth="2.4"
                           strokeLinecap="round" strokeLinejoin="round">
                           <path d="M18 6L6 18" />

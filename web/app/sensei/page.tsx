@@ -324,8 +324,8 @@ export default function SenseiPage() {
               <div className="section-num">Close Date</div>
               <span className="glyph text-sm">◈</span>
             </div>
-            <div className="text-3xl font-semibold tracking-tight">
-              {row ? fmtLongDate(row.market_close_date) : "·"}
+            <div className="text-3xl font-semibold tracking-tight num">
+              {row ? fmtDate(row.market_close_date) : "·"}
             </div>
             <p className="text-xs text-[var(--muted)] mt-auto leading-snug">
               The market session whose closes, graded scores, and
