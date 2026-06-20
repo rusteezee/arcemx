@@ -41,26 +41,43 @@ OPENROUTER_KEY = (os.getenv("OPENROUTER_API_KEY") or "").strip()
 
 
 def _load_keys() -> list[str]:
-    """Key pool: the primary OPENROUTER_API_KEY plus any extras in
-    OPENROUTER_API_KEYS (comma-separated). Deduped, whitespace-stripped,
-    order-preserved with the primary first.
+    """Key pool, three sources in priority order:
 
-    Serves three legitimate purposes that all share one rotation path:
-      - paid + free key on one account (paid first, free fallback)
-      - a dedicated fallback key if the primary is revoked/rotated
-      - parallel keys so an ensemble fan-out does not serialize behind
-        a single key's per-minute limit
-    The rotation logic is agnostic to WHY there are multiple keys; it
-    just round-robins and cools down a key that returns 429."""
+      1. OPENROUTER_API_KEY (primary, kept for backward compat)
+      2. OPENROUTER_API_KEY_1 ... OPENROUTER_API_KEY_9 (one key per
+         numbered slot; unambiguous when the user wants exactly N keys
+         each in its own secret with its own dashboard label)
+      3. OPENROUTER_API_KEYS (comma-separated, legacy; still parsed for
+         backward compat but the numbered slots are the recommended path)
+
+    Deduped, whitespace-stripped, order-preserved. The numbered slots
+    win over the comma-separated list when both contain the same key.
+    """
     keys: list[str] = []
     if OPENROUTER_KEY:
         keys.append(OPENROUTER_KEY)
+    # Numbered explicit slots. Range to 9 covers any realistic pool size.
+    for i in range(1, 10):
+        v = (os.getenv(f"OPENROUTER_API_KEY_{i}", "") or "").strip()
+        if v and v not in keys:
+            keys.append(v)
+    # Legacy comma-separated. Kept so an existing OPENROUTER_API_KEYS
+    # secret still works while the user migrates to numbered slots.
     extra = os.getenv("OPENROUTER_API_KEYS", "")
     for k in extra.split(","):
         k = k.strip()
         if k and k not in keys:
             keys.append(k)
     return keys
+
+
+def _key_fingerprints(keys: list[str]) -> list[str]:
+    """Stable, non-reversible fingerprint per key (8 hex chars of SHA-256)
+    for safe logging. The user can compute the same fingerprint locally
+    from any candidate key to identify which slot it occupies in the log,
+    without the log itself revealing any portion of the secret."""
+    import hashlib
+    return [hashlib.sha256(k.encode("utf-8")).hexdigest()[:8] for k in keys]
 
 
 # Per-key cooldown registry: key -> monotonic timestamp until which the
@@ -1164,6 +1181,15 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     pool_word = words[len(keys)] if 0 <= len(keys) < len(words) else f"n={len(keys)}"
     print(f"Ensemble key pool size: {pool_word} keys; "
           f"models per key: ~{(len(models) + max(1,len(keys)) - 1) // max(1,len(keys))}")
+    # SHA-256 fingerprints (first 8 hex chars). Safe to log: irreversible.
+    # The user can compute the same hash on each candidate key locally to
+    # identify which slot loaded which key, so a "still untouched" key
+    # claim from the dashboard can be cross-checked against the actual
+    # pool here. Also confirms the dedup did not silently collapse two
+    # keys that look different but are actually identical.
+    fps = _key_fingerprints(keys)
+    for i, fp in enumerate(fps):
+        print(f"  key[{i}] fp=sha256:{fp}")
     user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
                 + _payload_json(payload))
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
@@ -1278,6 +1304,25 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
         for f in as_completed(futs):
             results.extend(f.result())
     print(f"Ensemble: {len(results)}/{len(models)} models returned usable JSON")
+    # Per-key attempt tally so the user can see distribution at a glance.
+    # Without this, "key 3 is untouched" was hard to refute from logs.
+    by_key: dict[str, int] = {}
+    by_key_ok: dict[str, int] = {}
+    if keys:
+        fps = _key_fingerprints(keys)
+        key_to_fp = dict(zip(keys, fps))
+        for grp_idx, group in enumerate(groups):
+            for model, key in group:
+                fp = key_to_fp.get(key or "", "noop")
+                slot = f"key[{grp_idx}] fp=sha256:{fp}"
+                hits = sum(1 for a in attempts if a.get("model_slug") in [m for m, _ in group])
+                oks = sum(1 for a in attempts
+                          if a.get("model_slug") in [m for m, _ in group]
+                          and a.get("status") == "ok")
+                by_key[slot] = hits
+                by_key_ok[slot] = oks
+        for slot, total in by_key.items():
+            print(f"  {slot} attempts={total} ok={by_key_ok[slot]}")
 
     if len(results) < 2:
         print("Ensemble degraded to single-model analyze()")
