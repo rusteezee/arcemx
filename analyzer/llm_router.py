@@ -1000,12 +1000,23 @@ _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     # Hermes-3-405b kept for one more Monday cycle; if it still 429s
     # after fresh quota, swap for nvidia/nemotron-3-nano-omni-30b-a3b-
     # reasoning:free (smaller NVIDIA, less throttled).
+    # Rotated 2026-06-20 after run 27868402105 isolated the failure
+    # mode: OpenRouter free tier rate-limits per-MODEL globally across
+    # all users, not per-key. Qwen3-Next, Hermes-3-405b, Gemma-4-31b,
+    # Gemma-4-26b-a4b all 429'd despite three fresh keys each receiving
+    # only one in-flight request. Multiple keys cannot spread that
+    # load. Replaced the throttled slugs with smaller-class variants
+    # from the same labs that are less popular and therefore less
+    # likely to hit a global per-model cap on a busy morning. Lost
+    # some cross-lab diversity but gained reliability; ensemble
+    # accuracy needs 4+/6 alive far more than it needs 6 distinct
+    # provider lineages.
     "nvidia/nemotron-3-ultra-550b-a55b:free,"
     "openai/gpt-oss-120b:free,"
-    "google/gemma-4-26b-a4b-it:free,"
-    "qwen/qwen3-next-80b-a3b-instruct:free,"
-    "nex-agi/nex-n2-pro:free,"
-    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "openai/gpt-oss-20b:free,"
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,"
+    "nvidia/nemotron-3-nano-30b-a3b:free,"
+    "qwen/qwen3-coder:free",
 ).split(",") if m.strip()]
 
 
