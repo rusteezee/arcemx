@@ -531,7 +531,15 @@ explicitly in that key's value rather than skipping it.
 # still comply. Single-model path keeps response_format on because the
 # primary Nemotron checkpoint supports it.
 _JSON_FORMAT_OK = ("nemotron-3-ultra", "nemotron-3-super",
-                   "qwen3-next", "gpt-oss", "gpt-5", "o1", "gemma-4")
+                   "qwen3-next", "gpt-5", "o1", "gemma-4")
+# Note: gpt-oss-120b removed from this list. On the large ensemble
+# payload it returned choices[0].message.content == None on every
+# call (verified across runs 27862505785, 27863570663, 27864450733).
+# Hypothesis: gpt-oss is an open-weights reasoning model and its
+# internal reasoning chews max_tokens before any final content is
+# emitted when response_format=json_object forces a strict schema.
+# Dropping json_format lets it emit free-form text containing JSON
+# which _parse_json's fence-stripper recovers cleanly.
 
 
 def _post(messages: list[dict], models: list[str], reasoning: bool = True,
@@ -959,17 +967,23 @@ _ENSEMBLE_ON = os.getenv("OPENROUTER_ENSEMBLE", "0").strip() in ("1", "true", "y
 # cleanly with 3-5 keys via key-pool round-robin + cooldown.
 _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
     "OPENROUTER_ENSEMBLE_MODELS",
-    # Verified against live openrouter.ai/api/v1/models on 2026-06-19:
-    # filtered 27 free models to the 6 strongest distinct labs / RLHF
-    # lineages. Bumped NVIDIA pick from Super (120B) to Ultra (550B)
-    # for headline reasoning. Added Nous Hermes (Llama-base RLHF) as
-    # the 6th lineage; that gives 6 genuinely uncorrelated training
-    # corpora, the prerequisite for wisdom-of-crowds to lift accuracy.
+    # Default rotated 2026-06-20 after runs 27862505785/27863570663/
+    # 27864450733 showed Gemma and Llama hitting hard upstream daily
+    # caps that retries could not clear. Replaced with cross-provider
+    # alternatives that share no Llama / Google lineage with the rest:
+    # - dolphin-mistral-24b-venice-edition: Mistral lineage, hosted
+    #   by Cognitive Computations on a different upstream than Llama
+    # - nex-n2-pro: nex-agi provider, Qwen3.5-derivative agentic
+    #   model; different provider stack from Alibaba's Qwen3-next so
+    #   their upstream caps fall on different counters.
+    # Hermes-3-405b kept for one more Monday cycle; if it still 429s
+    # after fresh quota, swap for nvidia/nemotron-3-nano-omni-30b-a3b-
+    # reasoning:free (smaller NVIDIA, less throttled).
     "nvidia/nemotron-3-ultra-550b-a55b:free,"
     "openai/gpt-oss-120b:free,"
-    "google/gemma-4-31b-it:free,"
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free,"
     "qwen/qwen3-next-80b-a3b-instruct:free,"
-    "meta-llama/llama-3.3-70b-instruct:free,"
+    "nex-agi/nex-n2-pro:free,"
     "nousresearch/hermes-3-llama-3.1-405b:free",
 ).split(",") if m.strip()]
 
