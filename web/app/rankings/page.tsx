@@ -77,15 +77,6 @@ const LAB_FROM_SLUG = (slug: string): { lab: string; short: string } => {
   return { lab, short };
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  ok: "OK",
-  http_400: "400 Bad Req",
-  http_429: "429 Rate Lim",
-  empty: "Empty body",
-  timeout: "Timeout",
-  other: "Other",
-};
-
 function pctBar(pct: number, tone: "good" | "bad" = "good") {
   const color =
     tone === "good"
@@ -501,56 +492,6 @@ export default function RankingsPage() {
         </div>
       </Section>
 
-      <Section
-        num="005"
-        title="Recent Failure Detail"
-        description="Last 30 non-OK attempts. Use this to spot a specific model slug going bad before it kills the daily run."
-      >
-        {(() => {
-          const fails = activeAttempts.filter((a) => a.status !== "ok").slice(0, 30);
-          if (fails.length === 0) {
-            return (
-              <EmptyState
-                title="No recent failures"
-                hint="Pool is healthy across the last 2000 calls."
-              />
-            );
-          }
-          return (
-            <div className="card p-0 overflow-x-auto">
-              <table className="data">
-                <thead>
-                  <tr className="text-left text-[var(--muted)] section-num border-b border-border">
-                    <th className="px-4 py-3">When</th>
-                    <th className="px-4 py-3">Model</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Error</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fails.map((a) => {
-                    const { short } = LAB_FROM_SLUG(a.model_slug);
-                    return (
-                      <tr key={a.id} className="border-b border-border last:border-0">
-                        <td className="px-4 py-3 text-xs num text-[var(--muted)]">
-                          {new Date(a.attempted_at).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-xs num">{short}</td>
-                        <td className="px-4 py-3 text-xs">
-                          {STATUS_LABEL[a.status] || a.status}
-                        </td>
-                        <td className="px-4 py-3 text-xs text-[var(--muted)] max-w-md truncate">
-                          {a.error_snippet || "·"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          );
-        })()}
-      </Section>
     </main>
   );
 }
