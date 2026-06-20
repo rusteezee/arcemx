@@ -1048,23 +1048,49 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg}]
 
+    # Models that natively support the OpenRouter `reasoning` field.
+    # Sending it to an instruct-only model triggers 400 Bad Request on
+    # some providers (Llama 3.3, gpt-oss-120b silently returns empty,
+    # Gemma + Hermes 429 then 400). Default to NO reasoning for any
+    # model not on this allowlist; the single-model PRIMARY_MODEL path
+    # still gets reasoning=True because it pins to a known-reasoning
+    # Nemotron checkpoint.
+    _REASONING_OK = ("nemotron-3-ultra", "nemotron-3-super",
+                     "qwen3-next", "deepseek-r1", "gpt-5", "o1")
+
     def _one(idx_model):
         idx, model = idx_model
         key = keys[idx % len(keys)] if keys else None
+        use_reasoning = any(tag in model for tag in _REASONING_OK)
         try:
             # Pin to a single model (no fallback chain) so we get genuine
             # cross-model diversity, not three calls to the same primary.
-            resp = _post(msgs, models=[model], api_key=key, timeout=300)
+            # max_retries bumped to 5 for ensemble: free-tier 429s recover
+            # within seconds, so a single model deserves a longer backoff
+            # walk than the morning analysis single-model path needs.
+            resp = _post(msgs, models=[model], api_key=key, timeout=300,
+                         max_retries=5, reasoning=use_reasoning)
             res = _parse_json(resp)
             if isinstance(res, dict) and not res.get("error"):
                 res["_ensemble_model"] = model
                 return res
+            # Log empty / non-dict responses with the model name so we can
+            # diagnose which free endpoint is silently returning None.
+            print(f"  ensemble model {model} returned non-dict / empty: "
+                  f"{type(res).__name__}")
         except Exception as e:
             print(f"  ensemble model {model} failed: {type(e).__name__}: {str(e)[:120]}")
         return None
 
+    # Cap concurrency to keys, NOT models. Each key handles >=1 model in
+    # parallel only triggers the 20-req/min per-key throttle. With
+    # workers = len(keys), each key processes its assigned models
+    # sequentially (round-robin idx % len(keys)) so the throttle never
+    # fires intra-batch. Wall-clock cost: ceil(models / keys) batches.
+    # 6 models with 3 keys -> 2 batches of 3 instead of 6 parallel.
+    workers = max(1, len(keys)) if keys else 1
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=min(len(models), max(1, len(keys)) + 2)) as ex:
+    with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = [ex.submit(_one, (i, m)) for i, m in enumerate(models)]
         for f in as_completed(futs):
             r = f.result()
