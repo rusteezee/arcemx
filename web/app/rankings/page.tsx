@@ -468,12 +468,13 @@ interface DimTrendRow {
   trend: number | null;
 }
 
-// Per-dimension trend chart: one horizontal divergent bar per dim.
-// Bar grows right (green) when 7d > 30d (improving) or left (red) when
-// 7d < 30d (regressing). Width is proportional to |trend| scaled to
-// the largest absolute trend in the cohort. Dim name + value sit
-// outside the bar so the bar itself stays clean; hover tooltip shows
-// the underlying 7d / 30d / 90d / n values.
+// Per-dimension trend chart: a plain horizontal bar graph. Every bar
+// shares the same left baseline and grows rightward; bar length is
+// proportional to |trend| scaled to the largest absolute trend in the
+// cohort. Colour carries the sign (green = improving, red = regressing)
+// since a left-anchored bar cannot show direction by side. Dim name sits
+// left of the baseline, the signed value + n(90d) sit at the right;
+// hovering a row shows the underlying 7d / 30d / 90d means.
 function DimTrendChart({ dims }: { dims: DimTrendRow[] }) {
   const maxAbs = Math.max(
     0.5,
@@ -481,60 +482,38 @@ function DimTrendChart({ dims }: { dims: DimTrendRow[] }) {
   );
 
   return (
-    <div className="card p-5 space-y-2">
-      {/* Axis legend: shows the symmetric scale the bars are drawn against. */}
+    <div className="card p-5 space-y-1">
+      {/* Column header. */}
       <div className="flex items-center text-[10px] uppercase tracking-wider text-[var(--muted)] pb-2 border-b border-border">
-        <div style={{ width: "32%" }}>Dimension</div>
-        <div className="flex-1 flex items-center justify-between gap-2 px-3">
-          <span className="num">-{maxAbs.toFixed(1)}</span>
-          <span>Regressing ← Trend (7d minus 30d) → Improving</span>
-          <span className="num">+{maxAbs.toFixed(1)}</span>
-        </div>
+        <div style={{ width: "30%" }}>Dimension</div>
+        <div className="flex-1 px-3">Trend (7d minus 30d)</div>
         <div style={{ width: "12%" }} className="text-right">Value</div>
         <div style={{ width: "8%" }} className="text-right">n</div>
       </div>
       {dims.map((d) => {
         const trend = d.trend ?? 0;
         const pct = Math.min(100, (Math.abs(trend) / maxAbs) * 100);
-        const positive = trend > 0;
-        const color = positive ? "var(--gain)" : trend < 0 ? "var(--loss)" : "var(--muted)";
+        const color = trend > 0 ? "var(--gain)" : trend < 0 ? "var(--loss)" : "var(--muted)";
         return (
           <div
             key={d.dim}
-            className="flex items-center py-2 group hover:bg-[var(--muted-bg)] rounded-md transition-colors"
+            className="flex items-center py-2 hover:bg-[var(--muted-bg)] rounded-md transition-colors"
             title={`7d ${d.m7?.toFixed(1) ?? '·'} | 30d ${d.m30?.toFixed(1) ?? '·'} | 90d ${d.m90?.toFixed(1) ?? '·'} | n(90d) ${d.n90}`}
           >
             <div
               className="text-sm font-medium pl-2 truncate"
-              style={{ width: "32%" }}
+              style={{ width: "30%" }}
             >
               {d.dim}
             </div>
-            {/* Bar track. Centre line is the literal middle of this
-                column. Two flex halves: left half holds a right-aligned
-                bar for negative trends, right half holds a left-aligned
-                bar for positive trends. Centre divider is a 1px line. */}
-            <div className="flex-1 flex items-center px-3 relative h-5">
-              <div className="flex-1 h-2.5 flex justify-end">
-                {!positive && trend < 0 && (
-                  <div
-                    className="h-full rounded-l-full"
-                    style={{ width: `${pct}%`, background: color }}
-                  />
-                )}
-              </div>
-              {/* Centre tick */}
-              <div
-                className="w-px h-3 mx-px"
-                style={{ background: "var(--border)" }}
-              />
-              <div className="flex-1 h-2.5">
-                {positive && (
-                  <div
-                    className="h-full rounded-r-full"
-                    style={{ width: `${pct}%`, background: color }}
-                  />
-                )}
+            {/* Bar track: single left-anchored bar, standard bar-graph
+                style. Length encodes magnitude, colour encodes sign. */}
+            <div className="flex-1 px-3">
+              <div className="h-3 w-full rounded-full bg-[var(--muted-bg)] overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-[width] duration-500 ease-out"
+                  style={{ width: `${pct}%`, background: color }}
+                />
               </div>
             </div>
             <div
