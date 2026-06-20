@@ -537,7 +537,8 @@ _JSON_FORMAT_OK = ("nemotron-3-ultra", "nemotron-3-super",
 def _post(messages: list[dict], models: list[str], reasoning: bool = True,
           timeout: int = 180, max_retries: int = 2,
           api_key: str | None = None,
-          json_format: bool = True) -> dict:
+          json_format: bool = True,
+          max_tokens: int | None = None) -> dict:
     """POST chat.completions with the OpenRouter fallback chain and 429 backoff.
 
     `models` is the full chain. `model` is set to the head so providers
@@ -566,6 +567,8 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         body["response_format"] = {"type": "json_object"}
     if reasoning:
         body["reasoning"] = {"effort": "medium"}
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
     delay = 5.0
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
@@ -1124,9 +1127,16 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             # max_retries bumped to 5 for ensemble: free-tier 429s recover
             # within seconds, so a single model deserves a longer backoff
             # walk than the morning analysis single-model path needs.
+            # Reasoning models generate large hidden traces before the
+            # final JSON. Default OpenRouter completion cap is ~8k which
+            # truncated Nemotron Ultra mid-JSON (JSONDecodeError at char
+            # 33310 on a real run). Bump headroom for any reasoning model
+            # so the final JSON answer has room to land after the trace.
+            mt = 32000 if use_reasoning else 8000
             resp = _post(msgs, models=[model], api_key=key, timeout=300,
                          max_retries=5, reasoning=use_reasoning,
-                         json_format=use_json_format)
+                         json_format=use_json_format,
+                         max_tokens=mt)
             res = _parse_json(resp)
             latency_ms = int((time.monotonic() - t0) * 1000)
             if isinstance(res, dict) and not res.get("error"):
@@ -1135,13 +1145,21 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
                                  "latency_ms": latency_ms,
                                  "error_snippet": None})
                 return res
-            # Log empty / non-dict responses with the model name so we can
-            # diagnose which free endpoint is silently returning None.
-            print(f"  ensemble model {model} returned non-dict / empty: "
-                  f"{type(res).__name__}")
-            attempts.append({"model_slug": model, "status": "empty",
+            # Surface what was actually wrong instead of "non-dict / empty:
+            # dict" which hides the embedded error. Distinguish three
+            # cases so /rankings can read the real failure mode.
+            err_msg = ""
+            if isinstance(res, dict) and res.get("error"):
+                err_obj = res.get("error")
+                err_msg = json.dumps(err_obj)[:240] if not isinstance(err_obj, str) else err_obj[:240]
+                status = "empty"
+            else:
+                err_msg = f"non-dict / empty: {type(res).__name__}"
+                status = "empty"
+            print(f"  ensemble model {model} returned error/empty: {err_msg}")
+            attempts.append({"model_slug": model, "status": status,
                              "latency_ms": latency_ms,
-                             "error_snippet": f"non-dict / empty: {type(res).__name__}"})
+                             "error_snippet": err_msg})
         except Exception as e:
             latency_ms = int((time.monotonic() - t0) * 1000)
             snippet = f"{type(e).__name__}: {str(e)[:120]}"
