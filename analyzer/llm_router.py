@@ -1164,6 +1164,40 @@ def _merge_results(results: list[dict]) -> dict:
     return base
 
 
+def _probe_keys(keys: list[str], fps: list[str]) -> None:
+    """Send a 4-token probe to a tiny free model against each key in
+    series. Logs status code + latency per key so the user can verify
+    each key authenticates against OpenRouter independently. If a key
+    returns 401/403, the slot is misconfigured and the ensemble will
+    silently waste its budget against that key."""
+    probe_body = {
+        "model": "openai/gpt-oss-20b:free",
+        "messages": [
+            {"role": "system", "content": "Reply ONLY: ok"},
+            {"role": "user", "content": "."},
+        ],
+        "max_tokens": 4,
+        "stream": False,
+    }
+    for i, (key, fp) in enumerate(zip(keys, fps)):
+        try:
+            r = requests.post(
+                OPENROUTER_URL, json=probe_body,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": _HTTP_REFERER,
+                    "X-Title": _X_TITLE,
+                },
+                timeout=30,
+            )
+            print(f"  probe key #{i+1} fp=sha256:{fp} "
+                  f"http_status={r.status_code}")
+        except Exception as e:
+            print(f"  probe key #{i+1} fp=sha256:{fp} "
+                  f"failed={type(e).__name__}: {str(e)[:80]}")
+
+
 def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     """Run several models in PARALLEL on the same payload, each pinned to
     one model + its own key from the pool, then consensus-merge. This is
@@ -1210,6 +1244,13 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
     # without mental arithmetic.
     for i, fp in enumerate(fps):
         print(f"  key #{i+1} fp=sha256:{fp}")
+    # Pre-flight key validity probe. Tiny prompt to a tiny free model
+    # against EACH key sequentially. Confirms each key authenticates
+    # (HTTP 200) and is hitting OpenRouter for real. If any key returns
+    # 401/403, the slot is bad regardless of what the ensemble does
+    # later. Burns one micro-request per key (4 tokens output, ~ 30
+    # tokens input) so the cost is negligible vs an ensemble fan-out.
+    _probe_keys(keys, fps)
     user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
                 + _payload_json(payload))
     msgs = [{"role": "system", "content": SYSTEM_PROMPT},
