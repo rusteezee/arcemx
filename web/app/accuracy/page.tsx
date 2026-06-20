@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Section } from "@/components/Section";
 import { Stat } from "@/components/Stat";
@@ -566,29 +566,10 @@ export default function AccuracyPage() {
       </div>
 
       <Section num={calibration ? "001 / 011" : "001 / 010"} title="Overall Accuracy" glyph="✦">
-        <div className="card p-4 mb-4 flex items-center gap-3 flex-wrap">
-          <div className="section-num shrink-0">Window</div>
-          <div className="h-scroll flex gap-1.5 -mx-1 px-1 flex-1 min-w-0">
-            {WINDOW_OPTS.map(({ label, days }) => {
-              const active = globalWindow === days;
-              return (
-                <button
-                  key={days}
-                  type="button"
-                  onClick={() => setGlobalWindow(days)}
-                  className="shrink-0 text-xs font-medium tracking-wide rounded-full px-4 py-1.5 border transition-colors whitespace-nowrap"
-                  style={{
-                    borderColor: active ? "var(--foreground)" : "var(--border)",
-                    background: active ? "var(--foreground)" : "transparent",
-                    color: active ? "var(--background)" : "var(--muted)",
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <WindowSwiper
+          value={globalWindow}
+          onChange={setGlobalWindow}
+        />
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           <Stat
             label="Direction accuracy"
@@ -1308,6 +1289,114 @@ export default function AccuracyPage() {
         </div>
       </Section>
     </>
+  );
+}
+
+// Swipeable window picker. Each option renders as a big card in a
+// horizontal scroll-snap track; the user swipes (touch) or drags
+// (mouse) to bring an option to the centre of the track, and the
+// centred card becomes the selection. Tapping a card also selects
+// it. Active card is highlighted with the foreground swatch so the
+// picked window is obvious without reading the headline.
+function WindowSwiper({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (days: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  // Suppress the scroll-driven onChange while we are programmatically
+  // scrolling the track on mount or after a tap, so the scroll handler
+  // does not flip the selection mid-animation.
+  const suppressScrollRef = useRef<number>(0);
+
+  // On mount + when the value changes via tap, centre the active card
+  // in the visible track. Behaviour is "auto" so the initial render
+  // does not animate, "smooth" thereafter.
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const idx = WINDOW_OPTS.findIndex((o) => o.days === value);
+    if (idx < 0) return;
+    const card = track.children[idx] as HTMLElement | undefined;
+    if (!card) return;
+    const left =
+      card.offsetLeft - track.clientWidth / 2 + card.clientWidth / 2;
+    suppressScrollRef.current = Date.now() + 600;
+    track.scrollTo({ left, behavior: "smooth" });
+  }, [value]);
+
+  // Scroll handler: pick the card whose centre is closest to the
+  // viewport centre and emit its days value if it differs from the
+  // current selection. Debounced via requestAnimationFrame so quick
+  // swipes do not thrash setState.
+  const rafRef = useRef<number | null>(null);
+  const onScroll = () => {
+    if (Date.now() < suppressScrollRef.current) return;
+    if (rafRef.current != null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      const track = trackRef.current;
+      if (!track) return;
+      const center = track.scrollLeft + track.clientWidth / 2;
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < WINDOW_OPTS.length; i++) {
+        const card = track.children[i] as HTMLElement | undefined;
+        if (!card) continue;
+        const cardCenter = card.offsetLeft + card.clientWidth / 2;
+        const d = Math.abs(cardCenter - center);
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = i;
+        }
+      }
+      const next = WINDOW_OPTS[bestIdx].days;
+      if (next !== value) onChange(next);
+    });
+  };
+
+  return (
+    <div className="card p-4 mb-4">
+      <div className="section-num mb-3 flex items-center gap-2">
+        <span>Window</span>
+        <span className="text-[var(--muted)] normal-case tracking-normal">· swipe to change</span>
+      </div>
+      <div
+        ref={trackRef}
+        onScroll={onScroll}
+        className="h-scroll flex gap-3 -mx-1 px-1 pb-1"
+        style={{ scrollSnapType: "x mandatory" }}
+      >
+        {WINDOW_OPTS.map(({ label, days, fullLabel }) => {
+          const active = value === days;
+          return (
+            <button
+              key={days}
+              type="button"
+              onClick={() => onChange(days)}
+              className="shrink-0 rounded-2xl border p-5 flex flex-col items-start gap-1 transition-colors text-left"
+              style={{
+                scrollSnapAlign: "center",
+                minWidth: 160,
+                borderColor: active ? "var(--foreground)" : "var(--border)",
+                background: active ? "var(--foreground)" : "transparent",
+                color: active ? "var(--background)" : "var(--foreground)",
+              }}
+            >
+              <span className="text-3xl font-semibold num">{label}</span>
+              <span
+                className="text-xs"
+                style={{ color: active ? "var(--background)" : "var(--muted)" }}
+              >
+                {fullLabel}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
