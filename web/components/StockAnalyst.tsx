@@ -767,7 +767,7 @@ export function StockAnalyst() {
                           e.stopPropagation();
                           removeHistoryRow(h.id);
                         }}
-                        style={{ marginRight: 80 }}
+                        style={{ marginRight: 140 }}
                         className={cn(
                           "inline-flex items-center justify-center size-10 rounded-full",
                           "border border-border text-[var(--muted)]",
