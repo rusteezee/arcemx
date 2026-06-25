@@ -2,14 +2,21 @@ name: Daily Market Analysis
 
 on:
   schedule:
-    # 03:13 UTC Mon-Fri = 08:43 IST. FALLBACK layer: the bot's in-process
-    # APScheduler owns the 08:30 IST primary run (Render dyno kept warm by
-    # cron-job.org pings). This workflow fires 13 minutes later and skips
-    # itself when a fresh analysis row already exists (run_if_stale guard),
-    # so it only spends quota when the bot was asleep or dead. The :13
-    # minute also dodges top-of-hour congestion: GitHub's free-tier cron
-    # fired 03:00 UTC nearly 4 hours late on 09/06/2026 and not at all on
-    # 10/06/2026.
+    # PRIMARY ensemble run. 02:50 UTC Mon-Fri = 08:20 IST, ten minutes
+    # BEFORE the bot's 08:30 dispatch. This is now the authoritative
+    # daily run because the ensemble env (OPENROUTER_ENSEMBLE + the
+    # three numbered keys + OPENROUTER_ENSEMBLE_MODELS) lives in GitHub
+    # secrets, whereas the Render bot's in-process fallback runs
+    # single-model (Render never got the ensemble env). Firing GH first
+    # means the bot's 08:30 path sees a fresh ensemble row via
+    # run_if_stale and skips, so the daily canonical row is always the
+    # ensemble one. run_if_stale keeps it idempotent against the
+    # secondary cron + bot dispatch below.
+    - cron: "50 2 * * 1-5"
+    # SECONDARY fallback. 03:13 UTC = 08:43 IST. Covers the case where
+    # the 08:20 primary drifted or skipped (GitHub free-tier cron fired
+    # ~4h late on 09/06/2026 and not at all on 10/06/2026). Still
+    # run_if_stale-guarded so it no-ops when the primary already wrote.
     - cron: "13 3 * * 1-5"
   workflow_dispatch:
 

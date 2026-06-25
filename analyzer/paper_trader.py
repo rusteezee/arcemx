@@ -53,8 +53,16 @@ load_dotenv()
 PORTFOLIO_BASE_FALLBACK = 65_000  # used only when portfolio table lookup fails
 RISK_PER_TRADE = 0.02            # 2% portfolio risk per single trade
 MAX_NOTIONAL_PCT = 0.05          # 5% portfolio cap on any single trade's notional
-MIN_CONF = 60                    # PolyBench discard floor
-MIN_EDGE_PCT = 1.5               # round-trip friction safety cushion
+MIN_CONF = 55                    # stated-win_prob floor (see _conf_from_winprob).
+                                 # Lowered 60->55 on 25/06: the model's B-tier
+                                 # stated win_prob band is 0.50-0.65, so a 60
+                                 # floor cut the middle of the bulk tier even
+                                 # after the double-penalty fix. The edge gate
+                                 # below is the real quality filter; this only
+                                 # drops picks the model itself called a coin flip.
+MIN_EDGE_PCT = 1.5               # round-trip friction safety cushion. Risk-
+                                 # adjusted (consensus + bear already applied),
+                                 # so this stays the decisive quality gate.
 SECTOR_CAP = 2                   # max concurrent open trades in same sector
 LIQUIDITY_MIN_CR = 1.0           # avg 20d turnover >= 1 cr
 BROKERAGE_FLAT = 5.0             # INDstocks flat per order
@@ -583,9 +591,16 @@ def eval_signals(now: datetime | None = None) -> dict:
             skips[outcome] = skips.get(outcome, 0) + 1
 
     # Source 2: Morning analysis outlook signals + top_performers
+    # limit 20, not 5: multiple analyses can land per day (a bot run + a
+    # GH primary + a GH secondary), so a 3-day window routinely holds
+    # 8-12 rows. limit(5) silently dropped the oldest, which is how
+    # genuine positive-edge picks (e.g. CIPLA conf 61 / edge 2.04 in
+    # analysis id 93) never reached the gate stack and the trader stayed
+    # at zero trades. Idempotent via the paper_signals unique key, so a
+    # wider window only re-confirms already-evaluated rows cheaply.
     a_rows = sb.table("analysis").select(
         "id,run_at,raw_json"
-    ).gte("run_at", since).order("run_at", desc=True).limit(5).execute().data or []
+    ).gte("run_at", since).order("run_at", desc=True).limit(20).execute().data or []
     for a in a_rows:
         raw = a.get("raw_json") or {}
         for source_kind, key in (("holding_outlook_1d", "holding_outlooks_1d"),
@@ -671,6 +686,17 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
     if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
         L("skip", "no_target_stop", edge=edge)
         return "no_target_stop"
+    # Degenerate geometry guard. The single-model brain has been emitting
+    # entry == target (zero upside) on every pick; for a long the target
+    # must sit ABOVE entry and the stop BELOW it. A pick that fails this
+    # is malformed, not tradeable: entering it would book a "win" at the
+    # entry price with no move, poisoning the paper P&L. Reject so the
+    # skip-reason histogram surfaces the upstream geometry bug instead of
+    # silently filling the book with no-op trades.
+    if target_px <= intent_px or stop_px >= intent_px:
+        L("skip", "degenerate_geometry", edge=edge,
+          meta={"entry": intent_px, "target": target_px, "stop": stop_px})
+        return "degenerate_geometry"
     if _has_open_position(sb, ticker):
         L("skip", "already_open", edge=edge)
         return "already_open"
@@ -754,17 +780,31 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
 # Outlook signal evaluator (B5): holding_outlooks_1d + wishlist_outlooks_1d
 # ---------------------------------------------------------------------------
 def _conf_from_winprob(entry: dict) -> float:
-    """Resolve a 0-100 confidence for a top_performer entry. Prefer an
-    explicit confidence field; else derive from win_prob (0-1 -> 0-100);
-    else 0 so the conf gate rejects an unscored entry rather than
-    fabricating a number."""
+    """Resolve a 0-100 confidence for a top_performer entry.
+
+    Gates on the model's STATED per-pick win probability, NOT the final
+    `win_prob` field. The final win_prob is double-compressed: the
+    consensus merge scales it by the vote fraction, then the bear pass
+    dampens it again, so every B-tier pick collapses to ~0.52 and the
+    confidence gate rejected 100% of picks (122/122 low_conf on the
+    top_performer source). Those two adjustments already flow into
+    `expected_edge_pct`, which the edge gate checks separately, so
+    re-applying them to the confidence number penalizes the same pick
+    twice. Take the most favourable stated signal instead:
+      explicit confidence > stated mean (ensemble) > raw (single-model)
+      > final compressed > 0.
+    The risk-adjusted edge gate downstream is what actually filters
+    quality; this gate only weeds out picks the model itself flagged as
+    near-coin-flip."""
     c = entry.get("confidence")
     if isinstance(c, (int, float)) and c > 1:
         return float(c)
-    wp = entry.get("win_prob")
-    if isinstance(wp, (int, float)):
-        return float(wp) * 100.0
-    return 0.0
+    best = 0.0
+    for k in ("win_prob_stated_mean", "win_prob_raw", "win_prob"):
+        wp = entry.get(k)
+        if isinstance(wp, (int, float)) and wp > best:
+            best = float(wp)
+    return best * 100.0
 
 
 def _parse_inr(v) -> float | None:

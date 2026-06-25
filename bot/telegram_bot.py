@@ -1398,7 +1398,23 @@ async def scheduled_analysis():
             held_for_gh = True
             # GH workflow handles Telegram push itself on completion.
             return
-        print(f"  {detail}; falling back to in-process run")
+        print(f"  {detail}; evaluating in-process fallback")
+        # In-process fallback guard. The daily canonical row must be the
+        # ENSEMBLE row, which only the GH runners produce (the ensemble
+        # env lives in GitHub secrets; this Render process runs
+        # single-model). Writing a single-model row here would override
+        # the GH ensemble row for the day and pollute the learning loop +
+        # starve the paper trader (single-model picks come back degenerate
+        # with entry==target and a flat ~0.52 win_prob). So when ensemble
+        # is NOT available in-process, do NOT run: defer to GH's 08:43 IST
+        # secondary cron, which is run_if_stale-guarded and ensemble-
+        # capable. Only fall through to an in-process run if this process
+        # actually has the ensemble env (e.g. Render later gets it).
+        from analyzer.llm_router import _ENSEMBLE_ON
+        if not _ENSEMBLE_ON:
+            print("  in-process ensemble unavailable; deferring to GH "
+                  "secondary cron (no single-model write)")
+            return
         import asyncio as _asyncio
         from analyzer.aggregator import run_if_stale
         loop = _asyncio.get_event_loop()
