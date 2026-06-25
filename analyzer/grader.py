@@ -1558,6 +1558,68 @@ def _prune_ensemble_attempts(retention_days: int = 7) -> None:
         print(f"ensemble_attempts prune skipped: {str(e)[:160]}")
 
 
+def _prune_accuracy_summary(history_days: int = 400) -> None:
+    """Collapse accuracy_summary to one snapshot per (window, dim, day)
+    and drop history older than history_days.
+
+    compute_summaries() INSERTs (not upserts) a full window x dimension
+    grid on every grader pass. The grader runs 1x on schedule but
+    Render restarts trigger startup-catchup re-runs, so a single day
+    accrued 888 rows on 25/06 and the table hit 12,465 rows in 17 days
+    (a ~270k/year trajectory). The WoW Accuracy chart already dedupes
+    to the latest snapshot per UTC day client-side, so keeping every
+    intra-day re-run buys nothing.
+
+    Strategy: for each (window_days, dimension, UTC-day) keep only the
+    row with the newest computed_at; delete the rest. Then delete any
+    surviving row older than history_days so the time series stays
+    bounded (a year-plus of daily points still covers every window the
+    page can show). Deletes in id batches so a large first cleanup does
+    not exceed PostgREST limits. Soft-fails entirely.
+    """
+    try:
+        sb = _sb()
+        # PostgREST caps a single select at 1000 rows regardless of the
+        # client-side limit, so page through the whole table with range()
+        # to see every snapshot; otherwise the first cleanup only dedupes
+        # the newest 1000 rows and leaves the backlog untouched.
+        rows = []
+        page = 0
+        while True:
+            chunk = sb.table("accuracy_summary").select(
+                "id,window_days,dimension,computed_at"
+            ).order("computed_at", desc=True).range(page * 1000, page * 1000 + 999).execute().data or []
+            rows.extend(chunk)
+            if len(chunk) < 1000:
+                break
+            page += 1
+        # First row per (window, dim, day) wins because rows are ordered
+        # newest-first; every later row for that key is a stale intra-day
+        # duplicate queued for deletion.
+        keep_seen: set = set()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=history_days)
+        del_ids: list[int] = []
+        for r in rows:
+            day = str(r.get("computed_at") or "")[:10]
+            key = (r.get("window_days"), r.get("dimension"), day)
+            try:
+                too_old = datetime.fromisoformat(
+                    str(r["computed_at"]).replace("Z", "+00:00")) < cutoff
+            except Exception:
+                too_old = False
+            if key in keep_seen or too_old:
+                del_ids.append(r["id"])
+            else:
+                keep_seen.add(key)
+        for i in range(0, len(del_ids), 500):
+            batch = del_ids[i:i + 500]
+            sb.table("accuracy_summary").delete().in_("id", batch).execute()
+        print(f"Pruned accuracy_summary: removed {len(del_ids)} "
+              f"duplicate/old rows, kept {len(keep_seen)} daily snapshots.")
+    except Exception as e:
+        print(f"accuracy_summary prune skipped: {str(e)[:160]}")
+
+
 if __name__ == "__main__":
     grade_all(lookback_days=90)
     compute_summaries()
@@ -1566,3 +1628,4 @@ if __name__ == "__main__":
     _snapshot_metrics()
     _embed_new_predictions()
     _prune_ensemble_attempts()
+    _prune_accuracy_summary()
