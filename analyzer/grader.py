@@ -661,7 +661,18 @@ def grade_all(lookback_days: int = 90):
             for h in (7, 14, 30):
                 if age < h + 1:
                     continue
-                picks = raw.get("short_term_picks", []) or []
+                # Source is worst_performers, the live short-side channel.
+                # The schema renamed short_term_picks -> worst_performers
+                # and this grader kept reading the dead key, so every
+                # short_pick_{h}d + tier score since the rename came from
+                # stale pre-rename rows (ids <= 77) and no current run was
+                # scored. worst_performers are SHORT calls (expected to
+                # underperform), so score on the MIRROR like
+                # worst_performer_1d below: lag = how far BELOW NIFTY the
+                # name landed, positive lag = correct short. At 7/14/30d
+                # this measures whether the flagged weakness PERSISTS, the
+                # signal a multi-day short actually needs.
+                picks = raw.get("worst_performers", []) or []
                 deltas = []
                 ticker_results = []
                 by_tier: dict[str, list[tuple[str, float]]] = {"A": [], "B": [], "C": []}
@@ -672,23 +683,23 @@ def grade_all(lookback_days: int = 90):
                     pick_pct, nifty_pct = grade_pick(tk, run_at, h)
                     if pick_pct is None:
                         continue
-                    alpha = pick_pct - (nifty_pct or 0)
-                    deltas.append(alpha)
+                    lag = (nifty_pct or 0) - pick_pct
+                    deltas.append(lag)
                     ticker_results.append({"ticker": tk, "pick_pct": pick_pct,
-                                            "nifty_pct": nifty_pct, "alpha": alpha,
+                                            "nifty_pct": nifty_pct, "lag": lag,
                                             "conviction": (p.get("conviction") or "").upper()})
                     tier = (p.get("conviction") or "").upper()
                     if tier in by_tier:
-                        by_tier[tier].append((tk, alpha))
+                        by_tier[tier].append((tk, lag))
                 if deltas:
-                    avg_alpha = sum(deltas) / len(deltas)
-                    # score: +5% alpha = 100, 0 = 50, -5% = 0
-                    score = max(0, min(100, 50 + avg_alpha * 10))
+                    avg_lag = sum(deltas) / len(deltas)
+                    # score: +5% lag (underperformance) = 100, 0 = 50, -5% = 0
+                    score = max(0, min(100, 50 + avg_lag * 10))
                     _upsert_score(sb, aid, f"short_pick_{h}d", h,
                                   {"picks": [p.get("ticker") for p in picks[:5]]},
                                   {"results": ticker_results},
-                                  score, avg_alpha,
-                                  notes=f"avg alpha vs NIFTY: {avg_alpha:+.2f}%")
+                                  score, avg_lag,
+                                  notes=f"short-side avg lag vs NIFTY (persistence): {avg_lag:+.2f}%")
                     # Only emit per-tier dims when there are picks of that
                     # tier on this day; the per-day dedup in
                     # compute_summaries will still average correctly across
@@ -698,13 +709,13 @@ def grade_all(lookback_days: int = 90):
                             items = by_tier[tier]
                             if not items:
                                 continue
-                            t_alphas = [a for _t, a in items]
-                            t_avg = sum(t_alphas) / len(t_alphas)
+                            t_lags = [a for _t, a in items]
+                            t_avg = sum(t_lags) / len(t_lags)
                             t_score = max(0, min(100, 50 + t_avg * 10))
                             _upsert_score(sb, aid, f"short_pick_{tier}_7d", 7,
                                           {"picks": [t for t, _a in items]},
-                                          {"alphas": t_alphas}, t_score, t_avg,
-                                          notes=f"tier-{tier} avg alpha vs NIFTY: {t_avg:+.2f}% n={len(items)}")
+                                          {"lags": t_lags}, t_score, t_avg,
+                                          notes=f"tier-{tier} short-side avg lag vs NIFTY: {t_avg:+.2f}% n={len(items)}")
 
             # ----- TOP / WORST performers (1 session, alpha vs NIFTY) -----
             # The model's INDEPENDENT market-wide daily call: which names
@@ -783,6 +794,13 @@ def grade_all(lookback_days: int = 90):
                                         f"{worst_wins}/{len(worst_alphas)} lagged index")
 
             # ----- Short pick target/SL hit (did it hit target before stop) -----
+            # DORMANT on the current schema: worst_performers (the live
+            # short channel) carry no entry/target/stop_loss levels, only
+            # top_performers do, and the paper trader already tracks
+            # top_performer target-before-stop via real fills. Left reading
+            # the retired short_term_picks key so pre-rename history still
+            # grades on a re-run; it soft-skips (empty) for current rows
+            # until a leveled short channel exists. Not a bug, intentional.
             if age >= 11:
                 picks = raw.get("short_term_picks", []) or []
                 tp_scores = []
