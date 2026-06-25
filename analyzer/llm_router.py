@@ -112,14 +112,19 @@ PRIMARY_MODEL = os.getenv(
 
 # OpenRouter routes through this list left-to-right. If the primary
 # is rate-limited or fails, the next model serves the same request.
-# - Ultra is the same-family backup (different weights, partial isolation).
-# - nex-agi/nex-n2-pro is a Qwen3.5-based agentic model on a different
-#   provider entirely, kept as the cross-family safety net so a Nvidia-
-#   side outage cannot kill the chain. Gemma 4 free is excluded because
-#   its endpoint was 429-rate-limited on first contact in bake-off.
+# Replaced 25/06: the old chain was nemotron-3-ultra-550b + nex-agi/
+# nex-n2-pro, BOTH since proven dead (Ultra = 31min wall clock + prose
+# instead of JSON, dropped from the ensemble 20/06; nex-n2-pro =
+# persistent empty_content, dropped even earlier). A two-corpse fallback
+# meant any primary rate-limit cascaded straight to total failure for
+# every single-model caller (sensei, stock_analyst, portfolio_score,
+# calculator, the bot's in-process path). The new chain is the proven-
+# alive OpenAI pair from the ensemble validation (gpt-oss-120b/20b, 3/3
+# usable on every recent run): a different lab from the Nvidia Super
+# primary, so a Nvidia-side outage cannot kill the chain.
 _FALLBACK_RAW = os.getenv(
     "OPENROUTER_FALLBACKS",
-    "nvidia/nemotron-3-ultra-550b-a55b:free,nex-agi/nex-n2-pro:free",
+    "openai/gpt-oss-120b:free,openai/gpt-oss-20b:free",
 )
 FALLBACK_CHAIN = [m.strip() for m in _FALLBACK_RAW.split(",") if m.strip()]
 

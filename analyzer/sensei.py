@@ -36,11 +36,17 @@ load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
 
 
-# Ultra primary for Sensei (550B reasoner). Same fallback chain as the
-# morning client: rate-limit / outage drops to Super, then nex-agi.
+# Super primary for Sensei (120B/12B-active MoE). Was nemotron-3-ultra-
+# 550b, but that model was dropped from the ensemble on 20/06 after it
+# took 31 minutes of wall clock and returned a prose preamble instead of
+# JSON; as Sensei's primary it failed identically every EOD and silently
+# fell back to Super (observed model_used on all recent sensei_eod rows),
+# so each run paid the Ultra timeout/retry tax for nothing. Point the
+# primary straight at the proven Super checkpoint the runs already land
+# on. Same fallback chain still applies for a rate-limit / outage.
 SENSEI_PRIMARY = os.getenv(
     "OPENROUTER_SENSEI_PRIMARY",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
 )
 
 
