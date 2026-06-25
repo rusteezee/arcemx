@@ -564,6 +564,51 @@ def build_feedback() -> dict | None:
                 f"confirmation before listing a pick. Fewer, higher-conviction picks."
             )
 
+    # ---- Conviction tier discipline: A must out-deliver B must out-
+    # deliver C. Tiers are derived from stated win_prob now, so a
+    # non-monotonic result means the model's win_prob estimates do not
+    # track realized performance and the high-conviction label is empty.
+    # This closes the loop the tier stratification was built to feed.
+    tier_accs = []
+    for t in ("A", "B", "C"):
+        acc, n = _acc(f"short_pick_{t}_7d")
+        if acc is not None and n >= 3:
+            tier_accs.append((t, acc, n))
+    if len(tier_accs) >= 2:
+        ordered = [acc for _t, acc, _n in tier_accs]
+        if ordered != sorted(ordered, reverse=True):
+            detail = ", ".join(f"{t}-tier {acc:.0f}% (n={n})" for t, acc, n in tier_accs)
+            rules.append(
+                f"Your conviction tiers are NOT ordered by performance: {detail}. "
+                f"A must out-deliver B must out-deliver C. Reserve A only for picks where "
+                f"all three pillars (technicals + catalyst + sector/flow) align and your "
+                f"win_prob is genuinely 0.65+; default to B or C when any pillar is soft."
+            )
+
+    # ---- Long-pick alpha: are the independent top_performers beating the
+    # index at all? Surfaced so a weak long book pressures tighter selection.
+    tp_acc, tp_n = _acc("top_performer_1d")
+    if tp_acc is not None and tp_n >= 5 and tp_acc < 55:
+        rules.append(
+            f"Your top_performers beat NIFTY only {tp_acc:.0f}% of the time (n={tp_n}). "
+            f"List fewer, stronger longs: a name already extended into resistance is a "
+            f"poor entry. Prefer names with room to the next resistance and a nearby "
+            f"support to anchor the stop."
+        )
+
+    # ---- Reward:risk geometry (standing discipline). The paper trader
+    # rejects any top_performers long whose target sits closer than 1.3x
+    # the stop distance, and the edge is recomputed from the actual target,
+    # so a tight target both wastes the signal and zeroes the edge.
+    rules.append(
+        "Geometry rule for EVERY top_performers row: place the target at least 1.5x "
+        "the stop distance away from entry (reward:risk >= 1.5:1). Anchor target to the "
+        "next resistance and stop just below the nearest support; if that geometry gives "
+        "reward:risk under 1.5, the entry is poor - drop the name, do not shrink the "
+        "target to force it in. expected_return_pct must equal the target distance, not "
+        "a blue-sky move you will not exit into."
+    )
+
     v_acc, v_n = _acc("verdict_7d")
     if v_acc is not None and v_n >= 5 and v_acc < 55:
         rules.append(
