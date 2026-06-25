@@ -63,6 +63,10 @@ MIN_CONF = 55                    # stated-win_prob floor (see _conf_from_winprob
 MIN_EDGE_PCT = 1.5               # round-trip friction safety cushion. Risk-
                                  # adjusted (consensus + bear already applied),
                                  # so this stays the decisive quality gate.
+MIN_RR = 1.3                     # reward:risk floor (target dist / stop dist).
+                                 # Mirrors _RR_FLOOR in llm_router; a long with
+                                 # the target closer than 1.3x the stop has too
+                                 # little room to clear friction even when right.
 SECTOR_CAP = 2                   # max concurrent open trades in same sector
 LIQUIDITY_MIN_CR = 1.0           # avg 20d turnover >= 1 cr
 BROKERAGE_FLAT = 5.0             # INDstocks flat per order
@@ -676,6 +680,17 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
     if edge < MIN_EDGE_PCT:
         L("skip", "low_edge", edge=edge)
         return "low_edge"
+    # Reward:risk floor. risk_reward is attached upstream by
+    # _enforce_pick_quality (reward distance / stop distance). A long
+    # whose target sits closer than MIN_RR x its stop distance is a poor
+    # entry regardless of a positive headline edge (the model routinely
+    # surfaces names that just rallied into resistance). Gate them out so
+    # the book only holds setups with room to run. Skip the gate when the
+    # ratio is absent (older rows) rather than guess.
+    rr = tp.get("risk_reward")
+    if isinstance(rr, (int, float)) and rr < MIN_RR:
+        L("skip", "low_rr", edge=edge, meta={"risk_reward": rr})
+        return "low_rr"
 
     intent_px = _parse_inr(tp.get("entry"))
     target_px = _parse_inr(tp.get("target"))

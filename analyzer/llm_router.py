@@ -943,6 +943,103 @@ def _apply_short_pick_bear(short_picks: list[dict], bear_by_ticker: dict) -> Non
                 p["expected_edge_pct"] = float(R) * p["win_prob"] - L * p["loss_prob"]
 
 
+# Reward:risk floor for a tradeable long. Below this the target sits too
+# close to the entry relative to the stop for the trade to clear round-
+# trip friction even when the directional call is right. The model
+# routinely emits sub-1.0 R:R longs (a name that just rallied into
+# resistance has little room left and a far support), so quality is
+# enforced here on the data, not trusted to the prompt that already asks
+# for it and is ignored.
+_RR_FLOOR = 1.3
+
+
+def _enforce_pick_quality(result: dict) -> None:
+    """Post-process generated picks so the prompt's own rules actually
+    hold on the output:
+
+    1. Conviction: the schema defines per-tier win_prob bands (A 0.65+,
+       B 0.50-0.65, C <0.50) but the model emits a flat B on nearly every
+       pick, so the A/B/C grader stratification carries no signal. Derive
+       the tier from each pick's STATED win probability instead, keeping
+       the model's own label as conviction_stated for audit.
+    2. Risk:reward: attach risk_reward (reward distance / stop distance,
+       both as % of entry) to every top_performer with parseable
+       geometry, so the paper trader can gate sub-floor setups out.
+
+    Mutates result in place; soft on any malformed entry."""
+    if not isinstance(result, dict):
+        return
+
+    def _num(v):
+        if isinstance(v, (int, float)):
+            return float(v)
+        m = re.findall(r"[-+]?\d*\.?\d+", str(v or "").replace(",", ""))
+        return float(m[0]) if m else None
+
+    def _stated_wp(p):
+        # Prefer the model's pre-adjustment claim (matches the schema
+        # bands); fall back through the compressed values.
+        for k in ("win_prob_stated_mean", "win_prob_raw", "win_prob"):
+            v = p.get(k)
+            if isinstance(v, (int, float)) and v > 0:
+                return float(v)
+        return None
+
+    def _derive_tier(wp):
+        if wp is None:
+            return None
+        if wp >= 0.65:
+            return "A"
+        if wp >= 0.50:
+            return "B"
+        return "C"
+
+    for key in ("top_performers", "worst_performers"):
+        picks = result.get(key)
+        if not isinstance(picks, list):
+            continue
+        for p in picks:
+            if not isinstance(p, dict):
+                continue
+            tier = _derive_tier(_stated_wp(p))
+            if tier:
+                stated = p.get("conviction")
+                if stated and str(stated).upper() != tier:
+                    p["conviction_stated"] = stated
+                p["conviction"] = tier
+            if key == "top_performers":
+                sd = _stop_distance_pct(p)  # risk leg, % of entry
+                e, t = _num(p.get("entry")), _num(p.get("target"))
+                if e and t and sd and e > 0 and sd > 0:
+                    reward_pct = (t - e) / e * 100.0
+                    p["risk_reward"] = round(reward_pct / sd, 2)
+                    # Geometry-truth the edge. The model's
+                    # expected_return_pct routinely decouples from the
+                    # target it sets (e.g. a +25% return claim behind a
+                    # target only +0.3% above entry), which inflates
+                    # expected_edge_pct into a fiction the R:R gate then
+                    # has to override. A target-exit trade captures at most
+                    # the target distance, so anchor the return leg to the
+                    # actual target and the loss leg to the actual stop,
+                    # then recompute edge from the pick's own win_prob.
+                    # Now edge and risk_reward can never disagree: a tiny
+                    # target yields a small/negative edge, a roomy target a
+                    # large one. Stash the model's stated figures for audit.
+                    wp_final = p.get("win_prob")
+                    if isinstance(wp_final, (int, float)):
+                        lp_final = p.get("loss_prob")
+                        if not isinstance(lp_final, (int, float)):
+                            lp_final = 1.0 - float(wp_final)
+                        if "expected_return_pct" in p:
+                            p["expected_return_pct_stated"] = p.get("expected_return_pct")
+                        p["expected_return_pct"] = round(reward_pct, 2)
+                        p["expected_loss_pct"] = round(sd, 2)
+                        if "expected_edge_pct" in p:
+                            p["expected_edge_pct_pregeo"] = p.get("expected_edge_pct")
+                        p["expected_edge_pct"] = round(
+                            reward_pct * float(wp_final) - sd * float(lp_final), 3)
+
+
 def analyze(payload: dict, model_name: str | None = None) -> dict:
     """Run the strict-JSON market analysis. Signature preserved from
     analyzer.llm so callers swap with a one-line import change.
@@ -956,7 +1053,9 @@ def analyze(payload: dict, model_name: str | None = None) -> dict:
     if _ENSEMBLE_ON and model_name is None:
         print(f"OpenRouter ensemble mode ON; fanning out to "
               f"{len(_ENSEMBLE_MODELS)} models")
-        return analyze_ensemble(payload)
+        result = analyze_ensemble(payload)
+        _enforce_pick_quality(result)
+        return result
     chain = _chain(model_name)
     print(f"OpenRouter primary: {chain[0]} | fallbacks: {chain[1:]}")
     user_msg = ("Analyze this market snapshot and return JSON per schema:\n\n"
@@ -985,6 +1084,7 @@ def analyze(payload: dict, model_name: str | None = None) -> dict:
                 )
     except Exception as e:
         print(f"  top_performers bear pass outer: {str(e)[:120]}")
+    _enforce_pick_quality(result)
     return result
 
 
