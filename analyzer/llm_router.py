@@ -930,8 +930,17 @@ def _apply_short_pick_bear(short_picks: list[dict], bear_by_ticker: dict) -> Non
             R = p.get("expected_return_pct")
             L = p.get("expected_loss_pct")
             if isinstance(R, (int, float)) and isinstance(L, (int, float)):
+                # Anchor loss to the stop distance before recomputing edge
+                # so the single-model path (which never hits _merge_
+                # performers) does not carry an inflated loss term either.
+                sd = _stop_distance_pct(p)
+                L = float(L)
+                if sd is not None and L > sd * _STOP_SLIPPAGE_HEADROOM:
+                    p["expected_loss_pct_stated"] = round(L, 2)
+                    L = sd * _STOP_SLIPPAGE_HEADROOM
+                    p["expected_loss_pct"] = round(L, 2)
                 p["expected_edge_pct_raw"] = p.get("expected_edge_pct")
-                p["expected_edge_pct"] = float(R) * p["win_prob"] - float(L) * p["loss_prob"]
+                p["expected_edge_pct"] = float(R) * p["win_prob"] - L * p["loss_prob"]
 
 
 def analyze(payload: dict, model_name: str | None = None) -> dict:
@@ -1059,6 +1068,37 @@ _ENSEMBLE_MODELS = [m.strip() for m in os.getenv(
 ).split(",") if m.strip()]
 
 
+def _stop_distance_pct(entry: dict) -> float | None:
+    """Loss the stop-loss actually enforces, as a percent of entry.
+
+    The model's expected_loss_pct frequently runs 2-3x this: it
+    free-floats a tail-loss estimate (e.g. 7-11%) while the protective
+    stop caps the real exit at its own distance (e.g. 3.5%). Feeding the
+    inflated number into expected_edge_pct = R*win - L*loss drags edge
+    spuriously negative, which is what kept the paper trader at zero
+    even on healthy-geometry ensemble picks (every id 97 long showed a
+    negative edge purely from a 7-11% loss term against a 3-4% stop).
+    A long exits at the stop give or take gap slippage, so loss is
+    bounded at roughly the stop distance; anchoring to it is arithmetic,
+    not a strategy choice. Returns None when entry/stop are unparseable
+    so the caller keeps the model's value rather than guessing."""
+    def _num(v):
+        if isinstance(v, (int, float)):
+            return float(v)
+        m = re.findall(r"[-+]?\d*\.?\d+", str(v or "").replace(",", ""))
+        return float(m[0]) if m else None
+    e = _num(entry.get("entry"))
+    s = _num(entry.get("stop_loss"))
+    if not e or not s or e <= 0:
+        return None
+    return abs(e - s) / e * 100.0
+
+
+# A long's loss is capped at the stop distance; allow 20% headroom for
+# gap-through slippage before treating a model loss estimate as inflated.
+_STOP_SLIPPAGE_HEADROOM = 1.2
+
+
 def _merge_performers(results: list[dict], key: str, n_models: int) -> list[dict]:
     """Aggregate a top_performers / worst_performers list across N model
     outputs by ticker. Consensus is signal: a name picked by 3/3 models
@@ -1115,6 +1155,12 @@ def _merge_performers(results: list[dict], key: str, n_models: int) -> list[dict
         R, L = avg(a["ret"]), avg(a["loss"])
         if R is not None and L is not None and eff_wp is not None:
             entry["expected_return_pct"] = round(R, 2)
+            # Anchor loss to the stop distance (only for top_performers,
+            # which carry entry/stop; worst_performers have no levels).
+            sd = _stop_distance_pct(entry) if key == "top_performers" else None
+            if sd is not None and L > sd * _STOP_SLIPPAGE_HEADROOM:
+                entry["expected_loss_pct_stated"] = round(L, 2)
+                L = sd * _STOP_SLIPPAGE_HEADROOM
             entry["expected_loss_pct"] = round(L, 2)
             entry["expected_edge_pct"] = round(R * eff_wp - L * (1 - eff_wp), 3)
         elif avg(a["edge"]) is not None:
