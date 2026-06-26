@@ -26,6 +26,7 @@ the constant moves here in a follow-up sweep that deletes llm.py.
 """
 import os
 import json
+import re
 import time
 import requests
 from dotenv import load_dotenv
