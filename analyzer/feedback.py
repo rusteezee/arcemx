@@ -82,7 +82,23 @@ def _retrieve_exemplars_by_similarity(sb, dim: str, k: int = 6) -> list[dict]:
 
     Bot's in-process fallback path therefore always works, just in
     degraded Phase 0 mode rather than Phase 1.
+
+    DEFERRED TO PHASE B (25/06): Phase 1 is gated off by default. The
+    match_exemplars RPC was never created in Supabase, so this path
+    always failed at the RPC and fell back to Phase 0 anyway, while still
+    paying the query-time cost of loading the embedder and encoding
+    today's vector on every grader run. At the current data scale
+    (~70 vectors/dimension) similarity retrieval is no better than the
+    recency mining Phase 0 already does, and the embedding store is
+    mixed-model (an old MiniLM backfill plus the current bge-base) so
+    cross-space matches would be noise. The embedding PRODUCER stays on
+    (it accumulates a clean bge-base dataset for a Phase B activation),
+    but this CONSUMER short-circuits to Phase 0 until then. To activate:
+    create match_exemplars + the ivfflat index, re-embed the legacy
+    rows under one model, then set RAG_PHASE1_ENABLED=1.
     """
+    if os.getenv("RAG_PHASE1_ENABLED", "0").strip() not in ("1", "true", "yes"):
+        return _mine_exemplars(sb, dim, n_each=3)
     try:
         from analyzer.embed import (
             encode, features_to_text, _yf_features_on_date,

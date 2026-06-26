@@ -51,12 +51,23 @@ _MODEL_NAME = None
 # To swap again: change _PRIMARY, push, re-run daily_grader.yml with
 # backfill=true AND force=true so the existing rows get re-embedded
 # under the new model.
+#
+# SINGLE-MODEL PIN (25/06): _FALLBACKS is now empty. The old chain
+# silently fell through to MiniLM when bge failed to load (which is
+# exactly what happened on the historic backfill: those rows are
+# 384-dim MiniLM while every recent row is 768-dim bge-base), leaving
+# the store with two incompatible embedding spaces. Cosine similarity
+# across spaces is meaningless, so a silent cross-model fallback is
+# worse than writing no row at all: if bge-base cannot load, raise and
+# let the caller soft-fail (the grader's _embed step swallows it and
+# retries next run) rather than poison the store. Phase B re-embeds the
+# legacy MiniLM rows under bge-base before activating retrieval.
 _PRIMARY = "BAAI/bge-base-en-v1.5"
-_FALLBACKS = ["BAAI/bge-large-en-v1.5", "sentence-transformers/all-MiniLM-L6-v2"]
+_FALLBACKS: list[str] = []
 
-# SQL column is vector(1024). MiniLM emits 384 dims (zero-padded);
-# BGE-small emits 384 (zero-padded); BGE-large emits 1024 native.
-# Retrieval similarity remains directional under zero-padding.
+# SQL column is vector(1024). bge-base emits 768 dims, zero-padded to
+# 1024; retrieval similarity stays directional under zero-padding as
+# long as EVERY row uses the same model (now enforced by the pin above).
 TARGET_DIM = 1024
 
 
