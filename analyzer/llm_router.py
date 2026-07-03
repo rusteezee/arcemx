@@ -611,6 +611,21 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         body["response_format"] = {"type": "json_object"}
     if reasoning:
         body["reasoning"] = {"effort": "medium"}
+    else:
+        # Omitting the reasoning key entirely does NOT disable it - the
+        # provider falls back to the model's own default, and several
+        # free-tier checkpoints (nemotron-3-super among them, as of
+        # 02/07/2026) now default to reasoning-on. That silently burns
+        # the whole max_tokens budget on a hidden/inlined chain-of-
+        # thought trace before any JSON is emitted, so every ensemble
+        # call to that model returned parse_failed (finish_reason=
+        # length, content = prose) despite _one() already passing
+        # reasoning=False. Confirmed live: explicit {enabled: False,
+        # exclude: True} produces clean JSON from char 0; omitting the
+        # key reproduces the prose-preamble failure exactly. Callers
+        # that pass reasoning=False now get an explicit opt-out instead
+        # of a no-op.
+        body["reasoning"] = {"enabled": False, "exclude": True}
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
     delay = 5.0
@@ -1521,7 +1536,15 @@ def analyze_ensemble(payload: dict, models: list[str] | None = None) -> dict:
             # cross-model diversity, not three calls to the same primary.
             # no_rotate=True keeps retries on the same key so a per-model
             # upstream throttle does not steal retries from a sibling key.
-            resp = _post(msgs, models=[model], api_key=key, timeout=300,
+            # Bumped 300s to 600s 03/07/2026: live test of the reasoning-
+            # disable fix above measured 1556s for nemotron-3-super to
+            # land clean JSON (vs historical 260-550s), and several
+            # ensemble_attempts rows already showed latency_ms above the
+            # old 300s cutoff getting killed client-side before the
+            # provider could finish. Each of the 3 keys runs its own
+            # thread in parallel (see per-key worker groups below), so
+            # one slow model does not block its siblings' timeout budget.
+            resp = _post(msgs, models=[model], api_key=key, timeout=600,
                          max_retries=4, reasoning=use_reasoning,
                          json_format=use_json_format,
                          # Bumped 16000 to 32000 after run 27871102615
