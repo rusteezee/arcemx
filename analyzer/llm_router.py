@@ -1309,7 +1309,27 @@ def _merge_results(results: list[dict]) -> dict:
     user-specific (outlooks, verdicts, reasoning) is carried from the
     base (first, primary) model since voting adds little there and the
     base model is the strongest instruction-follower."""
-    base = dict(results[0])
+    def _well_formed(r: dict) -> bool:
+        # _parse_json only checks "is this valid JSON", not "does it have
+        # the fields a real analysis needs". A free-tier model under
+        # json_object grammar pressure can emit syntactically-valid JSON
+        # with a garbled key (observed: "market_mood_bullishly low"
+        # instead of "market_mood": "bullish") and no nifty_outlook at
+        # all, and _parse_json still counts it "ok". Since base=dict(
+        # results[0]) used to trust whichever result landed first
+        # unconditionally, and the majority-vote step below only
+        # OVERWRITES market_mood/nifty_outlook/sensex_outlook when base
+        # already has them (never creates them), one malformed-but-valid
+        # response as results[0] silently produced a picks-empty,
+        # outlook-null row even with a real 2/3 quorum (analysis id 107,
+        # 03/07/2026).
+        mood = r.get("market_mood")
+        outlook = r.get("nifty_outlook")
+        return (isinstance(mood, str) and mood.strip() != ""
+                and isinstance(outlook, dict) and bool(outlook.get("direction")))
+
+    base_src = next((r for r in results if _well_formed(r)), results[0])
+    base = dict(base_src)
     n = len(results)
 
     def _majority_dir(path_keys):
