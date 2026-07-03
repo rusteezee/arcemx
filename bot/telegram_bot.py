@@ -1512,19 +1512,31 @@ async def _post_init(app: Application):
         timezone="Asia/Kolkata",
         job_defaults={"misfire_grace_time": 3600, "coalesce": True},
     )
-    scheduler.add_job(scheduled_sync, CronTrigger(hour=8, minute=0, day_of_week="mon-fri"))
+    # CronTrigger resolves its OWN timezone at construction time (falls
+    # to get_localzone() = the container's OS tz when omitted) and
+    # ignores the scheduler's timezone= kwarg above, which only applies
+    # to the string-trigger shorthand form. Render's container tz is
+    # UTC, so every job below was silently firing 5:30h late (e.g. the
+    # 08:30 IST analysis job fired at 08:30 UTC = 14:00 IST) until this
+    # explicit timezone= was added to each CronTrigger. Confirmed via
+    # apscheduler 3.10.4 source (CronTrigger.__init__: `else: self.
+    # timezone = get_localzone()`) plus GH Actions run history showing
+    # the bot's workflow_dispatch landing at exactly 08:30:00-01 UTC on
+    # 4 consecutive weekdays.
+    _IST = "Asia/Kolkata"
+    scheduler.add_job(scheduled_sync, CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone=_IST))
     # 08:30 IST: morning analysis, bot-primary (GH cron drifted hours or
     # skipped entirely on free tier; see scheduled_analysis docstring).
-    scheduler.add_job(scheduled_analysis, CronTrigger(hour=8, minute=30, day_of_week="mon-fri"))
+    scheduler.add_job(scheduled_analysis, CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone=_IST))
     # 17:05 IST: grader pass. Run 5 minutes after the GH cron's 17:00
     # target so when GH fires on time both runs grade the same row set
     # (idempotent), and when GH drifts the bot-side run still lands
     # before evening Sensei needs the scores.
-    scheduler.add_job(scheduled_grader, CronTrigger(hour=17, minute=5, day_of_week="mon-fri"))
+    scheduler.add_job(scheduled_grader, CronTrigger(hour=17, minute=5, day_of_week="mon-fri", timezone=_IST))
     # 20:05 IST: Sensei EOD. Same 5-minute offset from GH's 20:00 target.
     # Sensei also self-grades before synthesizing, so even a late fire
     # never produces a data-thin retrospective again.
-    scheduler.add_job(scheduled_sensei, CronTrigger(hour=20, minute=5, day_of_week="mon-fri"))
+    scheduler.add_job(scheduled_sensei, CronTrigger(hour=20, minute=5, day_of_week="mon-fri", timezone=_IST))
     scheduler.start()
     app.bot_data["scheduler"] = scheduler
 
