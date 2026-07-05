@@ -1,0 +1,22 @@
+name = "arcemx-cron-dispatcher"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# GH_REPO is not secret; GH_TOKEN is set separately via:
+#   npx wrangler secret put GH_TOKEN
+[vars]
+GH_REPO = "rusteezee/arcemx"
+
+# All times UTC (Cloudflare Cron Triggers have no timezone support; IST = UTC+5:30, no DST).
+# Each fires the SAME reliable workflow_dispatch call the bot already uses -
+# this Worker does no analysis itself, it only makes GH Actions' actual
+# heavy Python job start on time. GH's own `schedule:` cron entries and the
+# Render bot's APScheduler stay in place as additional triggers; every
+# downstream job is already run_if_stale-guarded so redundant firings are
+# safe no-ops, not duplicate runs.
+[triggers]
+crons = [
+  "50 2 * * 1-5",   # 08:20 IST - daily_analysis.yml (matches GH's existing PRIMARY slot)
+  "30 11 * * 1-5",  # 17:00 IST - daily_grader.yml (matches GH's existing schedule slot)
+  "35 14 * * 1-5",  # 20:05 IST - sensei_eod.yml (matches Render bot's PRIMARY slot; GH's own schedule is the documented fallback at 20:11 IST)
+]
