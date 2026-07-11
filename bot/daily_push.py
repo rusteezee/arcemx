@@ -23,18 +23,20 @@ async def push():
     raw = a.get("raw_json") or {}
     mood = raw.get("market_mood", "neutral").upper()
     conf = raw.get("confidence", "?")
-    short = raw.get("short_term_picks", [])[:5]
-    longt = raw.get("long_term_picks", [])[:5]
+    gainers = raw.get("top_performers", [])[:5]
+    losers = raw.get("worst_performers", [])[:5]
 
     msg = f"*Arc'emX! Daily Market Call*\n*Mood:* {mood} (conf: {conf})\n\n"
     msg += f"*Nifty:* {raw.get('nifty_outlook', {}).get('direction', '?')} | {raw.get('nifty_outlook', {}).get('range', '')}\n"
     msg += f"*Sensex:* {raw.get('sensex_outlook', {}).get('direction', '?')} | {raw.get('sensex_outlook', {}).get('range', '')}\n\n"
-    msg += "*Short-term:*\n"
-    for p in short:
+    msg += "*Gainers:*\n"
+    for p in gainers:
         msg += f"• `{p.get('ticker')}` T:{p.get('target')} SL:{p.get('stop_loss')}\n"
-    msg += "\n*Long-term:*\n"
-    for p in longt:
-        msg += f"• `{p.get('ticker')}`. {(p.get('thesis') or '')[:60]}\n"
+    msg += "\n*Losers:*\n"
+    for p in losers:
+        move = p.get("expected_move_pct")
+        move_str = f" ({move}%)" if move is not None else ""
+        msg += f"• `{p.get('ticker')}`{move_str}. {(p.get('thesis') or '')[:60]}\n"
     msg += "\n_Not SEBI-registered advice. Educational only. DYOR._"
     await Bot(token).send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
     print("Pushed.")

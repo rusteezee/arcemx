@@ -212,19 +212,21 @@ async def today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = a.get("raw_json") or {}
     mood = raw.get("market_mood", "neutral").upper()
     conf = raw.get("confidence", "?")
-    short = raw.get("short_term_picks", [])[:5]
-    longt = raw.get("long_term_picks", [])[:5]
+    gainers = raw.get("top_performers", [])[:5]
+    losers = raw.get("worst_performers", [])[:5]
     avoid = raw.get("stocks_to_avoid", [])[:3]
 
     msg = f"*Market Mood: {mood}* (conf: {conf})\n\n"
     msg += f"*Nifty:* {raw.get('nifty_outlook', {}).get('direction', '?')} | {raw.get('nifty_outlook', {}).get('range', '')}\n"
     msg += f"*Sensex:* {raw.get('sensex_outlook', {}).get('direction', '?')} | {raw.get('sensex_outlook', {}).get('range', '')}\n\n"
-    msg += "*Short-term picks:*\n"
-    for p in short:
+    msg += "*Gainers:*\n"
+    for p in gainers:
         msg += f"• `{p.get('ticker')}`. {p.get('thesis', '')[:80]} (T:{p.get('target')}, SL:{p.get('stop_loss')})\n"
-    msg += "\n*Long-term picks:*\n"
-    for p in longt:
-        msg += f"• `{p.get('ticker')}`. {p.get('thesis', '')[:80]}\n"
+    msg += "\n*Losers:*\n"
+    for p in losers:
+        move = p.get("expected_move_pct")
+        move_str = f" ({move}%)" if move is not None else ""
+        msg += f"• `{p.get('ticker')}`{move_str}. {p.get('thesis', '')[:80]}\n"
     if avoid:
         msg += "\n*Avoid:*\n"
         for p in avoid:
