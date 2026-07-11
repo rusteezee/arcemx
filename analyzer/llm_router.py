@@ -569,6 +569,39 @@ _JSON_FORMAT_OK = ("nemotron-3-ultra", "nemotron-3-super",
 # which _parse_json's fence-stripper recovers cleanly.
 
 
+def _content_ok(data: dict, json_format: bool) -> bool:
+    """Best-effort check that a 200 response is actually usable.
+
+    A 200 status only means OpenRouter accepted the request - the body
+    can still be an embedded error object with no `choices` key at all
+    (observed: "Upstream error from Darkbloom: all providers..."), a
+    null/empty message.content (a reasoning-mode model burning the
+    whole budget on a hidden chain-of-thought trace before any real
+    output), or prose with no parseable JSON despite json_format=True
+    (the model ignored the schema instruction). None of these trip
+    OpenRouter's own `models=[...]` fallback array - that only engages
+    on hard infra failures like the model being unreachable - and none
+    of them raised an exception in the retry loop below, so a single
+    bad-but-200 response used to short-circuit every retry AND every
+    fallback model in the chain in one shot (the root cause behind
+    Friday's "not saving an analysis row" total failure despite a
+    3-model fallback chain being configured)."""
+    if not isinstance(data, dict) or data.get("error"):
+        return False
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    if content is None or not str(content).strip():
+        return False
+    if json_format:
+        try:
+            json.loads(_strip_fences(str(content)))
+        except json.JSONDecodeError:
+            return False
+    return True
+
+
 def _post(messages: list[dict], models: list[str], reasoning: bool = True,
           timeout: int = 180, max_retries: int = 2,
           api_key: str | None = None,
@@ -580,7 +613,13 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     `models` is the full chain. `model` is set to the head so providers
     that ignore the chain field still pick the right primary. We retry on
     429 with exponential backoff capped at 30s per wait; failures count
-    against the daily free quota, so retries are tight.
+    against the daily free quota, so retries are tight. A 200 response
+    with unusable content (see _content_ok) is treated the same as a
+    retryable failure: the next attempt advances `model` to the next
+    entry in `models` instead of re-hitting the one that just failed.
+    For a single-pinned-model caller (models has one entry, e.g. the
+    ensemble fan-out) this is a no-op - there's nothing to advance to,
+    so behavior there is unchanged.
 
     Key handling: `api_key` now seeds the FIRST attempt but subsequent
     retries fall back to the full key pool. Pinning indefinitely meant a
@@ -631,6 +670,13 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     delay = 5.0
     last_err: Exception | None = None
     for attempt in range(max_retries + 1):
+        # Advance to the next model in the chain on every retry (a no-op
+        # when models has one entry, e.g. the ensemble fan-out's pinned
+        # single-model call). This only changes which model attempt N+1
+        # targets; a 429 or network error on attempt 0 already resulted
+        # in trying a fresh model by the time content quality even comes
+        # into play below.
+        body["model"] = models[min(attempt, len(models) - 1)]
         # First attempt honors the caller's seed key; later attempts
         # rotate over the full pool when no_rotate=False, otherwise stick
         # to the seed key. Ensemble fan-out uses no_rotate=True so each
@@ -691,8 +737,22 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         # strip the header) so the call still succeeds when that happens.
         text = r.text
         if "text/event-stream" in ct or text.lstrip().startswith("data:"):
-            return _parse_sse(text)
-        return r.json()
+            data = _parse_sse(text)
+        else:
+            data = r.json()
+        if _content_ok(data, json_format) or attempt >= max_retries:
+            return data
+        # 200 OK but the content is unusable (see _content_ok). This is
+        # not a 429 and not a network error, so nothing above catches
+        # it - without this branch _post() returns the bad response
+        # immediately and every remaining fallback model in the chain
+        # never gets a chance.
+        next_model = models[min(attempt + 1, len(models) - 1)]
+        print(f"OpenRouter response unusable (empty/malformed content) "
+              f"from {body['model'].split('/')[-1]}, attempt {attempt+1}; "
+              f"rotating to {next_model.split('/')[-1]}")
+        time.sleep(min(delay, 10))
+        delay *= 2
     raise RuntimeError(f"OpenRouter retries exhausted: {last_err}")
 
 
