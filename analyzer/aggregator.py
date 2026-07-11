@@ -593,18 +593,7 @@ def build_payload() -> dict:
 
 def run(model_name: str | None = None) -> dict:
     payload = build_payload()
-    # Ensemble path when OPENROUTER_ENSEMBLE=1 and >=2 models configured:
-    # several models vote, consensus is merged. Otherwise single-model
-    # analyze(). The ensemble import is local so a flag-off run never
-    # pays the import cost or risks a partial-module error.
-    from analyzer.llm_router import _ENSEMBLE_ON, _ENSEMBLE_MODELS
-    if _ENSEMBLE_ON and len(_ENSEMBLE_MODELS) >= 2 and model_name is None:
-        from analyzer.llm_router import analyze_ensemble
-        print(f"Calling ensemble: {_ENSEMBLE_MODELS}")
-        result = analyze_ensemble(payload)
-    else:
-        print("Calling single-model analyzer...")
-        result = analyze(payload, model_name=model_name)
+    result = analyze(payload, model_name=model_name)
     save(result, payload)
     return result
 
@@ -683,30 +672,6 @@ def save(result: dict, payload: dict) -> None:
         "raw_json": result,
     }).execute()
     print("Saved to Supabase")
-
-    # Persist per-model ensemble attempt records linked to the new
-    # analysis_id so /rankings can show usable-rate per model. Soft-
-    # fails: a row insert error must not kill the run.
-    try:
-        attempts = result.get("ensemble_attempts") or []
-        if attempts and ins.data:
-            analysis_id = ins.data[0].get("id")
-            rows = []
-            for a in attempts:
-                if not isinstance(a, dict) or not a.get("model_slug"):
-                    continue
-                rows.append({
-                    "analysis_id": analysis_id,
-                    "model_slug": a.get("model_slug"),
-                    "status": a.get("status") or "other",
-                    "latency_ms": a.get("latency_ms"),
-                    "error_snippet": a.get("error_snippet"),
-                })
-            if rows:
-                sb.table("ensemble_attempts").insert(rows).execute()
-                print(f"Logged {len(rows)} ensemble attempts")
-    except Exception as e:
-        print(f"ensemble_attempts log skipped: {type(e).__name__}: {str(e)[:120]}")
 
 
 if __name__ == "__main__":

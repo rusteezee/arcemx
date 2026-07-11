@@ -16,7 +16,6 @@ const items = [
   { href: "/trader", label: "Trader" },
   { href: "/sensei", label: "Sensei" },
   { href: "/accuracy", label: "Accuracy" },
-  { href: "/rankings", label: "Rankings" },
 ];
 
 // Route-aware sync icon. Each mode picks its own glyph + idle/loading

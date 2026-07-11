@@ -2,16 +2,11 @@ name: Daily Market Analysis
 
 on:
   schedule:
-    # PRIMARY ensemble run. 02:50 UTC Mon-Fri = 08:20 IST, ten minutes
-    # BEFORE the bot's 08:30 dispatch. This is now the authoritative
-    # daily run because the ensemble env (OPENROUTER_ENSEMBLE + the
-    # three numbered keys + OPENROUTER_ENSEMBLE_MODELS) lives in GitHub
-    # secrets, whereas the Render bot's in-process fallback runs
-    # single-model (Render never got the ensemble env). Firing GH first
-    # means the bot's 08:30 path sees a fresh ensemble row via
-    # run_if_stale and skips, so the daily canonical row is always the
-    # ensemble one. run_if_stale keeps it idempotent against the
-    # secondary cron + bot dispatch below.
+    # PRIMARY run. 02:50 UTC Mon-Fri = 08:20 IST, ten minutes BEFORE the
+    # bot's 08:30 dispatch, so this is the authoritative daily row and
+    # the bot's 08:30 path sees it fresh via run_if_stale and skips.
+    # run_if_stale keeps it idempotent against the secondary cron + bot
+    # dispatch below.
     - cron: "50 2 * * 1-5"
     # SECONDARY fallback. 03:13 UTC = 08:43 IST. Covers the case where
     # the 08:20 primary drifted or skipped (GitHub free-tier cron fired
@@ -58,19 +53,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          # Ensemble fan-out: three dedicated keys (one per parallel
-          # worker, two models per key with 6 models + 3 keys) plus
-          # legacy comma-separated var for backward compat. The primary
-          # OPENROUTER_API_KEY above stays untouched - it serves only
-          # the Nemotron Super single-model brain. The numbered slots
-          # are the ensemble pool; deduped by analyzer.llm_router so
-          # an accidentally duplicated key still produces a clean count.
-          OPENROUTER_API_KEY_1: ${{ secrets.OPENROUTER_API_KEY_1 }}
-          OPENROUTER_API_KEY_2: ${{ secrets.OPENROUTER_API_KEY_2 }}
-          OPENROUTER_API_KEY_3: ${{ secrets.OPENROUTER_API_KEY_3 }}
-          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
-          OPENROUTER_ENSEMBLE: ${{ secrets.OPENROUTER_ENSEMBLE }}
-          OPENROUTER_ENSEMBLE_MODELS: ${{ secrets.OPENROUTER_ENSEMBLE_MODELS }}
           GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
