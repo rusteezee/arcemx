@@ -358,6 +358,20 @@ create table if not exists backtest_runs (
 );
 create index if not exists idx_backtest_runs_at on backtest_runs(run_at desc);
 
+create table if not exists alerts (
+    id bigserial primary key,
+    user_id text not null default 'default',
+    ticker text not null,
+    threshold_price numeric not null,
+    direction text not null check (direction in ('above', 'below')),
+    status text not null default 'active' check (status in ('active', 'triggered', 'cancelled')),
+    created_at timestamptz not null default now(),
+    triggered_at timestamptz,
+    triggered_price numeric
+);
+create index if not exists idx_alerts_status on alerts(status);
+create index if not exists idx_alerts_user on alerts(user_id, status);
+
 
 -- Row Level Security. Defense uniformity: anon (browser, NEXT_PUBLIC) gets
 -- SELECT on the tables the dashboard reads, nothing else. Service role
@@ -384,6 +398,7 @@ alter table paper_signals        enable row level security;
 alter table metrics_snapshot     enable row level security;
 alter table ensemble_attempts    enable row level security;
 alter table backtest_runs        enable row level security;
+alter table alerts               enable row level security;
 
 do $$
 declare t text;

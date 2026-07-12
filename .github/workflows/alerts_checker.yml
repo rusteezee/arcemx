@@ -1,0 +1,35 @@
+name: Alerts Checker
+
+# Checks every active price alert against a live quote and pushes a
+# Telegram message the moment one crosses. 15-min cron across a buffer
+# window around NSE hours (9:15-15:30 IST = 3:45-10:00 UTC) - some runs
+# fire slightly before open / after close and find nothing to do, cheap
+# enough not to bother trimming further. See db/schema.sql for the
+# alerts table, bot/alerts_checker.py for the check itself, and
+# bot/telegram_bot.py's /alert /alerts /rm_alert commands for creation.
+
+on:
+  schedule:
+    - cron: "*/15 3-10 * * 1-5"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check alerts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python -m bot.alerts_checker

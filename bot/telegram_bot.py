@@ -194,6 +194,8 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/buy TICKER PRICE QTY\n"
         "/sell TICKER\n"
         "/add_wish TICKER /rm_wish TICKER\n"
+        "/alert TICKER PRICE above|below\n"
+        "/alerts. list active alerts /rm_alert ID\n"
         "/import. send CSV after (INDmoney export works)\n"
         "/sync. pull holdings + watchlist from INDmoney MCP\n"
         "/trade. Phase A paper-trader status + tier gate\n"
@@ -356,6 +358,58 @@ async def add_wish(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     sb().table("wishlist").upsert({"user_id": uid, "ticker": t}, on_conflict="user_id,ticker").execute()
     await update.message.reply_text(f"Added {t}")
+
+
+async def alert(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if len(ctx.args) < 3 or ctx.args[2].lower() not in ("above", "below"):
+        await update.message.reply_text("Usage: /alert RELIANCE 2500 above (or below)")
+        return
+    t = normalize_ticker(ctx.args[0])
+    try:
+        price = float(ctx.args[1])
+    except ValueError:
+        await update.message.reply_text("Price must be a number, e.g. /alert RELIANCE 2500 above")
+        return
+    direction = ctx.args[2].lower()
+    uid = str(update.effective_user.id)
+    sb().table("alerts").insert({
+        "user_id": uid, "ticker": t, "threshold_price": price, "direction": direction,
+    }).execute()
+    await update.message.reply_text(f"Alert set: {t} {direction} ₹{price:.2f}")
+
+
+async def alerts_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    rows = sb().table("alerts").select("*").eq("user_id", uid).eq(
+        "status", "active"
+    ).order("created_at", desc=True).execute().data or []
+    if not rows:
+        await update.message.reply_text("No active alerts. Use /alert TICKER PRICE above|below")
+        return
+    msg = "*Active Alerts*\n"
+    for r in rows:
+        msg += f"`{r['id']}` {r['ticker']} {r['direction']} ₹{float(r['threshold_price']):.2f}\n"
+    msg += "\n/rm_alert ID to cancel one"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def rm_alert(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Usage: /rm_alert ID (see /alerts for ids)")
+        return
+    try:
+        alert_id = int(ctx.args[0])
+    except ValueError:
+        await update.message.reply_text("ID must be a number, see /alerts")
+        return
+    uid = str(update.effective_user.id)
+    res = sb().table("alerts").update({"status": "cancelled"}).eq(
+        "id", alert_id
+    ).eq("user_id", uid).eq("status", "active").execute()
+    if res.data:
+        await update.message.reply_text(f"Cancelled alert {alert_id}")
+    else:
+        await update.message.reply_text(f"No active alert with id {alert_id}")
 
 
 async def trade_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1305,6 +1359,9 @@ def main():
     app.add_handler(CommandHandler("sell", sell))
     app.add_handler(CommandHandler("add_wish", add_wish))
     app.add_handler(CommandHandler("rm_wish", rm_wish))
+    app.add_handler(CommandHandler("alert", alert))
+    app.add_handler(CommandHandler("alerts", alerts_list))
+    app.add_handler(CommandHandler("rm_alert", rm_alert))
     app.add_handler(CommandHandler("import", import_help))
     app.add_handler(CommandHandler("sync_indmoney", sync_indmoney))
     app.add_handler(CommandHandler("sync", sync_indmoney))
