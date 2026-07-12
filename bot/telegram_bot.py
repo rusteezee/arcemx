@@ -196,7 +196,8 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/add_wish TICKER /rm_wish TICKER\n"
         "/import. send CSV after (INDmoney export works)\n"
         "/sync. pull holdings + watchlist from INDmoney MCP\n"
-        "/trade. Phase A paper-trader status + tier gate\n\n"
+        "/trade. Phase A paper-trader status + tier gate\n"
+        "/backtest. latest full-history replay result\n\n"
         f"Your chat ID: `{update.effective_chat.id}`",
         parse_mode="Markdown",
     )
@@ -419,6 +420,45 @@ async def trade_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"trade_status error: {str(e)[:200]}")
+
+
+async def backtest_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Latest backtest_runs row: full-history replay of every analysis
+    through the live paper trader's gate stack. Read-only - triggering a
+    new replay is a web-page action (see /backtest on the dashboard),
+    same split as /trade vs the live paper trader itself."""
+    try:
+        s = sb()
+        rows = s.table("backtest_runs").select("*").order("id", desc=True).limit(1).execute().data or []
+        if not rows:
+            await update.message.reply_text("No backtest run yet. Trigger one from the dashboard's Backtest page.")
+            return
+        r = rows[0]
+        status = r.get("status")
+        if status == "pending":
+            await update.message.reply_text("Backtest replay in progress. Check back shortly.")
+            return
+        if status == "failed":
+            await update.message.reply_text(f"Last backtest failed: {(r.get('error') or '')[:200]}")
+            return
+
+        results = r.get("results") or {}
+        window = results.get("replay_window") or {}
+        tier = results.get("tier_eval") or {}
+        msg = "*Backtest (full history replay)*\n\n"
+        msg += f"window: {window.get('from', '?')} to {window.get('to', '?')}\n"
+        msg += (f"trades: {r.get('trade_count', 0)}, win rate: "
+                f"{r.get('win_rate_pct') or 0:.1f}%, net: ₹{r.get('total_net_pnl') or 0:+.0f}\n\n")
+        msg += "*edge*\n"
+        msg += f"sharpe: {r.get('sharpe')}\n"
+        msg += f"max_dd: {r.get('max_dd_pct')}%\n"
+        msg += f"psr:    {r.get('psr')}\n"
+        msg += f"calmar: {r.get('calmar')}\n\n"
+        msg += f"tier {tier.get('cleared_tier', 0)} cleared, next T{tier.get('next_tier')} ({tier.get('next_label', '')})"
+        msg += DISCLAIMER
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"backtest_status error: {str(e)[:200]}")
 
 
 async def rm_wish(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1270,6 +1310,7 @@ def main():
     app.add_handler(CommandHandler("sync", sync_indmoney))
     app.add_handler(CommandHandler("trade_status", trade_status))
     app.add_handler(CommandHandler("trade", trade_status))
+    app.add_handler(CommandHandler("backtest", backtest_status))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
     print("Bot running...")
     app.run_polling()

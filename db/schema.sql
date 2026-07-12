@@ -340,6 +340,24 @@ create table if not exists metrics_snapshot (
 );
 create index if not exists idx_metrics_snapshot_at on metrics_snapshot(computed_at desc);
 
+create table if not exists backtest_runs (
+    id bigserial primary key,
+    run_at timestamptz not null default now(),
+    status text not null default 'ok',
+    error text,
+    params jsonb,
+    trade_count int not null default 0,
+    win_rate_pct numeric,
+    sharpe numeric,
+    max_dd_pct numeric,
+    calmar numeric,
+    psr numeric,
+    total_net_pnl numeric,
+    annual_return_pct numeric,
+    results jsonb
+);
+create index if not exists idx_backtest_runs_at on backtest_runs(run_at desc);
+
 
 -- Row Level Security. Defense uniformity: anon (browser, NEXT_PUBLIC) gets
 -- SELECT on the tables the dashboard reads, nothing else. Service role
@@ -365,6 +383,7 @@ alter table paper_trades         enable row level security;
 alter table paper_signals        enable row level security;
 alter table metrics_snapshot     enable row level security;
 alter table ensemble_attempts    enable row level security;
+alter table backtest_runs        enable row level security;
 
 do $$
 declare t text;
@@ -373,7 +392,8 @@ begin
     'prices','analysis','portfolio','wishlist','transactions',
     'prediction_scores','accuracy_summary','sensei_eod',
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
-    'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts'
+    'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts',
+    'backtest_runs'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('create policy "anon read" on %I for select to anon using (true)', t);

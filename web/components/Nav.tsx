@@ -14,6 +14,7 @@ const items = [
   { href: "/portfolio", label: "Portfolio" },
   { href: "/wishlist", label: "Wishlist" },
   { href: "/trader", label: "Trader" },
+  { href: "/backtest", label: "Backtest" },
   { href: "/sensei", label: "Sensei" },
   { href: "/calculator", label: "Calculator" },
   { href: "/accuracy", label: "Accuracy" },

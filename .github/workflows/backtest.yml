@@ -1,0 +1,34 @@
+name: Backtest v2 Replay
+
+# On-demand, dispatched by web/app/api/backtest/route.ts (Netlify, not
+# Render). Replays the full analysis history through paper_trader's live
+# gate stack in a shadow book - no LLM calls, pure yfinance + Supabase
+# reads, so no OPENROUTER secret needed here.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "backtest_runs row id to fill in"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Run backtest replay
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -m analyzer.backtest "${{ inputs.run_id }}"
