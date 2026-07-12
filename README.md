@@ -1,6 +1,6 @@
 # Arc'emX!
 
-Zero-cost AI stock market predictor for Indian markets. Telegram bot + Streamlit dashboard, powered by Gemini.
+Zero-cost AI stock market predictor for Indian markets. Telegram bot + Next.js dashboard, powered by Gemini.
 
 > **Disclaimer:** Not SEBI-registered investment advice. Educational only. Always DYOR.
 
@@ -10,7 +10,7 @@ Zero-cost AI stock market predictor for Indian markets. Telegram bot + Streamlit
 - **Brain:** Google Gemini 2.0 Flash (free tier)
 - **Storage:** Supabase Postgres (free)
 - **Bot:** python-telegram-bot
-- **Dashboard:** Streamlit (free Cloud)
+- **Dashboard:** Next.js (Netlify free)
 - **Cron:** GitHub Actions (free)
 
 ## Setup (one-time)
@@ -113,18 +113,9 @@ GitHub Actions only runs the cron push, but the bot needs to be live to respond 
 
 #### D) Deploy dashboard
 
-- share.streamlit.io → New app → pick repo → `dashboard/streamlit_app.py`
-- Advanced settings → add secrets (paste contents of .env in TOML format):
-  ```
-  SUPABASE_URL = "https://..."
-  SUPABASE_KEY = "..."
-  ```
-
-#### E) Custom domain (you own one)
-
-Streamlit free tier does NOT support custom domains. Options:
-- Use the `*.streamlit.app` URL
-- v2: rebuild dashboard as Next.js → deploy to Cloudflare Pages free → point your domain via CNAME
+- Netlify → New site → connect GitHub repo, base dir `web/`
+- Add env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_KEY`, `SUPABASE_URL`, `GH_TOKEN`, `GH_REPO`
+- Custom domain: point CNAME at the Netlify site, add it in Netlify's domain settings
 
 ## Importing portfolio from INDmoney
 
@@ -200,7 +191,6 @@ Start with Option 3. Move to Option 2 once habits form.
 - **Gemini free**: 15 req/min, 1500/day for Flash. Daily run = ~2 calls. Fine.
 - **yfinance**: Yahoo can rate-limit if you hammer. Batch downloads only.
 - **GitHub Actions**: 2000 min/month free. Hourly news + daily analysis ≈ 100 min/month. Fine.
-- **Streamlit free**: 1 GB RAM, sleeps after inactivity, wakes on visit.
 - **Supabase free**: 500 MB DB, 50k rows/month writes. Plenty.
 - **Markets closed days**: yfinance returns last close. Indian holidays handled by skipping weekday-only Mon-Fri cron. extend to skip NSE holidays manually if needed.
 - **WhatsApp**: skipped. Meta charges after free trial. Telegram is the cheap path.
@@ -210,7 +200,7 @@ Start with Option 3. Move to Option 2 once habits form.
 ### v1 (current). India equity
 - NSE/BSE stocks (NIFTY 50 + universe + your portfolio + wishlist)
 - Daily AI market call (mood, picks, verdicts)
-- Telegram bot + Streamlit dashboard
+- Telegram bot + Next.js dashboard
 - INDmoney MCP sync (Indian holdings + watchlist)
 
 ### v2. US + global equity
@@ -230,6 +220,5 @@ Start with Option 3. Move to Option 2 once habits form.
 ### v4. automation + polish
 - Per-stock alert thresholds (`/alert TICKER 2500 above`)
 - Sector heatmap on dashboard
-- Replace Streamlit with Next.js (custom domain support)
 - F&O / options chain signals (MCP `get_indian_stocks_option_chain` available)
 - WhatsApp via paid Twilio if user demand high

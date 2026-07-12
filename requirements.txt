@@ -7,8 +7,6 @@ praw==7.8.1
 python-telegram-bot>=22.0
 supabase>=2.10.0
 python-dotenv==1.0.1
-streamlit>=1.40.2
-plotly>=5.24.1
 requests>=2.32.3
 beautifulsoup4>=4.12.3
 nsepython==2.95
