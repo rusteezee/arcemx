@@ -1,0 +1,51 @@
+name: Daily INDmoney Sync
+
+# INDmoney portfolio/watchlist sync used to be Render-only in-process
+# (never had a GH workflow) - one more thing that would go silently dark
+# in a Render blackout like the 26 Jun - 11 Jul pipeline-minutes one.
+# Verified 12 Jul via a throwaway test dispatch that INDmoney's holdings
+# API does NOT rate-limit GitHub Actions' shared runner IPs (clean
+# success, zero retries needed, same call Render already makes).
+#
+# 02:25 UTC = 07:55 IST, Mon-Fri. 5 min before Render's own 08:00 IST
+# APScheduler sync, 25 min before daily_analysis.yml's 02:50 UTC primary
+# run, so fresh portfolio data is available for the morning analysis
+# even if Render never fires. Sync is cheap and idempotent (~2s, just
+# upserts holdings/watchlist), so firing alongside Render's own cron is
+# harmless redundancy, not wasted spend like a duplicate LLM call would be.
+on:
+  schedule:
+    - cron: "25 2 * * 1-5"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Sync INDmoney holdings + watchlist
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import asyncio, os
+          from fetchers.indmoney_mcp import sync_to_supabase
+
+          async def main():
+              uid = os.getenv("TELEGRAM_CHAT_ID", "default")
+              result = await sync_to_supabase(user_id=uid)
+              print("Sync OK:", result)
+
+          asyncio.run(main())
+          EOF
