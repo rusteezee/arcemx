@@ -1,0 +1,36 @@
+name: Stock Analyst
+
+# On-demand only, dispatched by web/app/api/stock-analyst/route.ts (Netlify,
+# not Render) the moment a user requests a fresh single-stock analysis. This
+# used to run in-process on the Render bot; moved here so the feature stays
+# up even if Render's deploy pipeline is silently blocked (see the 26 Jun -
+# 11 Jul pipeline-minutes blackout). The row is inserted by the caller
+# before dispatch, so `run_id` always points at a real pending row.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "stock_analyses row id to fill in"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Run Stock Analyst
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python -m analyzer.stock_analyst_llm "${{ inputs.run_id }}"
