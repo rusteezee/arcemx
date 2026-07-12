@@ -396,7 +396,7 @@ async def trade_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"tier {te.get('cleared_tier', 0)} cleared, next T{te.get('next_tier')} "
                 f"({te.get('next_label', '')})\n"
                 f"  sharpe: {bundle.get('sharpe')} {'✓' if pm.get('sharpe') else '✗'}\n"
-                f"  max_dd: {bundle.get('max_drawdown', {}).get('max_dd_pct')}%"
+                f"  max dd: {bundle.get('max_drawdown', {}).get('max_dd_pct')}%"
                 f" {'✓' if pm.get('max_dd') else '✗'}\n"
                 f"  psr:    {bundle.get('psr')} {'✓' if pm.get('psr') else '✗'}"
             )
@@ -451,7 +451,7 @@ async def backtest_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"{r.get('win_rate_pct') or 0:.1f}%, net: ₹{r.get('total_net_pnl') or 0:+.0f}\n\n")
         msg += "*edge*\n"
         msg += f"sharpe: {r.get('sharpe')}\n"
-        msg += f"max_dd: {r.get('max_dd_pct')}%\n"
+        msg += f"max dd: {r.get('max_dd_pct')}%\n"
         msg += f"psr:    {r.get('psr')}\n"
         msg += f"calmar: {r.get('calmar')}\n\n"
         msg += f"tier {tier.get('cleared_tier', 0)} cleared, next T{tier.get('next_tier')} ({tier.get('next_label', '')})"
