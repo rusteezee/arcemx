@@ -1,0 +1,47 @@
+name: TEST - INDmoney Sync from Actions IP
+
+# Throwaway diagnostic. Answers one question: does INDmoney's holdings
+# API rate-limit/512 GitHub Actions' shared runner IPs the same, better,
+# or worse than Render's? sync_to_supabase() already has its own 3x
+# retry-with-backoff for the known 512/service_error pattern (see
+# fetchers/indmoney_mcp.py) - this just runs the exact function Render
+# already runs, unmodified, from a different IP range, and reports what
+# happens. Delete this workflow once the question is answered either way.
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  test-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Test sync_to_supabase from Actions IP
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import asyncio, os, traceback
+          from fetchers.indmoney_mcp import sync_to_supabase
+
+          async def main():
+              uid = os.getenv("TELEGRAM_CHAT_ID", "default")
+              try:
+                  result = await sync_to_supabase(user_id=uid)
+                  print("SYNC_RESULT_OK:", result)
+              except Exception as e:
+                  print("SYNC_RESULT_FAILED:", type(e).__name__, str(e))
+                  traceback.print_exc()
+
+          asyncio.run(main())
+          EOF
