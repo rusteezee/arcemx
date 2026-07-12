@@ -5,6 +5,7 @@ import { Section } from "@/components/Section";
 import { Stat } from "@/components/Stat";
 import { EmptyState } from "@/components/EmptyState";
 import { LineChart } from "@/components/LineChart";
+import { PortfolioScorecard } from "@/components/PortfolioScorecard";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
 import { fetchQuote } from "@/lib/quotes";
 import { currencySymbol, formatPct, isIndian, stripTicker } from "@/lib/utils";
@@ -278,7 +279,7 @@ export default function PortfolioPage() {
         </h1>
       </div>
 
-      <Section num="001 / 003" title="Summary" glyph="✦">
+      <Section num="001 / 004" title="Summary" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat label="Invested" value={`₹${indInv.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`} />
           <Stat label="Current" value={`₹${indCur.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`} />
@@ -299,7 +300,16 @@ export default function PortfolioPage() {
         )}
       </Section>
 
-      <Section num="002 / 003" title="Holdings" glyph="◈">
+      <Section
+        num="002 / 004"
+        title="Portfolio Scorecard"
+        glyph="◉"
+        description="Live score on your actual holdings. Sector spread, single-name risk, momentum vs NIFTY, drawdown, edge over the index. Red flags and tips to lift the score below."
+      >
+        <PortfolioScorecard />
+      </Section>
+
+      <Section num="003 / 004" title="Holdings" glyph="◈">
         <div className="card overflow-hidden">
           <div className="table-scroll">
             <table className="data">
@@ -339,7 +349,7 @@ export default function PortfolioPage() {
       </Section>
 
       <Section
-        num="003 / 003"
+        num="004 / 004"
         title="Value Timeline"
         glyph="⬡"
         description="Full investing history. Replays every buy and sell against daily close to value the entire portfolio at each point in time."
