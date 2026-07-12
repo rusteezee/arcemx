@@ -47,6 +47,19 @@ export async function POST(req: NextRequest) {
   const sb = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
   try {
+    // Self-cleaning sweep: a row can get stuck in 'pending' forever if the
+    // GH Actions run itself dies before analyzer.stock_analyst_llm's own
+    // except-block ever runs (OOM, runner timeout, network partition mid-
+    // run). 30min is safely above both the client's own poll cap (10min,
+    // see StockAnalyst.tsx) and the worst observed real latency (~15min),
+    // so this only ever catches genuinely-dead rows, never a slow-but-
+    // live one. Best-effort; a sweep failure must not block a new request.
+    const staleCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    await sb.from("stock_analyses").update({
+      status: "failed",
+      error: "Timed out waiting for the job to complete (stale pending >30min).",
+    }).eq("status", "pending").lt("requested_at", staleCutoff);
+
     // Cache hit: same ticker + horizon + today (UTC, matches the DB's
     // cache_day default) already resolved ok. Reuse it, burn no LLM call.
     const today = new Date().toISOString().slice(0, 10);

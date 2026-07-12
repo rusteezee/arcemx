@@ -34,6 +34,15 @@ export async function POST(req: NextRequest) {
   const sb = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
   try {
+    // Self-cleaning sweep: see stock-analyst/route.ts for the full
+    // rationale. 30min is above the client's own 25min poll cap (see
+    // Calculator.tsx), so this only ever catches genuinely-dead rows.
+    const staleCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    await sb.from("calculator_runs").update({
+      status: "failed",
+      error: "Timed out waiting for the job to complete (stale pending >30min).",
+    }).eq("status", "pending").lt("run_at", staleCutoff);
+
     const { data: inserted, error: insErr } = await sb
       .from("calculator_runs")
       .insert({ input_json: inputJson, deterministic_json: detJson, status: "pending" })
