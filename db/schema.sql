@@ -38,7 +38,8 @@ create table if not exists analysis (
     short_term_picks jsonb,
     long_term_picks jsonb,
     reasoning text,
-    raw_json jsonb
+    raw_json jsonb,
+    model_used text
 );
 
 create table if not exists portfolio (

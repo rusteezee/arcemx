@@ -754,7 +754,7 @@ export function StockAnalyst() {
                       // marginRight on button push the X icon hard against
                       // the card's inner edge. The translate keeps the
                       // hover ring inside the rounded card border so the
-                      // 18px corner radius does not clip the focus halo.
+                      // 22px corner radius does not clip the focus halo.
                       style={{ padding: "0.7rem 0 0.7rem 0" }}
                     >
                       <button

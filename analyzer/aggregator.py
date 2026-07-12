@@ -670,6 +670,7 @@ def save(result: dict, payload: dict) -> None:
         "long_term_picks": result.get("long_term_picks") or result.get("worst_performers"),
         "reasoning": result.get("reasoning"),
         "raw_json": result,
+        "model_used": result.get("_model_used"),
     }).execute()
     print("Saved to Supabase")
 

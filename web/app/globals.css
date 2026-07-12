@@ -132,7 +132,7 @@ body {
 .card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 22px;
   transition: border-color 0.2s ease;
 }
 .card:hover { border-color: color-mix(in srgb, var(--foreground) 18%, var(--border)); }
