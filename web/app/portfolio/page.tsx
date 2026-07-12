@@ -47,6 +47,27 @@ interface PriceRow {
   close: number;
 }
 
+interface RealizedRow {
+  fy: string;
+  gain_type: "STCG" | "LTCG";
+  asset_category: string;
+  scrip_name: string;
+  sell_date: string | null;
+  buy_date: string | null;
+  units_sold: number | null;
+  taxable_gain_loss: number;
+}
+
+// Rates as stated in INDmoney's own tax report notes (Sec 111A / 112A,
+// listed equity only). Non-equity assets are taxed differently (slab
+// rate for non-equity STCG, no ₹1.25L exemption for non-equity LTCG)
+// but the imported data is 100% "Indian Stocks" so far - this estimate
+// is scoped to listed-equity rates and says so in the UI, not a general
+// tax calculator.
+const STCG_EQUITY_RATE = 0.20;
+const LTCG_EQUITY_RATE = 0.125;
+const LTCG_EXEMPTION_PER_FY = 125000;
+
 export default function PortfolioPage() {
   const [rows, setRows] = useState<PortfolioRow[]>([]);
   const [timeline, setTimeline] = useState<Array<{ date: string; value: number; invested: number }>>([]);
@@ -58,6 +79,8 @@ export default function PortfolioPage() {
   const [txs, setTxs] = useState<TxRow[]>([]);
   const [prices, setPrices] = useState<PriceRow[]>([]);
   const [firstTxDate, setFirstTxDate] = useState<string | null>(null);
+  const [realized, setRealized] = useState<RealizedRow[]>([]);
+  const [realizedLoading, setRealizedLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -249,6 +272,23 @@ export default function PortfolioPage() {
     setTimeline(series);
   }, [txs, prices, firstTxDate, timelineRange]);
 
+  // Realized P&L from imported tax-report rows (see
+  // fetchers/import_realized_pnl.py). Small table (dozens to low
+  // hundreds of rows even after years of trading), so all aggregation
+  // (per-FY, STCG/LTCG split, tax estimate) happens client-side, same
+  // as the Value Timeline replay above.
+  useEffect(() => {
+    (async () => {
+      const { data } = await sb
+        .from("realized_pnl")
+        .select("fy,gain_type,asset_category,scrip_name,sell_date,buy_date,units_sold,taxable_gain_loss")
+        .eq("user_id", DEFAULT_UID)
+        .order("sell_date", { ascending: false });
+      setRealized((data || []) as RealizedRow[]);
+      setRealizedLoading(false);
+    })();
+  }, []);
+
   if (!loading && !rows.length) {
     return (
       <EmptyState
@@ -270,6 +310,27 @@ export default function PortfolioPage() {
   const usCur = us.reduce((s, r) => s + r.current, 0);
   const usPnl = usCur - usInv;
 
+  const realizedTotal = realized.reduce((s, r) => s + r.taxable_gain_loss, 0);
+  const realizedStcg = realized.filter((r) => r.gain_type === "STCG").reduce((s, r) => s + r.taxable_gain_loss, 0);
+  const realizedLtcg = realized.filter((r) => r.gain_type === "LTCG").reduce((s, r) => s + r.taxable_gain_loss, 0);
+
+  const fyRows = Array.from(new Set(realized.map((r) => r.fy)))
+    .sort()
+    .reverse()
+    .map((fy) => {
+      const rowsForFy = realized.filter((r) => r.fy === fy);
+      const stcg = rowsForFy.filter((r) => r.gain_type === "STCG").reduce((s, r) => s + r.taxable_gain_loss, 0);
+      const ltcg = rowsForFy.filter((r) => r.gain_type === "LTCG").reduce((s, r) => s + r.taxable_gain_loss, 0);
+      // Sec 111A (equity STCG): flat 20%, no exemption. Sec 112A (equity
+      // LTCG): 12.5% only on the amount above the ₹1.25L per-FY
+      // exemption. Net losses owe nothing (they're a carry-forward, not
+      // a payable) - clamp each side at 0 before applying the rate.
+      const stcgTax = Math.max(0, stcg) * STCG_EQUITY_RATE;
+      const ltcgTax = Math.max(0, Math.max(0, ltcg) - LTCG_EXEMPTION_PER_FY) * LTCG_EQUITY_RATE;
+      return { fy, stcg, ltcg, total: stcg + ltcg, estTax: stcgTax + ltcgTax };
+    });
+  const totalEstTax = fyRows.reduce((s, r) => s + r.estTax, 0);
+
   return (
     <>
       <div className="mb-12">
@@ -279,7 +340,7 @@ export default function PortfolioPage() {
         </h1>
       </div>
 
-      <Section num="001 / 004" title="Summary" glyph="✦">
+      <Section num="001 / 005" title="Summary" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat label="Invested" value={`₹${indInv.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`} />
           <Stat label="Current" value={`₹${indCur.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`} />
@@ -301,7 +362,7 @@ export default function PortfolioPage() {
       </Section>
 
       <Section
-        num="002 / 004"
+        num="002 / 005"
         title="Portfolio Scorecard"
         glyph="◉"
         description="Live score on your actual holdings. Sector spread, single-name risk, momentum vs NIFTY, drawdown, edge over the index. Red flags and tips to lift the score below."
@@ -309,7 +370,7 @@ export default function PortfolioPage() {
         <PortfolioScorecard />
       </Section>
 
-      <Section num="003 / 004" title="Holdings" glyph="◈">
+      <Section num="003 / 005" title="Holdings" glyph="◈">
         <div className="card overflow-hidden">
           <div className="table-scroll">
             <table className="data">
@@ -349,7 +410,7 @@ export default function PortfolioPage() {
       </Section>
 
       <Section
-        num="004 / 004"
+        num="004 / 005"
         title="Value Timeline"
         glyph="⬡"
         description="Full investing history. Replays every buy and sell against daily close to value the entire portfolio at each point in time."
@@ -402,6 +463,117 @@ export default function PortfolioPage() {
           />
         ) : (
           <EmptyState title="No historical data in this range" hint="Try a wider range or run the prices fetcher." />
+        )}
+      </Section>
+
+      <Section
+        num="005 / 005"
+        title="Realized P&L"
+        glyph="◐"
+        description="Booked gains and losses from INDmoney's consolidated tax report. Import a fresh report with `python -m fetchers.import_realized_pnl <file.xlsx>` after each download."
+      >
+        {realizedLoading ? (
+          <div className="card p-5">
+            <p className="text-sm text-[var(--muted)]">Loading realized P&L.</p>
+          </div>
+        ) : realized.length === 0 ? (
+          <EmptyState
+            title="No realized P&L imported yet."
+            hint="Download the Consolidated Tax Report from INDmoney (Profile → Tax Reports & Documents) and import it."
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+              <Stat
+                label="Total Realized P&L"
+                value={`₹${realizedTotal >= 0 ? "+" : ""}${realizedTotal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+                deltaPositive={realizedTotal >= 0}
+              />
+              <Stat
+                label="STCG"
+                value={`₹${realizedStcg >= 0 ? "+" : ""}${realizedStcg.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+                deltaPositive={realizedStcg >= 0}
+              />
+              <Stat
+                label="LTCG"
+                value={`₹${realizedLtcg >= 0 ? "+" : ""}${realizedLtcg.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+                deltaPositive={realizedLtcg >= 0}
+              />
+              <Stat
+                label="Est. Tax Owed"
+                value={`₹${totalEstTax.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+              />
+            </div>
+            <p className="text-xs text-[var(--muted)] mb-4">
+              Tax estimate covers listed equity only (Sec 111A STCG at 20%, Sec 112A LTCG at 12.5%
+              above the ₹1,25,000 per-FY exemption) — not a full tax calculator, and not investment
+              or tax advice. Verify against the actual report before filing.
+            </p>
+            <div className="card overflow-hidden mb-4">
+              <div className="table-scroll">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>FY</th>
+                      <th>STCG</th>
+                      <th>LTCG</th>
+                      <th>Total</th>
+                      <th>Est. Tax</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fyRows.map((r) => (
+                      <tr key={r.fy}>
+                        <td className="font-medium whitespace-nowrap">{r.fy}</td>
+                        <td className={`num ${r.stcg >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                          {r.stcg >= 0 ? "+" : ""}₹{r.stcg.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className={`num ${r.ltcg >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                          {r.ltcg >= 0 ? "+" : ""}₹{r.ltcg.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className={`num font-medium ${r.total >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                          {r.total >= 0 ? "+" : ""}₹{r.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="num text-[var(--muted)]">
+                          ₹{r.estTax.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="card overflow-hidden">
+              <div className="table-scroll">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Ticker</th>
+                      <th>Type</th>
+                      <th>Buy Date</th>
+                      <th>Sell Date</th>
+                      <th>Units</th>
+                      <th>Gain/Loss</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {realized.map((r, i) => (
+                      <tr key={i}>
+                        <td className="font-medium whitespace-nowrap">{r.scrip_name}</td>
+                        <td className="whitespace-nowrap">{r.gain_type}</td>
+                        <td className="num whitespace-nowrap">{r.buy_date ?? "·"}</td>
+                        <td className="num whitespace-nowrap">{r.sell_date ?? "·"}</td>
+                        <td className="num">{r.units_sold ?? "·"}</td>
+                        <td className={`num font-medium whitespace-nowrap ${r.taxable_gain_loss >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                          {r.taxable_gain_loss >= 0 ? "+" : ""}₹{r.taxable_gain_loss.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
       </Section>
     </>
