@@ -263,6 +263,20 @@ def _broker_friction(notional_inr: float, action: str) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 # yfinance helpers (always threaded-safe with timeout via yfinance global)
 # ---------------------------------------------------------------------------
+def _flatten_yf_columns(h):
+    """yfinance >=0.2.5x returns MultiIndex columns (Price, Ticker) even
+    for a single-ticker download. "Volume" not in h / h["Close"] then
+    silently fail (KeyError swallowed by the caller's try/except, or a
+    false "not in" check), which is why the live liquidity gate returned
+    None on every real signal and paper_trades has stayed empty since
+    launch. Flatten to the Price level so plain column-name access works
+    like it did on older yfinance versions."""
+    if h is not None and hasattr(h.columns, "nlevels") and h.columns.nlevels > 1:
+        h = h.copy()
+        h.columns = h.columns.get_level_values(0)
+    return h
+
+
 def _yf_avg_turnover(ticker: str, days: int = 20) -> float | None:
     """Rolling-20-session average turnover (qty * close) in INR."""
     try:
@@ -274,6 +288,7 @@ def _yf_avg_turnover(ticker: str, days: int = 20) -> float | None:
             progress=False,
             threads=False,
         )
+        h = _flatten_yf_columns(h)
         if h is None or h.empty or "Volume" not in h or "Close" not in h:
             return None
         h = h.tail(days)
@@ -299,6 +314,7 @@ def _yf_next_open(ticker: str, after: datetime) -> float | None:
             progress=False,
             threads=False,
         )
+        h = _flatten_yf_columns(h)
         if h is None or h.empty or "Open" not in h:
             return None
         for ts, row in h.iterrows():
@@ -324,6 +340,7 @@ def _yf_history_after(ticker: str, since: datetime, until: datetime):
             progress=False,
             threads=False,
         )
+        h = _flatten_yf_columns(h)
         if h is None or h.empty:
             return None
         return h
