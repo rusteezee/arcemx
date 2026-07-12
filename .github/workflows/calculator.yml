@@ -1,0 +1,35 @@
+name: Calculator LLM Enrichment
+
+# On-demand, dispatched by web/app/api/calc-explain/route.ts (Netlify, not
+# Render) the moment a user runs the deterministic Calculator and asks
+# Sensei to wrap it with context. Same rationale as stock_analyst.yml -
+# this used to run in-process on the Render bot, so a Render outage or
+# blocked deploy took the feature down with zero warning.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "calculator_runs row id to fill in"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Run Calculator LLM
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python -m analyzer.calculator_llm "${{ inputs.run_id }}"
