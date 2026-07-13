@@ -58,7 +58,7 @@ def _range_width_pct(rng) -> float | None:
 REQUIRED_KEYS = (
     "market_mood", "confidence", "nifty_outlook", "nifty_5d_outlook",
     "nifty_20d_outlook", "volatility_regime", "sensex_outlook",
-    "short_term_picks", "long_term_picks", "portfolio_verdicts",
+    "top_performers", "worst_performers", "portfolio_verdicts",
     "wishlist_signals", "reasoning_breakdown",
 )
 RB_KEYS = ("technicals", "macro", "news_flow", "sentiment", "prior_call_check")
@@ -72,7 +72,7 @@ def _score(out: dict) -> dict:
     missing = [k for k in REQUIRED_KEYS if k not in out]
     nifty = out.get("nifty_outlook") or {}
     rng_w = _range_width_pct(nifty.get("range") or "")
-    picks = out.get("short_term_picks") or []
+    picks = out.get("top_performers") or []
     picks_with_targets = sum(
         1 for p in picks
         if isinstance(p, dict) and p.get("target") and p.get("stop_loss"))
