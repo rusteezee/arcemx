@@ -413,7 +413,13 @@ Each top_performers / worst_performers entry MUST quote:
 - expected_move_pct (signed: + for top, - for worst, the move vs prior close you expect)
 - conviction A|B|C (per the tiering doctrine below)
 - win_prob (probability the directional call is right; A->0.65-0.80, B->0.50-0.65,
-  C->0.35-0.50), loss_prob (1 - win_prob)
+  C->0.35-0.50), loss_prob (1 - win_prob). DO NOT restate the same win_prob for
+  every pick in a tier as a shortcut - it is a continuous per-pick estimate, not
+  a tier label. Two B-tier picks with different evidence strength (e.g. RSI 32
+  vs RSI 44, one high-materiality catalyst vs none) must get different win_prob
+  values within the band. Identical win_prob across 3+ picks in the same list is
+  a signal you defaulted to a canned number instead of estimating - go back and
+  differentiate each one against its own thesis.
 - expected_return_pct (upside magnitude if right), expected_loss_pct (downside if wrong)
 - expected_edge_pct (signed = expected_return_pct * win_prob - expected_loss_pct * loss_prob)
 - reasons_could_be_wrong (>=1 concrete failure mode citing the data field that contradicts)
@@ -1097,7 +1103,44 @@ def analyze(payload: dict, model_name: str | None = None) -> dict:
     except Exception as e:
         print(f"  top_performers bear pass outer: {str(e)[:120]}")
     _enforce_pick_quality(result)
+    _check_win_prob_flatness(result)
     return result
+
+
+def _check_win_prob_flatness(result: dict) -> None:
+    """Detect the degenerate mode where the model stamps one canned win_prob
+    across every pick in a list instead of estimating per-pick (root-caused
+    2026-07-13: multiple recent runs showed 1 unique win_prob across 8+ picks
+    while thesis/entry/target genuinely varied - the model was templating the
+    tier's band midpoint rather than differentiating). Uses the PRE-dampen
+    stated value (win_prob_raw when the bear pass ran) so a correctly-applied
+    bear-pass dampening never itself trips this. Logs only; never blocks a
+    save, so a false positive costs nothing but a log line."""
+    if not isinstance(result, dict):
+        return
+    for key in ("top_performers", "worst_performers"):
+        picks = result.get(key)
+        if not isinstance(picks, list) or len(picks) < 4:
+            continue
+        vals = []
+        for p in picks:
+            if not isinstance(p, dict):
+                continue
+            v = p.get("win_prob_raw", p.get("win_prob"))
+            if isinstance(v, (int, float)):
+                vals.append(round(float(v), 4))
+        if len(vals) < 4:
+            continue
+        unique = len(set(vals))
+        if unique == 1:
+            print(f"  WARNING: {key} win_prob is FLAT ({vals[0]}) across all "
+                  f"{len(vals)} picks - model likely templated instead of "
+                  f"estimating per-pick")
+            result.setdefault("win_prob_flatness_warning", []).append(
+                {"key": key, "n_picks": len(vals), "value": vals[0]})
+        elif unique <= max(2, len(vals) // 4):
+            print(f"  WARNING: {key} win_prob has low variance ({unique} "
+                  f"unique across {len(vals)} picks)")
 
 
 
