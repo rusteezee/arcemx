@@ -1,13 +1,13 @@
 # Arc'emX!
 
-Zero-cost AI stock market predictor for Indian markets. Telegram bot + Next.js dashboard, powered by Gemini.
+Zero-cost AI stock market predictor for Indian markets. Telegram bot + Next.js dashboard, powered by OpenRouter.
 
 > **Disclaimer:** Not SEBI-registered investment advice. Educational only. Always DYOR.
 
 ## Stack
 
-- **Data:** yfinance, RSS feeds, GNews, pytrends, PRAW (Reddit)
-- **Brain:** Google Gemini 2.0 Flash (free tier)
+- **Data:** yfinance, RSS feeds, GNews, PRAW (Reddit)
+- **Brain:** OpenRouter free-tier models (nvidia/nemotron-3-super-120b-a12b:free primary)
 - **Storage:** Supabase Postgres (free)
 - **Bot:** python-telegram-bot
 - **Dashboard:** Next.js (Netlify free)
@@ -31,7 +31,7 @@ Fill `.env` with your keys.
 
 | Service | Where | What to grab |
 |---|---|---|
-| Gemini | https://aistudio.google.com/apikey | API key |
+| OpenRouter | https://openrouter.ai/keys | API key |
 | Supabase | https://supabase.com → new project | Project URL + anon public key |
 | Telegram | Open Telegram → message `@BotFather` → `/newbot` | Bot token |
 | Telegram chat ID | Run bot, send `/start`, copy ID from reply | Numeric chat ID |
@@ -51,7 +51,7 @@ python -m fetchers.prices
 # Fetch news once
 python -m fetchers.news
 
-# Run full analysis (uses Gemini quota)
+# Run full analysis (uses OpenRouter quota)
 python -m analyzer.aggregator
 
 # Start bot (Ctrl+C to stop)
@@ -177,22 +177,27 @@ Start with Option 3. Move to Option 2 once habits form.
 | `/buy TICKER PRICE QTY` | Add holding |
 | `/sell TICKER` | Remove holding |
 | `/add_wish TICKER` `/rm_wish TICKER` | Manage wishlist |
+| `/alert TICKER PRICE above\|below` | Set a price alert |
+| `/alerts` `/rm_alert ID` | List / cancel alerts |
 | `/import` | Upload CSV |
+| `/sync` | Pull holdings + watchlist from INDmoney |
+| `/trade` | Paper-trader status + tier gate |
+| `/backtest` | Latest full-history replay result |
 
 ## How the analysis works
 
-1. **Technical screener** (`analyzer/technical.py`). pulls 1yr OHLCV for full universe, computes RSI/MACD/MAs/Bollinger, scores each stock, picks top 15 bullish + 15 bearish. This avoids dumping 500 stocks into Gemini (token cost + rate limit).
-2. **News + trends + reddit**. collected fresh.
-3. **Gemini call**. single big prompt with technical shortlist + news headlines + trend scores + Reddit hot. Returns structured JSON.
+1. **Technical screener** (`analyzer/technical.py`). pulls 1yr OHLCV for full universe, computes RSI/MACD/MAs/Bollinger, scores each stock, picks top 15 bullish + 15 bearish. This avoids dumping 500 stocks into the LLM (token cost + rate limit).
+2. **News + reddit**. collected fresh.
+3. **OpenRouter call**. single big prompt with technical shortlist + news headlines + Reddit hot. Returns structured JSON.
 4. **Save → push**. Supabase row + Telegram message.
 
 ## Limits / gotchas
 
-- **Gemini free**: 15 req/min, 1500/day for Flash. Daily run = ~2 calls. Fine.
+- **OpenRouter free**: 20 req/min; 50/day under $10 lifetime credit, 1000/day above it. Daily run = a few calls. Fine.
 - **yfinance**: Yahoo can rate-limit if you hammer. Batch downloads only.
 - **GitHub Actions**: 2000 min/month free. Hourly news + daily analysis ≈ 100 min/month. Fine.
 - **Supabase free**: 500 MB DB, 50k rows/month writes. Plenty.
-- **Markets closed days**: yfinance returns last close. Indian holidays handled by skipping weekday-only Mon-Fri cron. extend to skip NSE holidays manually if needed.
+- **Markets closed days**: yfinance returns last close. `analyzer/market_calendar.is_trading_day()` skips weekends + NSE holidays (see `data/nse_holidays_2026.json`) for the morning analysis and grader crons.
 - **WhatsApp**: skipped. Meta charges after free trial. Telegram is the cheap path.
 
 ## Roadmap
@@ -208,7 +213,6 @@ Start with Option 3. Move to Option 2 once habits form.
 - Global indices (S&P, Nasdaq, FTSE, Nikkei) deeper integration
 - Cross-market correlation signals
 - Forex (USD/INR) signal
-- Backtest module. replay past LLM calls vs actuals
 
 ### v3. multi-asset
 - Mutual funds (via INDmoney MF MCP tools. `get_mf_funds_details`, SIPs)
@@ -218,7 +222,6 @@ Start with Option 3. Move to Option 2 once habits form.
 - Net worth across asset classes (use `networth_snapshot` MCP tool)
 
 ### v4. automation + polish
-- Per-stock alert thresholds (`/alert TICKER 2500 above`)
 - Sector heatmap on dashboard
 - F&O / options chain signals (MCP `get_indian_stocks_option_chain` available)
 - WhatsApp via paid Twilio if user demand high
