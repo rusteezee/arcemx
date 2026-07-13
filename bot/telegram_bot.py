@@ -591,14 +591,6 @@ async def handle_doc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Imported {n} holdings. /portfolio to view.")
 
 
-async def push_daily(app: Application):
-    """Called by cron via /push endpoint or separate script."""
-    if not CHAT_ID:
-        return
-    fake_update = type("U", (), {"message": type("M", (), {"reply_text": lambda *a, **k: app.bot.send_message(chat_id=CHAT_ID, text=a[0] if a else k.get("text", ""), parse_mode=k.get("parse_mode"))})()})()
-    await today(fake_update, None)
-
-
 async def scheduled_sync():
     """Daily 8 AM IST INDmoney sync before analysis runs at 8:30."""
     from fetchers.indmoney_mcp import sync_to_supabase
