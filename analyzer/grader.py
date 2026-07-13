@@ -672,7 +672,8 @@ def grade_all(lookback_days: int = 90):
                 # name landed, positive lag = correct short. At 7/14/30d
                 # this measures whether the flagged weakness PERSISTS, the
                 # signal a multi-day short actually needs.
-                picks = raw.get("worst_performers", []) or []
+                picks = [p for p in (raw.get("worst_performers", []) or [])
+                        if isinstance(p, dict)]
                 deltas = []
                 ticker_results = []
                 by_tier: dict[str, list[tuple[str, float]]] = {"A": [], "B": [], "C": []}
@@ -729,8 +730,17 @@ def grade_all(lookback_days: int = 90):
             # scatter covers these too. 1-session horizon = the "single
             # day" framing; needs the next session closed (age >= 1).
             if age >= 1:
-                tops = raw.get("top_performers", []) or []
-                worsts = raw.get("worst_performers", []) or []
+                # Filter non-dict entries: the model's JSON generation
+                # occasionally glitches on long responses and spills a
+                # neighboring key's field names as bare string fragments
+                # into these lists (root-caused 2026-07-13). A bare
+                # .get() on a str would crash this row's whole try block,
+                # silently losing every dimension scored after this point
+                # for as long as the row stays in the 90d lookback.
+                tops = [p for p in (raw.get("top_performers", []) or [])
+                       if isinstance(p, dict)]
+                worsts = [p for p in (raw.get("worst_performers", []) or [])
+                         if isinstance(p, dict)]
 
                 top_alphas, top_results, top_wins, top_confs = [], [], 0, []
                 for p in tops[:15]:

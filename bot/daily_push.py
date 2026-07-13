@@ -23,8 +23,12 @@ async def push():
     raw = a.get("raw_json") or {}
     mood = raw.get("market_mood", "neutral").upper()
     conf = raw.get("confidence", "?")
-    gainers = raw.get("top_performers", [])[:5]
-    losers = raw.get("worst_performers", [])[:5]
+    # Filter non-dict entries: the model's JSON generation occasionally
+    # glitches on long responses and spills a neighboring key's field
+    # names as bare string fragments into these lists (root-caused
+    # 2026-07-13). A bare .get() on a str crashes the whole push.
+    gainers = [p for p in raw.get("top_performers", []) if isinstance(p, dict)][:5]
+    losers = [p for p in raw.get("worst_performers", []) if isinstance(p, dict)][:5]
 
     msg = f"*Arc'emX! Daily Market Call*\n*Mood:* {mood} (conf: {conf})\n\n"
     msg += f"*Nifty:* {raw.get('nifty_outlook', {}).get('direction', '?')} | {raw.get('nifty_outlook', {}).get('range', '')}\n"

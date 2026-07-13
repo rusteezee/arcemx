@@ -627,6 +627,16 @@ def eval_signals(now: datetime | None = None) -> dict:
         for source_kind, key in (("holding_outlook_1d", "holding_outlooks_1d"),
                                  ("wishlist_outlook_1d", "wishlist_outlooks_1d")):
             for outlook in (raw.get(key) or []):
+                # The model's JSON generation occasionally glitches on long
+                # responses and spills a neighboring key's field names as
+                # bare string fragments into this list (root-caused
+                # 2026-07-13: e.g. "worst_performers': [{" showing up as a
+                # top_performers "entry"). A bare .get() on a str crashes
+                # the whole eval_signals() pass, silently dropping every
+                # remaining analysis row in this call's window - skip
+                # non-dict entries instead of trusting the schema blindly.
+                if not isinstance(outlook, dict):
+                    continue
                 counts["evaluated"] += 1
                 outcome = _evaluate_outlook(sb, a, outlook, source_kind, now,
                                            portfolio_base=portfolio_base)
@@ -641,6 +651,8 @@ def eval_signals(now: datetime | None = None) -> dict:
         # vision — names here are chosen from the whole NSE universe, not
         # the user's existing exposure.
         for tp in (raw.get("top_performers") or []):
+            if not isinstance(tp, dict):
+                continue
             counts["evaluated"] += 1
             outcome = _evaluate_top_performer(sb, a, tp, now,
                                               portfolio_base=portfolio_base)
