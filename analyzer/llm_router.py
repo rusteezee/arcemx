@@ -1137,10 +1137,13 @@ def _check_win_prob_flatness(result: dict) -> None:
                   f"{len(vals)} picks - model likely templated instead of "
                   f"estimating per-pick")
             result.setdefault("win_prob_flatness_warning", []).append(
-                {"key": key, "n_picks": len(vals), "value": vals[0]})
+                {"key": key, "n_picks": len(vals), "value": vals[0], "unique": 1})
         elif unique <= max(2, len(vals) // 4):
             print(f"  WARNING: {key} win_prob has low variance ({unique} "
                   f"unique across {len(vals)} picks)")
+            result.setdefault("win_prob_flatness_warning", []).append(
+                {"key": key, "n_picks": len(vals), "unique": unique,
+                 "values": sorted(set(vals))})
 
 
 
