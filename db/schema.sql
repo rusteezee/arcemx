@@ -372,6 +372,77 @@ create table if not exists alerts (
 create index if not exists idx_alerts_status on alerts(status);
 create index if not exists idx_alerts_user on alerts(user_id, status);
 
+-- Tables created out-of-band (never had a schema.sql entry), reconstructed
+-- 2026-07-13 from live column shapes for rebuild parity. See blueprints/16-hygiene-sweep.md.
+create extension if not exists vector;
+
+create table if not exists stock_analyses (
+    id bigserial primary key,
+    requested_at timestamptz not null default now(),
+    user_id text not null default 'default',
+    ticker text not null,
+    horizon_days int,
+    deep_payload jsonb,
+    llm_json jsonb,
+    model_used text,
+    status text not null default 'pending',
+    error text,
+    graded_at timestamptz,
+    grade_score numeric,
+    grade_notes text,
+    cache_day date
+);
+create index if not exists idx_stock_analyses_ticker_day on stock_analyses(ticker, cache_day);
+
+-- OAuth token storage for fetchers/indmoney_mcp.py. Holds real access/refresh
+-- tokens - RLS must never carry an anon policy (verified anon-blocked 2026-07-13).
+create table if not exists mcp_tokens (
+    id bigserial primary key,
+    provider text not null,
+    user_id text not null default 'default',
+    tokens jsonb,
+    client_info jsonb,
+    updated_at timestamptz not null default now(),
+    unique(provider, user_id)
+);
+
+-- 1024-dim to match the current encoder (analyzer/embed.py). No anon policy -
+-- feature_text/vectors are internal training data, not dashboard-facing.
+create table if not exists prediction_embeddings (
+    id bigserial primary key,
+    analysis_id bigint,
+    dimension text not null,
+    feature_text text,
+    feature_vector jsonb,
+    embedding vector(1024),
+    outcome_score numeric,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_pred_emb_analysis on prediction_embeddings(analysis_id, dimension);
+
+create table if not exists realized_pnl (
+    id bigserial primary key,
+    user_id text not null default 'default',
+    fy text not null,
+    gain_type text not null,
+    asset_category text not null,
+    scrip_name text,
+    isin text,
+    sell_date date,
+    buy_date date,
+    holding_period text,
+    units_sold numeric,
+    sell_value numeric,
+    buy_value numeric,
+    gross_gain_loss numeric,
+    expense numeric,
+    taxable_gain_loss numeric,
+    currency text default 'INR',
+    source_file text,
+    imported_at timestamptz not null default now()
+);
+create index if not exists idx_realized_pnl_user_fy on realized_pnl(user_id, fy);
+
 
 -- Row Level Security. Defense uniformity: anon (browser, NEXT_PUBLIC) gets
 -- SELECT on the tables the dashboard reads, nothing else. Service role
@@ -399,6 +470,10 @@ alter table metrics_snapshot     enable row level security;
 alter table ensemble_attempts    enable row level security;
 alter table backtest_runs        enable row level security;
 alter table alerts               enable row level security;
+alter table stock_analyses       enable row level security;
+alter table realized_pnl         enable row level security;
+alter table mcp_tokens           enable row level security;
+alter table prediction_embeddings enable row level security;
 
 do $$
 declare t text;
@@ -408,10 +483,12 @@ begin
     'prediction_scores','accuracy_summary','sensei_eod',
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
     'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts',
-    'backtest_runs'
+    'backtest_runs','stock_analyses','realized_pnl'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('create policy "anon read" on %I for select to anon using (true)', t);
   end loop;
 end$$;
--- No anon policy on: news, trends, ticker_enrichment (fully blocked).
+-- No anon policy on: news, trends, ticker_enrichment, mcp_tokens (OAuth
+-- tokens - must never be anon-readable), prediction_embeddings (internal
+-- training data). All fully blocked to anon.
