@@ -1,0 +1,21 @@
+{
+  "_source": "NSE equity segment trading holidays, cross-verified 2026-07-13 via zerodha.com/marketintel/holiday-calendar and groww.in/p/nse-holidays against the official NSE circular list",
+  "_note": "Weekend-coinciding holidays (e.g. Maha Shivaratri, Independence Day in 2026) are omitted - is_trading_day() already excludes Sat/Sun.",
+  "holidays": [
+    {"date": "2026-01-26", "name": "Republic Day"},
+    {"date": "2026-03-03", "name": "Holi"},
+    {"date": "2026-03-26", "name": "Shri Ram Navami"},
+    {"date": "2026-03-31", "name": "Shri Mahavir Jayanti"},
+    {"date": "2026-04-03", "name": "Good Friday"},
+    {"date": "2026-04-14", "name": "Dr. Baba Saheb Ambedkar Jayanti"},
+    {"date": "2026-05-01", "name": "Maharashtra Day"},
+    {"date": "2026-05-28", "name": "Bakri Id"},
+    {"date": "2026-06-26", "name": "Muharram"},
+    {"date": "2026-09-14", "name": "Ganesh Chaturthi"},
+    {"date": "2026-10-02", "name": "Mahatma Gandhi Jayanti"},
+    {"date": "2026-10-20", "name": "Dussehra"},
+    {"date": "2026-11-10", "name": "Diwali-Balipratipada"},
+    {"date": "2026-11-24", "name": "Prakash Gurpurb Sri Guru Nanak Dev"},
+    {"date": "2026-12-25", "name": "Christmas"}
+  ]
+}

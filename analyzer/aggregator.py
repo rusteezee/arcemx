@@ -13,7 +13,6 @@ from supabase import create_client
 
 from fetchers.prices import load_universe, latest_snapshot
 from fetchers.news import fetch_rss, fetch_gnews
-from fetchers.trends import fetch_trends
 from fetchers.reddit import fetch_hot
 from fetchers.fii_dii import fetch_latest as fetch_fii_dii
 from analyzer.technical import screen_universe, rank_candidates
@@ -387,9 +386,6 @@ def build_payload() -> dict:
     print(f"News digest: {news_digest.get('n_stories')} stories from "
           f"{news_digest.get('n_raw')} raw; net_sentiment {news_digest.get('net_sentiment')}")
 
-    print("Fetching trends...")
-    trends = fetch_trends()
-
     print("Fetching reddit...")
     reddit_posts = fetch_hot(limit=15)
 
@@ -584,7 +580,6 @@ def build_payload() -> dict:
         "technical_bullish_top": ranked["bullish"],
         "technical_bearish_top": ranked["bearish"],
         "news_digest": news_digest,
-        "google_trends": trends,
         "reddit_hot": reddit_posts[:20],
         "news_lookback_hours": 72,
         "news_recent": news_compact,
@@ -628,6 +623,11 @@ def run_if_stale(max_age_minutes: int = 90,
     a sleeping Render dyno). Whoever fires second sees a fresh row and
     exits without burning a second LLM call. Returns None when skipped.
     """
+    from zoneinfo import ZoneInfo
+    from analyzer.market_calendar import is_trading_day
+    if not is_trading_day(datetime.now(ZoneInfo("Asia/Kolkata")).date()):
+        print("Not an NSE trading day (weekend/holiday); skipping run")
+        return None
     age = latest_run_age_minutes()
     if age is not None and age < max_age_minutes:
         print(f"Analysis is fresh ({age:.0f} min old < {max_age_minutes} min "

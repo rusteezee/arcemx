@@ -1614,6 +1614,12 @@ def _prune_accuracy_summary(history_days: int = 400) -> None:
 
 
 if __name__ == "__main__":
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+    from analyzer.market_calendar import is_trading_day
+    if not is_trading_day(_dt.now(ZoneInfo("Asia/Kolkata")).date()):
+        print("Not an NSE trading day (weekend/holiday); skipping grader pass")
+        raise SystemExit(0)
     grade_all(lookback_days=90)
     compute_summaries()
     _grade_stock_analyses()
