@@ -99,17 +99,29 @@ Manually trigger first run: Actions tab → "Daily Market Analysis" → Run work
 
 #### C) Deploy bot 24×7
 
-GitHub Actions only runs the cron push, but the bot needs to be live to respond to `/today`, `/portfolio` etc. Pick one:
+GitHub Actions only runs the cron push, but the bot needs to be live to respond to `/today`, `/portfolio` etc.
 
-**Option 1: Render free** (sleeps after 15 min idle but wakes on Telegram poll)
+**Option 1: Oracle Cloud Always Free (primary, recommended)** - an ARM VM under systemd, $0 recurring, no sleep/idle behavior like Render free.
+
+1. **[USER]** Sign up at oracle.com/cloud/free with a real credit card, home region Singapore (`ap-singapore-1`). Signup friction from India is real ("Error Processing Transaction" is common) - retry with a different card/day if it happens.
+2. **[USER]** Convert the tenancy to Pay-As-You-Go (Billing → Upgrade). This exempts the instance from Always Free's idle-reclaim policy (reclaimed when 7-day p95 CPU/network/memory are all under 20%, which the bot's idle load easily triggers) while staying $0 as long as usage stays inside the Always Free shapes.
+3. **[USER]** Create instance: `VM.Standard.A1.Flex`, 2 OCPU / 12 GB, Ubuntu 24.04 ARM, 47GB boot volume. Reserve a public IP and attach it (reserved IPs persist across instance rebuilds). Open ingress 80/443/22 in the VCN security list. Save the SSH key.
+4. SSH in, then: `git clone https://github.com/rusteezee/arcemx.git /tmp/arcemx-bootstrap && sudo bash /tmp/arcemx-bootstrap/deploy/oracle/setup.sh` (or just clone anywhere and run `deploy/oracle/setup.sh` - it clones its own copy to `/opt/arcemx`).
+5. **[USER]** Fill in `/etc/arcemx.env` with the real values (same 10 vars as Render's env, see `deploy/oracle/arcemx.env.template` for the exact list), then `sudo systemctl restart arcemx-bot`.
+6. Verify: `curl http://<reserved-ip>/health` returns `OK`, `/today` answers in Telegram, `journalctl -u arcemx-bot -f` shows the APScheduler jobs registering.
+7. **[USER]** Cutover: update Netlify env `ARCEMX_BOT_URL` to `http://<reserved-ip>` (both deploy contexts - watch for the greyed-out "same value" UI quirk), redeploy the dashboard, verify a dashboard-triggered sync works end-to-end. Then suspend (don't delete) the Render service for ~2 weeks before retiring it for good.
+
+Recovery doctrine: the box holds **zero unique state** - Supabase has all data, GitHub has all code including this deploy script, INDmoney tokens live in Supabase's `mcp_tokens` table. A destroyed/reclaimed instance is a fresh `setup.sh` run plus refilling `/etc/arcemx.env`, not a disaster.
+
+If Oracle signup fails outright (capacity errors, persistent card rejection): **Hetzner CAX11** (~₹500/mo ARM) is the paid fallback - same `deploy/oracle/` scripts work on any Ubuntu 24.04 box, Oracle-specific only in name.
+
+**Option 2: Render free** (sleeps after 15 min idle but wakes on Telegram poll; forced onto a legacy plan with a 5GB/month bandwidth cap 1 Aug 2026)
 - render.com → New Web Service → connect GitHub repo
 - Build: `pip install -r requirements.txt`
 - Start: `python -m bot.telegram_bot`
 - Add same env vars in Render dashboard
 
-**Option 2: Local PC**. just run `python -m bot.telegram_bot` whenever you want it on.
-
-**Option 3: Fly.io free tier**. better uptime than Render free.
+**Option 3: Local PC**. just run `python -m bot.telegram_bot` whenever you want it on.
 
 #### D) Deploy dashboard
 

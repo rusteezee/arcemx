@@ -1,0 +1,8 @@
+# Plain HTTP reverse proxy on the bare reserved IP - no domain yet, so no
+# automatic TLS (Let's Encrypt needs a hostname for the normal ACME flow).
+# ARCEMX_BOT_URL stays http://<reserved-ip> until a free DuckDNS name gets
+# pointed at this box, at which point this file gets a real site block and
+# Caddy issues a cert automatically with zero other changes.
+:80 {
+	reverse_proxy localhost:8080
+}

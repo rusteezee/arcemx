@@ -1,0 +1,16 @@
+[Unit]
+Description=Arc'emX! Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/.venv/bin/python -m bot.telegram_bot
+Restart=always
+RestartSec=10
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target
