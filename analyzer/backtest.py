@@ -55,6 +55,8 @@ from analyzer.paper_trader import (
     CALIBRATION_MIN_PAIRS,
     REGIME_GATE_ON,
     REGIME_HALF_MULT,
+    EARNINGS_BLACKOUT_SESSIONS,
+    _weekday_sessions_between,
     _apply_slippage,
     _broker_friction,
     _conf_from_winprob,
@@ -87,6 +89,7 @@ class HistCache:
         self.start = start - timedelta(days=35)
         self.end = end + timedelta(days=1)
         self._cache: dict[str, Any] = {}
+        self._earnings_cache: dict[str, Any] = {}
 
     def get(self, ticker: str):
         if ticker in self._cache:
@@ -156,6 +159,40 @@ class HistCache:
             if not vix_sliced.empty:
                 vix_value = float(vix_sliced.iloc[-1])
         return regime_from_history(nifty_sliced, vix_value, asof)
+
+    def next_earnings_asof(self, ticker: str, asof: date) -> date | None:
+        """As-of next-earnings date for the earnings-blackout gate
+        (blueprint 07). Documented asymmetry vs the live path
+        (paper_trader._next_earnings_date): yfinance's Ticker.calendar
+        only ever shows genuinely UPCOMING events, which is exactly what
+        a live call wants but useless for replaying a past date - there
+        is no way to ask "what did the calendar say on 20 June" after
+        the fact. Ticker.earnings_dates instead returns a DataFrame
+        covering BOTH past (with Reported EPS filled) and future events,
+        so this reconstructs what the live gate would have seen as
+        "upcoming" at `asof` by taking the earliest event on/after it.
+        This is the only way to get as-of-correct historical earnings
+        dates from yfinance - not a shortcut, the live endpoint simply
+        has no historical coverage at all. Cached once per ticker (not
+        per event) same as get() above. Fails open (returns None) if
+        the ticker has no earnings_dates data at all."""
+        if ticker not in self._earnings_cache:
+            try:
+                df = yf.Ticker(ticker).earnings_dates
+            except Exception:
+                df = None
+            self._earnings_cache[ticker] = df
+        df = self._earnings_cache[ticker]
+        if df is None or df.empty:
+            return None
+        try:
+            dates = sorted({d.date() if hasattr(d, "date") else d for d in df.index})
+        except Exception:
+            return None
+        for d in dates:
+            if d >= asof:
+                return d
+        return None
 
     def bars_after(self, ticker: str, since: date, until: date):
         h = self.get(ticker)
@@ -345,6 +382,12 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
     else:
         regime = None
 
+    next_earnings = hist.next_earnings_asof(ticker, asof.date())
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(asof.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            return "earnings_blackout"
+
     avg_turnover = hist.avg_turnover(ticker, asof.date())
     if avg_turnover is None:
         return "no_liquidity_data"
@@ -410,6 +453,12 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
             return "regime_off"
     else:
         regime = None
+
+    next_earnings = hist.next_earnings_asof(ticker, asof.date())
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(asof.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            return "earnings_blackout"
 
     avg_turnover = hist.avg_turnover(ticker, asof.date())
     if avg_turnover is None:
@@ -480,6 +529,12 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
             return "regime_off"
     else:
         regime = None
+
+    next_earnings = hist.next_earnings_asof(ticker, asof.date())
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(asof.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            return "earnings_blackout"
 
     avg_turnover = hist.avg_turnover(ticker, asof.date())
     if avg_turnover is None:

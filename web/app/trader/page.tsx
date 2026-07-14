@@ -78,6 +78,7 @@ const SKIP_LABEL: Record<string, string> = {
   ticker_freeze: "Ticker frozen (3+ losses 90d)",
   no_ticker: "Missing ticker",
   regime_off: "Regime risk-off",
+  earnings_blackout: "Earnings blackout",
 };
 
 const EXIT_LABEL: Record<string, string> = {

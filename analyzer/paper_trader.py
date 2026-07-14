@@ -35,7 +35,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import yfinance as yf
@@ -90,6 +90,8 @@ REGIME_GATE_ON = os.getenv("ARCEMX_REGIME_GATE", "1") != "0"  # market-regime
                                  # filter (blueprint 03); env-disable via
                                  # ARCEMX_REGIME_GATE=0
 REGIME_HALF_MULT = 0.5           # position-size multiplier when regime risk_mode == "half"
+EARNINGS_BLACKOUT_SESSIONS = 3   # no new entries when next earnings is within this many
+                                 # trading sessions ahead, or yesterday/today (blueprint 07)
 
 
 def _sb():
@@ -405,6 +407,73 @@ def _ticker_sector_and_cap(sb, ticker: str) -> tuple[str | None, str]:
     return None, "small"
 
 
+def _weekday_sessions_between(d1: date, d2: date) -> int:
+    """Signed count of weekdays (Mon-Fri) walked from d1 to d2 - positive
+    when d2 is after d1, negative when before, 0 when equal. Does not
+    account for actual NSE holidays (blueprint 07 gotcha 4: no holiday
+    lib), a small accepted approximation for a 3-session blackout
+    window - a real holiday inside the window just makes the blackout
+    marginally wider than 3 trading sessions, never narrower."""
+    if d2 == d1:
+        return 0
+    step = 1 if d2 > d1 else -1
+    count = 0
+    cur = d1
+    while cur != d2:
+        cur += timedelta(days=step)
+        if cur.weekday() < 5:
+            count += step
+    return count
+
+
+def _next_earnings_date(sb, ticker: str, cache: dict | None = None) -> date | None:
+    """Next-earnings date for the earnings-blackout gate. Reads the
+    aggregator's ticker_enrichment cache first (populated for the
+    holdings/wishlist focus list by aggregator._ticker_calendar); falls
+    back to one direct yf.Ticker(t).calendar call for tickers outside
+    that cache (most top_performer picks, drawn from the full NSE
+    universe, never get an enrichment row). `cache` is a per-eval-pass
+    dict the caller threads through (see eval_signals) so a ticker
+    appearing in multiple picks within one pass costs at most one
+    yfinance calendar hit, not one per signal (blueprint 07's
+    non-negotiable). Returns None (fail-open) on any miss or parse
+    failure - a stock without a known earnings date should never itself
+    block a trade."""
+    if cache is not None and ticker in cache:
+        return cache[ticker]
+    result: date | None = None
+    try:
+        r = sb.table("ticker_enrichment").select("fundamentals").eq(
+            "ticker", ticker
+        ).limit(1).execute()
+        if r.data:
+            fund = (r.data[0] or {}).get("fundamentals") or {}
+            ned = fund.get("next_earnings_date")
+            if ned:
+                result = datetime.fromisoformat(ned).date()
+    except Exception:
+        result = None
+    if result is None:
+        # Cache miss or no earnings key cached - same parse logic as
+        # aggregator._ticker_calendar (duplicated rather than imported
+        # to keep paper_trader's dependency direction one-way; it does
+        # not otherwise import from aggregator).
+        try:
+            cal = yf.Ticker(ticker).calendar
+            if isinstance(cal, dict):
+                ed = cal.get("Earnings Date") or cal.get("earningsDate")
+                first = ed[0] if isinstance(ed, (list, tuple)) and ed else (ed or None)
+                if first is not None:
+                    iso = (first.isoformat()[:10] if hasattr(first, "isoformat")
+                          else str(first)[:10])
+                    result = datetime.fromisoformat(iso).date()
+        except Exception:
+            result = None
+    if cache is not None:
+        cache[ticker] = result
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Signal evaluation: stock_analyses -> paper_signals (+ paper_trades on enter)
 # ---------------------------------------------------------------------------
@@ -441,7 +510,8 @@ def _log_signal(sb, ticker: str, sa_id: int, action: str,
 
 def _evaluate_one(sb, analysis_row: dict, now: datetime,
                   portfolio_base: float | None = None,
-                  regime: dict | None = None) -> str:
+                  regime: dict | None = None,
+                  earnings_cache: dict | None = None) -> str:
     """Apply gate stack to one stock_analyses row. Returns action or
     skip_reason string for logging. ALWAYS writes a paper_signals row
     so the skipped-winner attribution is computable later."""
@@ -520,6 +590,18 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
                     confidence=confidence, edge=edge, meta={"regime": regime})
         return "regime_off"
 
+    # Earnings blackout: gap risk stops/targets cannot protect against.
+    # Fail-open on a missing date - only skip when we actually know a
+    # date and it lands inside the blackout window.
+    next_earnings = _next_earnings_date(sb, ticker, cache=earnings_cache)
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(now.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            _log_signal(sb, ticker, sa_id, "skip", "earnings_blackout",
+                        confidence=confidence, edge=edge,
+                        meta={"earnings_date": next_earnings.isoformat()})
+            return "earnings_blackout"
+
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
         _log_signal(sb, ticker, sa_id, "skip", "no_liquidity_data", confidence=confidence, edge=edge)
@@ -586,6 +668,7 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
                 "intent_px_mid": intent_px,
                 "risk_per_share": risk_per_share,
                 "regime": regime,
+                "earnings_date": next_earnings.isoformat() if next_earnings else None,
             },
         }).execute()
         trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
@@ -632,6 +715,12 @@ def eval_signals(now: datetime | None = None) -> dict:
     if regime:
         print(f"paper_trader: regime = {regime}")
 
+    # Per-pass earnings-date cache (blueprint 07's non-negotiable: at
+    # most one yfinance calendar hit per unique ticker per eval pass,
+    # not one per signal - a ticker can appear in both stock_analyst and
+    # top_performer picks the same day).
+    earnings_cache: dict = {}
+
     counts = {"evaluated": 0, "entered": 0}
     skips: dict[str, int] = {}
 
@@ -642,7 +731,8 @@ def eval_signals(now: datetime | None = None) -> dict:
     ).gte("requested_at", since).eq("status", "ok").execute().data or []
     for r in sa_rows:
         counts["evaluated"] += 1
-        outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base, regime=regime)
+        outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base,
+                               regime=regime, earnings_cache=earnings_cache)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome == "already_evaluated":
@@ -678,7 +768,8 @@ def eval_signals(now: datetime | None = None) -> dict:
                     continue
                 counts["evaluated"] += 1
                 outcome = _evaluate_outlook(sb, a, outlook, source_kind, now,
-                                           portfolio_base=portfolio_base, regime=regime)
+                                           portfolio_base=portfolio_base, regime=regime,
+                                           earnings_cache=earnings_cache)
                 if outcome == "enter":
                     counts["entered"] += 1
                 elif outcome == "already_evaluated":
@@ -694,7 +785,8 @@ def eval_signals(now: datetime | None = None) -> dict:
                 continue
             counts["evaluated"] += 1
             outcome = _evaluate_top_performer(sb, a, tp, now,
-                                              portfolio_base=portfolio_base, regime=regime)
+                                              portfolio_base=portfolio_base, regime=regime,
+                                              earnings_cache=earnings_cache)
             if outcome == "enter":
                 counts["entered"] += 1
             elif outcome == "already_evaluated":
@@ -708,7 +800,8 @@ def eval_signals(now: datetime | None = None) -> dict:
 
 
 def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
-                            portfolio_base: float, regime: dict | None = None) -> str:
+                            portfolio_base: float, regime: dict | None = None,
+                            earnings_cache: dict | None = None) -> str:
     """Gate-stack a single top_performers entry. Unlike outlook signals
     (which synthesize geometry from a range band), top_performers carry
     the model's explicit entry / target / stop_loss + a pre-computed
@@ -797,6 +890,14 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         L("skip", "regime_off", edge=edge, meta={"regime": regime})
         return "regime_off"
 
+    next_earnings = _next_earnings_date(sb, ticker, cache=earnings_cache)
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(now.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            L("skip", "earnings_blackout", edge=edge,
+              meta={"earnings_date": next_earnings.isoformat()})
+            return "earnings_blackout"
+
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
         L("skip", "no_liquidity_data", edge=edge)
@@ -853,6 +954,7 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
                 "expected_move_pct": tp.get("expected_move_pct"),
                 "thesis": (tp.get("thesis") or "")[:200],
                 "regime": regime,
+                "earnings_date": next_earnings.isoformat() if next_earnings else None,
             },
         }).execute()
         trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
@@ -942,7 +1044,8 @@ def _parse_range_band(s) -> tuple[float, float] | None:
 
 def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                       source_kind: str, now: datetime,
-                      portfolio_base: float, regime: dict | None = None) -> str:
+                      portfolio_base: float, regime: dict | None = None,
+                      earnings_cache: dict | None = None) -> str:
     """Gate-stack a single outlook entry. outlook carries direction +
     range + confidence + key_driver. Target/stop synthesized from the
     range band: long entry at mid, target = upper of range, stop = lower.
@@ -1035,6 +1138,14 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         L("skip", "regime_off", edge=edge, meta={"regime": regime})
         return "regime_off"
 
+    next_earnings = _next_earnings_date(sb, ticker, cache=earnings_cache)
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(now.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            L("skip", "earnings_blackout", edge=edge,
+              meta={"earnings_date": next_earnings.isoformat()})
+            return "earnings_blackout"
+
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
         L("skip", "no_liquidity_data", edge=edge)
@@ -1094,6 +1205,7 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                 "effective_conf": effective_conf,
                 "key_driver": outlook.get("key_driver"),
                 "regime": regime,
+                "earnings_date": next_earnings.isoformat() if next_earnings else None,
             },
         }).execute()
         trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
