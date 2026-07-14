@@ -43,8 +43,27 @@ def _sb():
     return create_client(url, key)
 
 
+def _normalize_ticker(ticker: str) -> str:
+    """NSE-suffix a bare pick ticker before it ever reaches yfinance.
+    Several grading loops (top_performer_1d, worst_performer_1d,
+    short_pick_Nd, avoid_7d, long_pick_180d, verdict_7d, wishlist_7d)
+    pass p.get("ticker") straight through with no normalization, unlike
+    paper_trader.py and the holding/wishlist-outlook loop here, which both
+    already append .NS. The model doesn't always include the suffix, so
+    an unsuffixed pick silently 404s and gets swallowed by the
+    `if pick_pct is None: continue` skip in every caller - not a crash,
+    but quiet, permanent data loss for that pick's grade (root-caused
+    2026-07-13 from 100+ failed-download lines in a single grader run).
+    Indices (^NSEI etc.) and already-suffixed tickers pass through as-is."""
+    t = (ticker or "").strip().upper()
+    if not t or t.startswith("^") or t.endswith(".NS") or t.endswith(".BO"):
+        return t
+    return f"{t}.NS"
+
+
 def _close_on_or_after(ticker: str, ts: datetime) -> float | None:
     """Closest trading-day close at-or-after ts."""
+    ticker = _normalize_ticker(ticker)
     try:
         end = ts + timedelta(days=10)
         df = yf.download(ticker, start=ts.strftime("%Y-%m-%d"),
@@ -61,6 +80,7 @@ def _close_on_or_after(ticker: str, ts: datetime) -> float | None:
 
 def _close_n_sessions_later(ticker: str, base_ts: datetime, n: int) -> float | None:
     """Close after n trading sessions from base_ts."""
+    ticker = _normalize_ticker(ticker)
     try:
         end = base_ts + timedelta(days=max(n * 2, 7))
         df = yf.download(ticker, start=base_ts.strftime("%Y-%m-%d"),
@@ -98,6 +118,7 @@ def _session_bounds(ticker: str, run_at: datetime) -> tuple[float, float, str] |
     additionally require now to be past the target session's close
     (+15 min settle buffer) before trusting the bar.
     """
+    ticker = _normalize_ticker(ticker)
     try:
         start = run_at - timedelta(days=12)
         end = run_at + timedelta(days=8)
@@ -327,6 +348,7 @@ def _parse_num(s) -> float | None:
 
 def _ohlc_walk(ticker: str, base_ts: datetime, sessions: int) -> list[tuple[float, float, float]]:
     """(high, low, close) for up to `sessions` trading days on/after base_ts."""
+    ticker = _normalize_ticker(ticker)
     try:
         end = base_ts + timedelta(days=max(sessions * 2, 12))
         df = yf.download(ticker, start=base_ts.strftime("%Y-%m-%d"),
@@ -816,6 +838,8 @@ def grade_all(lookback_days: int = 90):
                 tp_scores = []
                 tp_results = []
                 for p in picks[:5]:
+                    if not isinstance(p, dict):
+                        continue
                     tk = p.get("ticker")
                     if not tk:
                         continue
@@ -839,6 +863,8 @@ def grade_all(lookback_days: int = 90):
                 deltas = []
                 results = []
                 for p in lpicks[:5]:
+                    if not isinstance(p, dict):
+                        continue
                     tk = p.get("ticker")
                     if not tk:
                         continue
@@ -866,6 +892,8 @@ def grade_all(lookback_days: int = 90):
                 lpicks = raw.get("long_term_picks", []) or []
                 lt_scores, lt_results = [], []
                 for p in lpicks[:5]:
+                    if not isinstance(p, dict):
+                        continue
                     tk = p.get("ticker")
                     if not tk:
                         continue
@@ -890,6 +918,8 @@ def grade_all(lookback_days: int = 90):
                 deltas = []
                 results = []
                 for p in avoids[:5]:
+                    if not isinstance(p, dict):
+                        continue
                     tk = p.get("ticker")
                     if not tk:
                         continue
@@ -915,6 +945,8 @@ def grade_all(lookback_days: int = 90):
                 vscores = []
                 vresults = []
                 for vd in verdicts:
+                    if not isinstance(vd, dict):
+                        continue
                     tk = vd.get("ticker")
                     verdict = vd.get("verdict")
                     if not tk or not verdict:
@@ -943,6 +975,8 @@ def grade_all(lookback_days: int = 90):
                 verdicts = raw.get("portfolio_verdicts", []) or []
                 vt_scores, vt_results = [], []
                 for vd in verdicts:
+                    if not isinstance(vd, dict):
+                        continue
                     tk = vd.get("ticker")
                     if not tk:
                         continue
@@ -968,6 +1002,8 @@ def grade_all(lookback_days: int = 90):
                 wscores = []
                 wresults = []
                 for ws in wsignals:
+                    if not isinstance(ws, dict):
+                        continue
                     tk = ws.get("ticker")
                     sig = ws.get("signal")
                     if not tk or not sig:
@@ -1005,6 +1041,8 @@ def grade_all(lookback_days: int = 90):
                 s_scores, s_results = [], []
                 sr_scores, sr_results = [], []
                 for so in souts:
+                    if not isinstance(so, dict):
+                        continue
                     sname = (so.get("sector") or "").strip().upper()
                     yf_sym = _SECTOR_YF.get(sname)
                     if not yf_sym:
@@ -1188,6 +1226,8 @@ def grade_all(lookback_days: int = 90):
                     continue
                 dir_scores, range_scores, results = [], [], []
                 for o in outlooks:
+                    if not isinstance(o, dict):
+                        continue
                     tk = (o.get("ticker") or "").strip().upper()
                     if not tk:
                         continue
