@@ -376,17 +376,30 @@ def _ticker_sector_and_cap(sb, ticker: str) -> tuple[str | None, str]:
     """Read sector + cap tier from ticker_enrichment cache. Falls back
     to (None, 'small') when the cache row is missing; the conservative
     cap_tier widens the modeled friction so a missing cache does not
-    silently under-estimate slippage."""
+    silently under-estimate slippage.
+
+    FIXED 2026-07-14: this queried a "payload" column that has never
+    existed in the real schema (the real columns are
+    ticker/fundamentals/news/updated_at - see db/schema.sql). PostgREST's
+    42703 error was swallowed by the bare except below, so this has
+    silently returned (None, "small") for every single call since
+    inception: the sector-cap gate has never fired once, and friction
+    modeling has always used the smallest/most conservative tier
+    regardless of the ticker's real cap. Also fixed a second, independent
+    bug while here: the market-cap key was read as "market_cap", but
+    aggregator._ticker_fundamentals stores it as "market_cap_cr" (crores,
+    /1e7 already applied) - _cap_tier's thresholds are raw INR, so even a
+    correct column name needed the *1e7 conversion back before compare."""
     try:
-        r = sb.table("ticker_enrichment").select("payload").eq(
+        r = sb.table("ticker_enrichment").select("fundamentals").eq(
             "ticker", ticker
         ).limit(1).execute()
         if r.data:
-            payload = (r.data[0] or {}).get("payload") or {}
-            fund = payload.get("fundamentals") or {}
+            fund = (r.data[0] or {}).get("fundamentals") or {}
             sector = fund.get("sector")
-            mc = fund.get("market_cap")
-            return sector, _cap_tier(mc)
+            mc_cr = fund.get("market_cap_cr")
+            mc_inr = mc_cr * 1e7 if isinstance(mc_cr, (int, float)) else None
+            return sector, _cap_tier(mc_inr)
     except Exception:
         pass
     return None, "small"
