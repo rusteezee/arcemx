@@ -4,7 +4,7 @@ trader's gate stack, as if it had been running since day 1.
 Reuses paper_trader.py's exact thresholds and cost-model functions
 (imported, not copied) so a future tune of MIN_CONF/MIN_EDGE_PCT/etc.
 automatically reflects here. Does NOT touch paper_trader.py or write to
-the live paper_trades/paper_signals tables — every simulated position
+the live paper_trades/paper_signals tables. every simulated position
 lives in an in-memory "shadow" book for the duration of one replay, and
 only the final aggregate result (equity curve + trade list) is persisted,
 to backtest_runs.
@@ -20,7 +20,7 @@ No-lookahead-bias discipline (the one way a backtest lies to you):
     and keeps position sizes directly comparable to what live trades
     size today. A compounding v3 is a clearly separable future step.
   - Sector/cap-tier classification reads the live ticker_enrichment
-    cache (today's sector/market-cap), not an as-of snapshot — sector
+    cache (today's sector/market-cap), not an as-of snapshot. sector
     rarely changes and cap-tier drifts slowly, so this is a documented
     approximation, not a lookahead leak that would flip gate outcomes.
 
@@ -53,6 +53,8 @@ from analyzer.paper_trader import (
     OUTLOOK_MIN_EDGE_PCT,
     CALIBRATION_LOOKBACK_DAYS,
     CALIBRATION_MIN_PAIRS,
+    REGIME_GATE_ON,
+    REGIME_HALF_MULT,
     _apply_slippage,
     _broker_friction,
     _conf_from_winprob,
@@ -61,6 +63,7 @@ from analyzer.paper_trader import (
     _resolve_portfolio_base,
     _ticker_sector_and_cap,
 )
+from analyzer.regime import regime_from_history
 
 load_dotenv()
 
@@ -88,10 +91,17 @@ class HistCache:
     def get(self, ticker: str):
         if ticker in self._cache:
             return self._cache[ticker]
+        # The regime gate's trend indicator needs a real 200-session SMA
+        # even at the replay's very first event - the class's normal
+        # 35-day buffer (sized for 20d turnover lookback) is nowhere near
+        # enough. 320 calendar days comfortably covers 200 NSE trading
+        # sessions through weekends/holidays.
+        start = (self.start - timedelta(days=285)
+                if ticker in ("^NSEI", "^INDIAVIX") else self.start)
         try:
             h = yf.download(
                 ticker,
-                start=self.start.isoformat(),
+                start=start.isoformat(),
                 end=self.end.isoformat(),
                 interval="1d",
                 auto_adjust=False,
@@ -128,6 +138,24 @@ class HistCache:
                 if v == v and v > 0:
                     return float(v)
         return None
+
+    def regime(self, asof: date) -> dict:
+        """As-of market regime (blueprint 03), computed from ^NSEI/
+        ^INDIAVIX bars strictly before `asof` - the same no-lookahead
+        discipline as avg_turnover/next_open above, just for the regime
+        gate instead of liquidity/fill data. ^NSEI/^INDIAVIX are fetched
+        through this same cache (see get()'s wider start date for these
+        two symbols), so a whole replay costs one download set for both,
+        not one per event."""
+        nifty = self.get("^NSEI")
+        nifty_sliced = nifty[nifty.index.date < asof] if nifty is not None else None
+        vix_value = None
+        vix_h = self.get("^INDIAVIX")
+        if vix_h is not None and "Close" in vix_h:
+            vix_sliced = vix_h[vix_h.index.date < asof]["Close"].dropna()
+            if not vix_sliced.empty:
+                vix_value = float(vix_sliced.iloc[-1])
+        return regime_from_history(nifty_sliced, vix_value, asof)
 
     def bars_after(self, ticker: str, since: date, until: date):
         h = self.get(ticker)
@@ -310,6 +338,13 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
     if risk_per_share <= 0:
         return "bad_risk"
 
+    if REGIME_GATE_ON:
+        regime = hist.regime(asof.date())
+        if regime.get("risk_mode") == "off":
+            return "regime_off"
+    else:
+        regime = None
+
     avg_turnover = hist.avg_turnover(ticker, asof.date())
     if avg_turnover is None:
         return "no_liquidity_data"
@@ -322,6 +357,8 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
 
     risk_budget = portfolio_base * RISK_PER_TRADE
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
+    if regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
 
     _open_shadow_trade(book, source_kind="stock_analyst", source_run_id=sa_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
@@ -367,6 +404,13 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
     if risk_per_share <= 0:
         return "bad_risk"
 
+    if REGIME_GATE_ON:
+        regime = hist.regime(asof.date())
+        if regime.get("risk_mode") == "off":
+            return "regime_off"
+    else:
+        regime = None
+
     avg_turnover = hist.avg_turnover(ticker, asof.date())
     if avg_turnover is None:
         return "no_liquidity_data"
@@ -379,6 +423,8 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
 
     risk_budget = portfolio_base * RISK_PER_TRADE
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
+    if regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
     horizon = int(tp.get("horizon_days") or 1)
 
     _open_shadow_trade(book, source_kind="top_performer", source_run_id=a_id, ticker=ticker,
@@ -428,6 +474,13 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
     if risk_per_share <= 0:
         return "bad_risk"
 
+    if REGIME_GATE_ON:
+        regime = hist.regime(asof.date())
+        if regime.get("risk_mode") == "off":
+            return "regime_off"
+    else:
+        regime = None
+
     avg_turnover = hist.avg_turnover(ticker, asof.date())
     if avg_turnover is None:
         return "no_liquidity_data"
@@ -440,6 +493,8 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
 
     risk_budget = portfolio_base * RISK_PER_TRADE
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
+    if regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
 
     _open_shadow_trade(book, source_kind=source_kind, source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
@@ -603,7 +658,7 @@ def _result_row(bundle: dict[str, Any]) -> dict[str, Any]:
 
 def save_backtest_run(bundle: dict[str, Any], run_id: int | None = None) -> int | None:
     """Insert a new row (CLI/ad-hoc use), or update an existing pending
-    row when run_id is given (GH Actions dispatch path — the API route
+    row when run_id is given (GH Actions dispatch path. the API route
     already inserted the pending row before triggering the workflow)."""
     sb = _sb()
     row = _result_row(bundle)

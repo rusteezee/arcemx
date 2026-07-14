@@ -77,6 +77,7 @@ const SKIP_LABEL: Record<string, string> = {
   pre_schema: "Pre-schema row (legacy)",
   ticker_freeze: "Ticker frozen (3+ losses 90d)",
   no_ticker: "Missing ticker",
+  regime_off: "Regime risk-off",
 };
 
 const EXIT_LABEL: Record<string, string> = {

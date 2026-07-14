@@ -11,8 +11,8 @@ No real money. No broker calls. Pure simulation. Phase B introduces
 a sibling live_trader module once the edge gate clears.
 
 Two-step daily cycle (called by daily_grader after grade pass):
-  1. mark_to_market() — close open trades that hit target/stop/horizon
-  2. eval_signals()   — apply gate stack to new stock_analyses rows
+  1. mark_to_market(). close open trades that hit target/stop/horizon
+  2. eval_signals()  . apply gate stack to new stock_analyses rows
 
 Order matters: mark before eval so a newly-closed slot frees up sector
 cap / total open count before the next batch of signals is evaluated.
@@ -41,6 +41,8 @@ from typing import Any
 import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client
+
+from analyzer.regime import fetch_regime
 
 load_dotenv()
 
@@ -84,6 +86,10 @@ OUTLOOK_MIN_CONF = 65            # higher floor for 1d outlook entries (less con
 OUTLOOK_MIN_EDGE_PCT = 1.0       # outlooks have tighter horizons so the friction cushion is smaller
 CALIBRATION_LOOKBACK_DAYS = 90   # window over which per-dim confidence bias is measured
 CALIBRATION_MIN_PAIRS = 8        # below this, ignore the dim's bias (too noisy)
+REGIME_GATE_ON = os.getenv("ARCEMX_REGIME_GATE", "1") != "0"  # market-regime
+                                 # filter (blueprint 03); env-disable via
+                                 # ARCEMX_REGIME_GATE=0
+REGIME_HALF_MULT = 0.5           # position-size multiplier when regime risk_mode == "half"
 
 
 def _sb():
@@ -139,7 +145,7 @@ def _dim_confidence_bias(sb, dim: str) -> float:
     raw confidence to get the calibrated effective_conf for the gate.
 
     Returns 0.0 (no adjustment) when fewer than CALIBRATION_MIN_PAIRS
-    rows exist for the dim — the bias estimate would be too noisy to
+    rows exist for the dim. the bias estimate would be too noisy to
     act on. This closes the never-give-up loop: dim that overclaims
     self-corrects via the gate, dim that underclaims gets a free pass."""
     try:
@@ -205,9 +211,9 @@ def _cap_tier(market_cap_inr) -> str:
     """Coarse cap-tier classification by INR market cap.
     Thresholds aligned to common Indian retail conventions:
       large  >= 1L cr  (>= 1e12)
-      mid    >= 20k cr (>= 2e11)  — note: 1L cr is ₹1,00,000 cr = 1e12
+      mid    >= 20k cr (>= 2e11) . note: 1L cr is ₹1,00,000 cr = 1e12
       small  everything else
-    Unknown cap defaults to small (conservative — widest spread / highest
+    Unknown cap defaults to small (conservative. widest spread / highest
     impact assumption, kills bad signals at the gate not at the fill)."""
     if not isinstance(market_cap_inr, (int, float)) or market_cap_inr <= 0:
         return "small"
@@ -421,7 +427,8 @@ def _log_signal(sb, ticker: str, sa_id: int, action: str,
 
 
 def _evaluate_one(sb, analysis_row: dict, now: datetime,
-                  portfolio_base: float | None = None) -> str:
+                  portfolio_base: float | None = None,
+                  regime: dict | None = None) -> str:
     """Apply gate stack to one stock_analyses row. Returns action or
     skip_reason string for logging. ALWAYS writes a paper_signals row
     so the skipped-winner attribution is computable later."""
@@ -492,6 +499,14 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
         _log_signal(sb, ticker, sa_id, "skip", "bad_risk", confidence=confidence, edge=edge)
         return "bad_risk"
 
+    # Regime gate: after every cheap JSON/DB gate, before the per-ticker
+    # yfinance liquidity hit. regime itself is one cached download set
+    # per eval pass (see eval_signals), not per signal, so this is cheap.
+    if REGIME_GATE_ON and regime and regime.get("risk_mode") == "off":
+        _log_signal(sb, ticker, sa_id, "skip", "regime_off",
+                    confidence=confidence, edge=edge, meta={"regime": regime})
+        return "regime_off"
+
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
         _log_signal(sb, ticker, sa_id, "skip", "no_liquidity_data", confidence=confidence, edge=edge)
@@ -516,6 +531,8 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
     qty_by_risk = int(risk_budget / risk_per_share)
     qty_by_notional_cap = int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)
     qty = max(1, min(qty_by_risk, qty_by_notional_cap))
+    if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
 
     # Fill simulation: anchor on next-session open, add buy-side slippage.
     requested_at = analysis_row.get("requested_at") or now.isoformat()
@@ -555,6 +572,7 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
                 "next_open_anchor": next_open,
                 "intent_px_mid": intent_px,
                 "risk_per_share": risk_per_share,
+                "regime": regime,
             },
         }).execute()
         trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
@@ -593,6 +611,14 @@ def eval_signals(now: datetime | None = None) -> dict:
     portfolio_base = _resolve_portfolio_base(sb)
     print(f"paper_trader: portfolio_base resolved = {portfolio_base:.0f}")
 
+    # Fetched once per pass (regime.fetch_regime has its own 30-min cache
+    # on top, so a burst of calls in the same window is still one
+    # download set). None when the gate is disabled via env, matching
+    # every evaluator's `if REGIME_GATE_ON and regime and ...` guard.
+    regime = fetch_regime(now) if REGIME_GATE_ON else None
+    if regime:
+        print(f"paper_trader: regime = {regime}")
+
     counts = {"evaluated": 0, "entered": 0}
     skips: dict[str, int] = {}
 
@@ -603,7 +629,7 @@ def eval_signals(now: datetime | None = None) -> dict:
     ).gte("requested_at", since).eq("status", "ok").execute().data or []
     for r in sa_rows:
         counts["evaluated"] += 1
-        outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base)
+        outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base, regime=regime)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome == "already_evaluated":
@@ -639,7 +665,7 @@ def eval_signals(now: datetime | None = None) -> dict:
                     continue
                 counts["evaluated"] += 1
                 outcome = _evaluate_outlook(sb, a, outlook, source_kind, now,
-                                           portfolio_base=portfolio_base)
+                                           portfolio_base=portfolio_base, regime=regime)
                 if outcome == "enter":
                     counts["entered"] += 1
                 elif outcome == "already_evaluated":
@@ -648,14 +674,14 @@ def eval_signals(now: datetime | None = None) -> dict:
                     skips[outcome] = skips.get(outcome, 0) + 1
         # top_performers: the model's INDEPENDENT market-wide long picks.
         # This is the source that breaks the portfolio/wishlist tunnel
-        # vision — names here are chosen from the whole NSE universe, not
+        # vision. names here are chosen from the whole NSE universe, not
         # the user's existing exposure.
         for tp in (raw.get("top_performers") or []):
             if not isinstance(tp, dict):
                 continue
             counts["evaluated"] += 1
             outcome = _evaluate_top_performer(sb, a, tp, now,
-                                              portfolio_base=portfolio_base)
+                                              portfolio_base=portfolio_base, regime=regime)
             if outcome == "enter":
                 counts["entered"] += 1
             elif outcome == "already_evaluated":
@@ -669,7 +695,7 @@ def eval_signals(now: datetime | None = None) -> dict:
 
 
 def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
-                            portfolio_base: float) -> str:
+                            portfolio_base: float, regime: dict | None = None) -> str:
     """Gate-stack a single top_performers entry. Unlike outlook signals
     (which synthesize geometry from a range band), top_performers carry
     the model's explicit entry / target / stop_loss + a pre-computed
@@ -754,6 +780,10 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         L("skip", "bad_risk", edge=edge)
         return "bad_risk"
 
+    if REGIME_GATE_ON and regime and regime.get("risk_mode") == "off":
+        L("skip", "regime_off", edge=edge, meta={"regime": regime})
+        return "regime_off"
+
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
         L("skip", "no_liquidity_data", edge=edge)
@@ -770,6 +800,8 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
     risk_budget = portfolio_base * RISK_PER_TRADE
     qty = max(1, min(int(risk_budget / risk_per_share),
                      int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
+    if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
     horizon = int(tp.get("horizon_days") or 1)
 
     run_at = analysis_row.get("run_at") or now.isoformat()
@@ -807,6 +839,7 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
                 "conviction": (tp.get("conviction") or "").upper(),
                 "expected_move_pct": tp.get("expected_move_pct"),
                 "thesis": (tp.get("thesis") or "")[:200],
+                "regime": regime,
             },
         }).execute()
         trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
@@ -896,7 +929,7 @@ def _parse_range_band(s) -> tuple[float, float] | None:
 
 def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                       source_kind: str, now: datetime,
-                      portfolio_base: float) -> str:
+                      portfolio_base: float, regime: dict | None = None) -> str:
     """Gate-stack a single outlook entry. outlook carries direction +
     range + confidence + key_driver. Target/stop synthesized from the
     range band: long entry at mid, target = upper of range, stop = lower.
@@ -985,6 +1018,10 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         L("skip", "bad_risk", edge=edge)
         return "bad_risk"
 
+    if REGIME_GATE_ON and regime and regime.get("risk_mode") == "off":
+        L("skip", "regime_off", edge=edge, meta={"regime": regime})
+        return "regime_off"
+
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
         L("skip", "no_liquidity_data", edge=edge)
@@ -1003,6 +1040,8 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
     qty_by_risk = int(risk_budget / risk_per_share)
     qty_by_notional_cap = int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)
     qty = max(1, min(qty_by_risk, qty_by_notional_cap))
+    if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
 
     run_at = analysis_row.get("run_at") or now.isoformat()
     try:
@@ -1041,6 +1080,7 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                 "calibration_bias_applied": bias,
                 "effective_conf": effective_conf,
                 "key_driver": outlook.get("key_driver"),
+                "regime": regime,
             },
         }).execute()
         trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
