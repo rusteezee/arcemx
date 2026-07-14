@@ -30,3 +30,16 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python -m fetchers.prices
+      - name: Dead-man ping
+        if: always()
+        env:
+          HC_PING_URLS: ${{ secrets.HC_PING_URLS }}
+        run: |
+          url=$(echo "$HC_PING_URLS" | python3 -c "import json,sys;print(json.load(sys.stdin).get('daily_prices',''))")
+          if [ -n "$url" ]; then
+            if [ "${{ job.status }}" = "success" ]; then
+              curl -fsS -m 10 --retry 3 "$url" || true
+            else
+              curl -fsS -m 10 --retry 3 "$url/fail" || true
+            fi
+          fi

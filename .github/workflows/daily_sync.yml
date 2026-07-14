@@ -49,3 +49,16 @@ jobs:
 
           asyncio.run(main())
           EOF
+      - name: Dead-man ping
+        if: always()
+        env:
+          HC_PING_URLS: ${{ secrets.HC_PING_URLS }}
+        run: |
+          url=$(echo "$HC_PING_URLS" | python3 -c "import json,sys;print(json.load(sys.stdin).get('daily_sync',''))")
+          if [ -n "$url" ]; then
+            if [ "${{ job.status }}" = "success" ]; then
+              curl -fsS -m 10 --retry 3 "$url" || true
+            else
+              curl -fsS -m 10 --retry 3 "$url/fail" || true
+            fi
+          fi

@@ -25,3 +25,16 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
         run: python -m fetchers.news
+      - name: Dead-man ping
+        if: always()
+        env:
+          HC_PING_URLS: ${{ secrets.HC_PING_URLS }}
+        run: |
+          url=$(echo "$HC_PING_URLS" | python3 -c "import json,sys;print(json.load(sys.stdin).get('hourly_news',''))")
+          if [ -n "$url" ]; then
+            if [ "${{ job.status }}" = "success" ]; then
+              curl -fsS -m 10 --retry 3 "$url" || true
+            else
+              curl -fsS -m 10 --retry 3 "$url/fail" || true
+            fi
+          fi
