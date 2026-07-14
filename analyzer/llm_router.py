@@ -123,7 +123,12 @@ _PROVIDERS = [
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         "key_env": "GEMINI_API_KEY",
         "chain_env": "GEMINI_MODELS",
-        "default_models": "gemini-3-flash",
+        # "gemini-3-flash" (blueprint 01's original researched default)
+        # does not exist in the live catalog as of 2026-07-14 - verified
+        # via a real models.list call against the user's key, only
+        # "gemini-3-flash-preview" does. gemini-3.5-flash and
+        # gemini-3.1-flash-lite both confirmed live; strongest first.
+        "default_models": "gemini-3.5-flash,gemini-3.1-flash-lite",
         "supports_reasoning_optout": False,
     },
     {
@@ -131,7 +136,10 @@ _PROVIDERS = [
         "url": "https://api.groq.com/openai/v1/chat/completions",
         "key_env": "GROQ_API_KEY",
         "chain_env": "GROQ_MODELS",
-        "default_models": "llama-3.3-70b-versatile",
+        # openai/gpt-oss-120b confirmed live in the user's Groq catalog
+        # 2026-07-14; gpt-oss-20b as a same-family fallback (matches the
+        # 120b/20b pairing pattern already used for the OpenRouter chain).
+        "default_models": "openai/gpt-oss-120b,openai/gpt-oss-20b",
         "supports_reasoning_optout": False,
     },
 ]
@@ -639,13 +647,22 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
     seed_key = api_key or pool[0]
     body = {
         "model": models[0],
-        "models": models,
         "messages": messages,
         # Explicitly non-streaming. Some free providers default to SSE for
         # reasoning models depending on the routed provider; we still
         # defensively parse SSE below in case the provider ignores this.
         "stream": False,
     }
+    if provider["name"] == "openrouter":
+        # OpenRouter's own server-side fallback array - lets it advance
+        # to the next model mid-request instead of failing the call.
+        # Gemini/Groq don't recognize this key: Gemini 400s with "Unknown
+        # name \"models\": Cannot find field", Groq with "property
+        # 'models' is unsupported" (both confirmed live 2026-07-14). Our
+        # own attempt-loop below already advances body["model"] through
+        # `models` on retry, so those providers still get the full chain,
+        # just client-side instead of server-side.
+        body["models"] = models
     if json_format:
         body["response_format"] = {"type": "json_object"}
     # The reasoning body key (either form) is an OpenRouter-only
