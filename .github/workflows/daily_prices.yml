@@ -35,7 +35,7 @@ jobs:
         env:
           HC_PING_URLS: ${{ secrets.HC_PING_URLS }}
         run: |
-          url=$(echo "$HC_PING_URLS" | python3 -c "import json,sys;print(json.load(sys.stdin).get('daily_prices',''))")
+          url=$(python3 -c "import json,os;print(json.loads(os.environ.get('HC_PING_URLS') or '{}').get('daily_prices',''))" 2>/dev/null || true)
           if [ -n "$url" ]; then
             if [ "${{ job.status }}" = "success" ]; then
               curl -fsS -m 10 --retry 3 "$url" || true
