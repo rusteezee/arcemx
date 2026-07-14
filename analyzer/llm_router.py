@@ -33,7 +33,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Strip whitespace defensively. A trailing newline or space pasted into a
 # secrets store (common copy-paste artifact) makes requests reject the
 # Authorization header with InvalidHeader, since no real key contains
@@ -103,6 +102,39 @@ MODEL = PRIMARY_MODEL
 
 _HTTP_REFERER = os.getenv("OPENROUTER_REFERER", "https://arcemx.arcarmor.co.in")
 _X_TITLE = os.getenv("OPENROUTER_TITLE", "Arc'emX!")
+
+# Provider escalation chain. OpenRouter first (its free 120B models beat
+# Groq's 70B), then Gemini, then Groq - two providers on completely
+# independent infra so an OpenRouter-wide outage/rate-limit doesn't kill
+# the daily pipeline. A provider is skipped entirely when its key env var
+# is unset, so the chain degrades gracefully with zero recurring cost
+# until the user creates free Gemini/Groq keys. order matters.
+_PROVIDERS = [
+    {
+        "name": "openrouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "key_env": "OPENROUTER_API_KEY",
+        "chain_env": "OPENROUTER_FALLBACKS",
+        "default_models": "openai/gpt-oss-120b:free,openai/gpt-oss-20b:free",
+        "supports_reasoning_optout": True,
+    },
+    {
+        "name": "gemini",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "key_env": "GEMINI_API_KEY",
+        "chain_env": "GEMINI_MODELS",
+        "default_models": "gemini-3-flash",
+        "supports_reasoning_optout": False,
+    },
+    {
+        "name": "groq",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "key_env": "GROQ_API_KEY",
+        "chain_env": "GROQ_MODELS",
+        "default_models": "llama-3.3-70b-versatile",
+        "supports_reasoning_optout": False,
+    },
+]
 
 
 SYSTEM_PROMPT = """You are an Indian equity markets analyst with a moderate-aggressive risk lens.
@@ -562,13 +594,16 @@ def _content_ok(data: dict, json_format: bool) -> bool:
     return True
 
 
-def _post(messages: list[dict], models: list[str], reasoning: bool = True,
-          timeout: int = 180, max_retries: int = 2,
-          api_key: str | None = None,
-          json_format: bool = True,
-          max_tokens: int | None = None,
-          no_rotate: bool = False) -> dict:
-    """POST chat.completions with the OpenRouter fallback chain and 429 backoff.
+def _post_provider(provider: dict, messages: list[dict], models: list[str],
+                    reasoning: bool = True, timeout: int = 180,
+                    max_retries: int = 2, api_key: str | None = None,
+                    json_format: bool = True, max_tokens: int | None = None,
+                    no_rotate: bool = False) -> dict:
+    """POST chat.completions against ONE provider's fallback chain with 429
+    backoff. Extracted verbatim from the pre-escalation single-provider
+    _post() (2026-07-14) so OpenRouter's exact retry/key-pool/cooldown
+    behavior is untouched; `_post()` below now loops this across
+    _PROVIDERS instead of this function knowing about escalation at all.
 
     `models` is the full chain. `model` is set to the head so providers
     that ignore the chain field still pick the right primary. We retry on
@@ -586,13 +621,18 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     single 429'd key would absorb every retry and never rotate to a
     sibling key with quota left. The ensemble caller still expresses
     per-model key affinity via the first attempt, but a stuck key
-    cascades to others instead of dead-ending.
+    cascades to others instead of dead-ending. Only `openrouter` has a
+    multi-key pool (via _load_keys()); Gemini/Groq are single-key.
     """
-    pool = _load_keys()
+    if provider["name"] == "openrouter":
+        pool = _load_keys()
+    else:
+        env_key = (os.getenv(provider["key_env"]) or "").strip()
+        pool = [env_key] if env_key else []
     if api_key and api_key not in pool:
         pool = [api_key] + pool
     if not pool:
-        raise RuntimeError("OPENROUTER_API_KEY not set")
+        raise RuntimeError(f"{provider['key_env']} not set")
     # First attempt uses the caller's pinned key when given; subsequent
     # attempts rotate over the full pool starting one index after the
     # cooldown registry filters out anything still 429'd.
@@ -608,23 +648,28 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     }
     if json_format:
         body["response_format"] = {"type": "json_object"}
-    if reasoning:
-        body["reasoning"] = {"effort": "medium"}
-    else:
-        # Omitting the reasoning key entirely does NOT disable it - the
-        # provider falls back to the model's own default, and several
-        # free-tier checkpoints (nemotron-3-super among them, as of
-        # 02/07/2026) now default to reasoning-on. That silently burns
-        # the whole max_tokens budget on a hidden/inlined chain-of-
-        # thought trace before any JSON is emitted, so every ensemble
-        # call to that model returned parse_failed (finish_reason=
-        # length, content = prose) despite _one() already passing
-        # reasoning=False. Confirmed live: explicit {enabled: False,
-        # exclude: True} produces clean JSON from char 0; omitting the
-        # key reproduces the prose-preamble failure exactly. Callers
-        # that pass reasoning=False now get an explicit opt-out instead
-        # of a no-op.
-        body["reasoning"] = {"enabled": False, "exclude": True}
+    # The reasoning body key (either form) is an OpenRouter-only
+    # extension - Gemini/Groq's OpenAI-compat endpoints 400 on an
+    # unrecognized field, so it is omitted entirely for those providers
+    # rather than sent in either form.
+    if provider["supports_reasoning_optout"]:
+        if reasoning:
+            body["reasoning"] = {"effort": "medium"}
+        else:
+            # Omitting the reasoning key entirely does NOT disable it - the
+            # provider falls back to the model's own default, and several
+            # free-tier checkpoints (nemotron-3-super among them, as of
+            # 02/07/2026) now default to reasoning-on. That silently burns
+            # the whole max_tokens budget on a hidden/inlined chain-of-
+            # thought trace before any JSON is emitted, so every ensemble
+            # call to that model returned parse_failed (finish_reason=
+            # length, content = prose) despite _one() already passing
+            # reasoning=False. Confirmed live: explicit {enabled: False,
+            # exclude: True} produces clean JSON from char 0; omitting the
+            # key reproduces the prose-preamble failure exactly. Callers
+            # that pass reasoning=False now get an explicit opt-out instead
+            # of a no-op.
+            body["reasoning"] = {"enabled": False, "exclude": True}
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
     delay = 5.0
@@ -651,11 +696,15 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         headers = {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": _HTTP_REFERER,
-            "X-Title": _X_TITLE,
         }
+        if provider["name"] == "openrouter":
+            # Attribution headers OpenRouter uses for its public
+            # leaderboard; Gemini/Groq don't recognize them so they're
+            # omitted rather than sent as harmless-but-pointless noise.
+            headers["HTTP-Referer"] = _HTTP_REFERER
+            headers["X-Title"] = _X_TITLE
         try:
-            r = requests.post(OPENROUTER_URL, json=body, headers=headers,
+            r = requests.post(provider["url"], json=body, headers=headers,
                               timeout=timeout)
         except requests.RequestException as e:
             last_err = e
@@ -667,9 +716,9 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
         if r.status_code == 429:
             ra = r.headers.get("Retry-After")
             wait = float(ra) if ra and ra.replace(".", "", 1).isdigit() else delay
-            # Cool this key only when the 429 likely came from OpenRouter
-            # itself (Retry-After header present), not from a per-model
-            # upstream provider throttle. Cooling the key for any 429
+            # Cool this key only when the 429 likely came from the
+            # provider itself (Retry-After header present), not from a
+            # per-model upstream throttle. Cooling the key for any 429
             # caused Gemma's instant provider-side throttle to lock out
             # an entire key for 60s even though the key had RPM quota
             # left for other models; that wasted the third key while
@@ -679,7 +728,7 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
             n_keys = len(pool)
             words = ["zero","one","two","three","four","five","six","seven","eight"]
             pool_label = words[n_keys] if 0 <= n_keys < len(words) else f"n={n_keys}"
-            print(f"OpenRouter 429 pool={pool_label} attempt {attempt+1}, "
+            print(f"{provider['name']} 429 pool={pool_label} attempt {attempt+1}, "
                   f"retry in {wait:.0f}s")
             if attempt >= max_retries:
                 r.raise_for_status()
@@ -691,9 +740,9 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
             continue
         r.raise_for_status()
         ct = (r.headers.get("Content-Type") or "").lower()
-        # Free OpenRouter providers occasionally ignore stream=False and
-        # return a Server-Sent Events stream for reasoning models. Detect
-        # by Content-Type AND by sniffing the body prefix (some proxies
+        # Free providers occasionally ignore stream=False and return a
+        # Server-Sent Events stream for reasoning models. Detect by
+        # Content-Type AND by sniffing the body prefix (some proxies
         # strip the header) so the call still succeeds when that happens.
         text = r.text
         if "text/event-stream" in ct or text.lstrip().startswith("data:"):
@@ -704,16 +753,84 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
             return data
         # 200 OK but the content is unusable (see _content_ok). This is
         # not a 429 and not a network error, so nothing above catches
-        # it - without this branch _post() returns the bad response
-        # immediately and every remaining fallback model in the chain
-        # never gets a chance.
+        # it - without this branch this function returns the bad
+        # response immediately and every remaining fallback model in
+        # `models` never gets a chance.
         next_model = models[min(attempt + 1, len(models) - 1)]
-        print(f"OpenRouter response unusable (empty/malformed content) "
+        print(f"{provider['name']} response unusable (empty/malformed content) "
               f"from {body['model'].split('/')[-1]}, attempt {attempt+1}; "
               f"rotating to {next_model.split('/')[-1]}")
         time.sleep(min(delay, 10))
         delay *= 2
-    raise RuntimeError(f"OpenRouter retries exhausted: {last_err}")
+    raise RuntimeError(f"{provider['name']} retries exhausted: {last_err}")
+
+
+def _post(messages: list[dict], models: list[str], reasoning: bool = True,
+          timeout: int = 180, max_retries: int = 2,
+          api_key: str | None = None,
+          json_format: bool = True,
+          max_tokens: int | None = None,
+          no_rotate: bool = False) -> dict:
+    """Escalate across _PROVIDERS (OpenRouter, then Gemini, then Groq),
+    skipping any provider whose API key env var is unset. `models` is
+    OpenRouter's chain exactly as callers already build it via _chain();
+    Gemini/Groq resolve their own chain from GEMINI_MODELS/GROQ_MODELS
+    (or the registry default) independent of `models`.
+
+    Within a single provider, behavior is byte-identical to the
+    pre-escalation _post(): see _post_provider for the 429/cooldown/
+    model-rotation details. A provider counts as exhausted - and the
+    next one gets tried - when _post_provider raises OR returns content
+    _content_ok rejects. When every configured provider is exhausted,
+    the LAST one's response/exception is what surfaces, so
+    aggregator.save()'s `.get("error")` check still drops it exactly as
+    it did in the single-provider days; when zero providers have a key
+    configured at all, this raises (matching the old "OPENROUTER_API_KEY
+    not set" behavior).
+    """
+    last_data: dict | None = None
+    last_err: Exception | None = None
+    tried_any = False
+    for provider in _PROVIDERS:
+        env_key = (os.getenv(provider["key_env"]) or "").strip()
+        is_openrouter = provider["name"] == "openrouter"
+        if not env_key and not (is_openrouter and api_key):
+            continue
+        tried_any = True
+        if is_openrouter:
+            provider_models = models
+        else:
+            raw = os.getenv(provider["chain_env"], provider["default_models"])
+            provider_models = [m.strip() for m in raw.split(",") if m.strip()]
+        try:
+            data = _post_provider(
+                provider, messages, provider_models, reasoning=reasoning,
+                timeout=timeout, max_retries=max_retries,
+                api_key=api_key if is_openrouter else None,
+                json_format=json_format, max_tokens=max_tokens,
+                no_rotate=no_rotate)
+        except (requests.RequestException, RuntimeError) as e:
+            last_err = e
+            print(f"provider {provider['name']} exhausted -> escalating")
+            continue
+        if _content_ok(data, json_format):
+            if not is_openrouter:
+                # OpenRouter's own "model" field already carries a full
+                # slug (e.g. "nvidia/nemotron-3-super-120b-a12b:free");
+                # tag the others so _parse_json's _model_used shows which
+                # provider actually served, not just which model name.
+                served = data.get("model") or provider_models[0]
+                data["model"] = f"{provider['name']}/{served}"
+            return data
+        print(f"provider {provider['name']} exhausted -> escalating")
+        last_data = data
+    if last_data is not None:
+        return last_data
+    if not tried_any:
+        raise RuntimeError(
+            "No LLM provider configured (checked OPENROUTER_API_KEY, "
+            "GEMINI_API_KEY, GROQ_API_KEY)")
+    raise RuntimeError(f"All LLM providers exhausted: {last_err}")
 
 
 def _parse_sse(text: str) -> dict:
