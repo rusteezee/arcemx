@@ -371,7 +371,7 @@ sideways direction call is a self-contradiction the grader will catch.
 Default to neutral whenever evidence is genuinely mixed; do not force a
 directional mood to look decisive.
 
-CONFIDENCE ANCHOR (applies to EVERY confidence field below — nifty_outlook,
+CONFIDENCE ANCHOR (applies to EVERY confidence field below. nifty_outlook,
 sensex_outlook, holding_outlooks_1d, wishlist_outlooks_1d, sector_outlooks):
 Default-anchoring to 50-55 because the call feels uncertain is a failure
 mode, not calibration. Map evidence -> confidence band BEFORE writing the
@@ -391,7 +391,7 @@ confidence fields together) should be >=10. Tight cluster around 55 is
 anchor-bound, not calibrated. Push the strong cases UP and the weak
 cases DOWN.
 
-TOP / WORST PERFORMERS DOCTRINE (this is your primary daily output — own it):
+TOP / WORST PERFORMERS DOCTRINE (this is your primary daily output. own it):
 You are an INDEPENDENT market analyst. Each day you predict the stocks most
 likely to be the day's TOP PERFORMERS (largest positive move vs NIFTY) and
 WORST PERFORMERS (largest negative move vs NIFTY) over the stated horizon.
@@ -402,7 +402,7 @@ POINT (momentum + technicals on a base universe), not your boundary. You MUST
 also draw on your own knowledge of any liquid NSE-listed stock (NIFTY 500
 breadth) when the news_digest, sector rotation, FII flows, or a catalyst points
 somewhere the screen did not surface. Do NOT restrict picks to user_holdings or
-user_wishlist — those are the user's existing exposure, a SEPARATE concern from
+user_wishlist. those are the user's existing exposure, a SEPARATE concern from
 "who wins today". A good day's top_performers list should mostly be names the
 user does NOT already hold; that is the engine doing independent research.
 
@@ -485,7 +485,7 @@ fields as actionable prices and they must always be parseable.
 VERDICT DISCIPLINE (portfolio_verdicts):
 Default-anchoring to "hold" is the laziest failure mode and the most
 common one. Grader data over the last 90 days: 89% holds, 10% adds,
-1% trim, 0% exits. Hold mean 7d return was +4.15% — i.e. the model
+1% trim, 0% exits. Hold mean 7d return was +4.15%. i.e. the model
 said "stay flat" while holdings were rallying. That is NOT calibrated
 "don't crater", that is missed conviction. Force yourself to engage
 the 7d directional view explicitly:
@@ -546,8 +546,18 @@ def _content_ok(data: dict, json_format: bool) -> bool:
         return False
     if json_format:
         try:
-            json.loads(_strip_fences(str(content)))
+            parsed = json.loads(_strip_fences(str(content)))
         except json.JSONDecodeError:
+            return False
+        # A syntactically valid but empty/non-dict body (e.g. "{}") is
+        # exactly as useless as no content at all, but passed every check
+        # above - it previously burned the one "successful" attempt here,
+        # so _post() returned it immediately and the fallback chain never
+        # got a chance to retry with another model (root-caused
+        # 2026-07-14: nemotron-3-super-120b returned literal "{}" for the
+        # morning analysis call; it was saved and pushed to Telegram as a
+        # real market call with every field blank).
+        if not isinstance(parsed, dict) or not parsed:
             return False
     return True
 
@@ -861,7 +871,7 @@ def _payload_json(payload: dict, max_chars: int = 120000) -> str:
 
 _SHORT_PICK_BEAR_PROMPT = """You are an adversarial bear auditor for a list of intraday-to-30d short-term equity picks. Each pick has a thesis, entry, stop, target, horizon_days, conviction tier (A=highest, B=mid, C=speculative), expected_return_pct, expected_loss_pct, win_prob, loss_prob, expected_edge_pct, and a reasons_could_be_wrong list the bull analyst already produced.
 
-Your job: for each pick (only conviction A and B — skip C since C is explicitly speculative), find 1-3 CONCRETE additional failure modes the bull missed, citing payload fields they did not address. Be skeptical by default. Each failure mode must:
+Your job: for each pick (only conviction A and B. skip C since C is explicitly speculative), find 1-3 CONCRETE additional failure modes the bull missed, citing payload fields they did not address. Be skeptical by default. Each failure mode must:
 - Be concrete: cite a number (RSI, DMA, sector index, FII flow, P/E, etc.) from the payload or the pick itself
 - Be distinct: do not echo entries already in the pick's reasons_could_be_wrong
 - Be material: plausibly cost more than the pick's expected_loss_pct over its horizon
@@ -926,7 +936,7 @@ def _apply_short_pick_bear(short_picks: list[dict], bear_by_ticker: dict) -> Non
     Dampen schedule: 0.04 per material (>=20 char) added entry, capped at
     -0.12 absolute. A pick that goes from win_prob 0.65 -> 0.53 after a
     strong bear pass yields a recalibrated edge that may then fail the
-    paper trader's edge floor — exactly the discipline the bear is meant
+    paper trader's edge floor. exactly the discipline the bear is meant
     to enforce."""
     for p in short_picks or []:
         if not isinstance(p, dict):
