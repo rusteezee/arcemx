@@ -1500,6 +1500,19 @@ def _run_paper_trader() -> None:
     except Exception as e:
         print(f"Paper trader skipped: {str(e)[:160]}")
         return
+
+    # Skipped-winner attribution (blueprint 12): retro-score skips whose
+    # geometry is known and outcome window has closed. Own try/except -
+    # attribution is purely diagnostic and must never break grading.
+    # Placed before the notify block below on purpose: that block has an
+    # early `return` on the first-ever-trade path, which would silently
+    # skip this hook if it ran after instead.
+    try:
+        from analyzer.skip_attribution import score_skips as _score_skips
+        _score_skips()
+    except Exception as e:
+        print(f"  skip_attribution skipped: {str(e)[:150]}")
+
     try:
         sb = _sb()
         post = sb.table("paper_trades").select(

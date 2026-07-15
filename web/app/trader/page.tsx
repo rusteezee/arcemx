@@ -260,7 +260,7 @@ export default function TraderPage() {
         </p>
       </div>
 
-      <Section num="001 / 009" title="Realised P&L" glyph="✦">
+      <Section num="001 / 010" title="Realised P&L" glyph="✦">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Stat label="Open Positions" value={open.length.toString()} />
           <Stat label="Closed Trades" value={closed.length.toString()} />
@@ -299,7 +299,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="002 / 009"
+        num="002 / 010"
         title="Equity Curve vs NIFTY"
         glyph="⬡"
         description="Cumulative net P&L on the trader's working capital versus a NIFTY 50 baseline over the same date span. Both series rebased to 100 at the first closed-trade date so the comparison is a pure relative-return read. Trader above NIFTY = positive alpha after friction; below NIFTY = the gates are letting noise through."
@@ -340,7 +340,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="003 / 009"
+        num="003 / 010"
         title="Edge Metrics"
         glyph="◇"
         description="Sharpe, max drawdown, and Probabilistic Sharpe (Bailey-Lopez de Prado, skew + kurt adjusted). PSR is the probability the true Sharpe exceeds zero given the sample. Risk-free leg = 6.5% RBI repo proxy."
@@ -415,7 +415,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="004 / 009"
+        num="004 / 010"
         title="Tier Progress"
         glyph="◬"
         description="Every grader pass writes one snapshot. Lines plot Sharpe, PSR, and max drawdown across snapshots so the iterate-and-ratchet loop is visible. Flat at zero = no closed trades yet; bend upward = a fix moved the needle; downward bend = a fix regressed and warrants rollback or further diagnosis."
@@ -488,7 +488,7 @@ export default function TraderPage() {
         )}
       </Section>
 
-      <Section num="005 / 009" title="Open Positions" glyph="◈">
+      <Section num="005 / 010" title="Open Positions" glyph="◈">
         {open.length === 0 ? (
           <EmptyState
             title="No open positions"
@@ -532,7 +532,7 @@ export default function TraderPage() {
         )}
       </Section>
 
-      <Section num="006 / 009" title="Closed Trades" glyph="⬡">
+      <Section num="006 / 010" title="Closed Trades" glyph="⬡">
         {closed.length === 0 ? (
           <EmptyState
             title="No closed trades yet"
@@ -587,7 +587,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="007 / 009"
+        num="007 / 010"
         title="Slippage Attribution Waterfall"
         glyph="◮"
         description="Where the gross P&L went. Friction layers stripped from gross in order: slippage (spread + market impact, modeled per cap tier), brokerage (INDstocks flat ₹5/order + exchange + SEBI + GST), STT (0.1% delivery sell). Below 30% of gross = healthy. Above = the gates are letting illiquid or oversized signals through."
@@ -683,7 +683,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="008 / 009"
+        num="008 / 010"
         title="Per-Dim Skill Heatmap"
         glyph="◉"
         description="Skill ratio = (mean accuracy - 50) / stdev. Above 1.0 = dim's accuracy distribution sits comfortably above coin-flip noise. Below 0 = worse than guessing. Cells colored by skill: green = positive, red = negative, intensity tracks magnitude. Reading across rows shows whether a dim's skill is improving or decaying. Low-sample cells (<5) shown as dim text."
@@ -739,7 +739,7 @@ export default function TraderPage() {
       </Section>
 
       <Section
-        num="009 / 009"
+        num="009 / 010"
         title="Signal Activity"
         glyph="◐"
         description="Last 14 days. Every Stock Analyst buy is logged here even when skipped, so gate stack attribution stays computable."
@@ -887,6 +887,84 @@ export default function TraderPage() {
             hint="Trader logs every Stock Analyst run here."
           />
         )}
+      </Section>
+
+      <Section
+        num="010 / 010"
+        title="Skipped Winners"
+        glyph="◇"
+        description="Last 14 days. Retro-simulates every skip with known entry geometry through the same exit walk the backtest uses: had this signal entered anyway, what would net P&L have been? Answers db/schema.sql's original question - which gate rejects the most ultimately-profitable signals."
+      >
+        {(() => {
+          type Bucket = { count: number; scored: number; wins: number; totalPnl: number };
+          const byReason = new Map<string, Bucket>();
+          for (const s of signals) {
+            if (s.action !== "skip") continue;
+            const reason = s.skip_reason || "unknown";
+            const b = byReason.get(reason) || { count: 0, scored: 0, wins: 0, totalPnl: 0 };
+            b.count += 1;
+            const retro = s.meta?.retro;
+            if (retro && typeof retro.net_pnl === "number") {
+              b.scored += 1;
+              b.totalPnl += retro.net_pnl;
+              if (retro.net_pnl > 0) b.wins += 1;
+            }
+            byReason.set(reason, b);
+          }
+          const rows = Array.from(byReason.entries())
+            .filter(([, b]) => b.scored > 0)
+            .sort((a, c) => c[1].totalPnl - a[1].totalPnl);
+
+          if (rows.length === 0) {
+            return (
+              <EmptyState
+                title="No retro-scored skips yet"
+                hint="Scores accumulate as skipped signals age past their horizon + a 2-day settle buffer (blueprint 12). Runs automatically every grading pass."
+              />
+            );
+          }
+          return (
+            <>
+              <div className="text-xs text-[var(--muted)] mb-3">
+                caveat: independent fill - each skip is simulated in isolation, ignoring sector-cap / book interactions a real entry would have had.
+              </div>
+              <div className="table-scroll">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Skip Reason</th>
+                      <th>Count</th>
+                      <th>Scored</th>
+                      <th>Would-Be Win Rate</th>
+                      <th>Total Would-Be P&amp;L</th>
+                      <th>Avg P&amp;L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(([reason, b]) => {
+                      const winRate = b.scored ? (b.wins / b.scored) * 100 : 0;
+                      const avgPnl = b.scored ? b.totalPnl / b.scored : 0;
+                      return (
+                        <tr key={reason}>
+                          <td className="font-medium whitespace-nowrap">{humaniseSkip(reason)}</td>
+                          <td className="num">{b.count}</td>
+                          <td className="num">{b.scored}</td>
+                          <td className="num">{formatPct(winRate, false)}</td>
+                          <td className={`num ${b.totalPnl > 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                            {formatINR(b.totalPnl)}
+                          </td>
+                          <td className={`num ${avgPnl > 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
+                            {formatINR(avgPnl)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          );
+        })()}
       </Section>
     </>
   );

@@ -582,12 +582,20 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
         _log_signal(sb, ticker, sa_id, "skip", "bad_risk", confidence=confidence, edge=edge)
         return "bad_risk"
 
+    # Geometry known from here on - every subsequent skip carries it in
+    # meta so skip_attribution.score_skips() can retro-simulate the entry
+    # (blueprint 12: "which gate rejected the most ultimately-profitable
+    # signals?").
+    geometry = {"intent": intent_px, "target": target_px, "stop": stop_px,
+                "horizon_days": horizon}
+
     # Regime gate: after every cheap JSON/DB gate, before the per-ticker
     # yfinance liquidity hit. regime itself is one cached download set
     # per eval pass (see eval_signals), not per signal, so this is cheap.
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "off":
         _log_signal(sb, ticker, sa_id, "skip", "regime_off",
-                    confidence=confidence, edge=edge, meta={"regime": regime})
+                    confidence=confidence, edge=edge,
+                    meta={"regime": regime, "geometry": geometry})
         return "regime_off"
 
     # Earnings blackout: gap risk stops/targets cannot protect against.
@@ -599,24 +607,26 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
         if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
             _log_signal(sb, ticker, sa_id, "skip", "earnings_blackout",
                         confidence=confidence, edge=edge,
-                        meta={"earnings_date": next_earnings.isoformat()})
+                        meta={"earnings_date": next_earnings.isoformat(),
+                              "geometry": geometry})
             return "earnings_blackout"
 
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
-        _log_signal(sb, ticker, sa_id, "skip", "no_liquidity_data", confidence=confidence, edge=edge)
+        _log_signal(sb, ticker, sa_id, "skip", "no_liquidity_data",
+                    confidence=confidence, edge=edge, meta={"geometry": geometry})
         return "no_liquidity_data"
     if (avg_turnover / 1e7) < LIQUIDITY_MIN_CR:
         _log_signal(sb, ticker, sa_id, "skip", "liquidity",
                     confidence=confidence, edge=edge,
-                    meta={"avg_turnover_inr": avg_turnover})
+                    meta={"avg_turnover_inr": avg_turnover, "geometry": geometry})
         return "liquidity"
 
     sector, cap_tier = _ticker_sector_and_cap(sb, ticker)
     if sector and _open_in_sector(sb, sector) >= SECTOR_CAP:
         _log_signal(sb, ticker, sa_id, "skip", "sector_cap",
                     confidence=confidence, edge=edge,
-                    meta={"sector": sector})
+                    meta={"sector": sector, "geometry": geometry})
         return "sector_cap"
 
     # Position sizing: 2% portfolio risk, capped at 5% notional.
@@ -886,8 +896,11 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         L("skip", "bad_risk", edge=edge)
         return "bad_risk"
 
+    geometry = {"intent": intent_px, "target": target_px, "stop": stop_px,
+                "horizon_days": int(tp.get("horizon_days") or 1)}
+
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "off":
-        L("skip", "regime_off", edge=edge, meta={"regime": regime})
+        L("skip", "regime_off", edge=edge, meta={"regime": regime, "geometry": geometry})
         return "regime_off"
 
     next_earnings = _next_earnings_date(sb, ticker, cache=earnings_cache)
@@ -895,20 +908,21 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         delta = _weekday_sessions_between(now.date(), next_earnings)
         if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
             L("skip", "earnings_blackout", edge=edge,
-              meta={"earnings_date": next_earnings.isoformat()})
+              meta={"earnings_date": next_earnings.isoformat(), "geometry": geometry})
             return "earnings_blackout"
 
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
-        L("skip", "no_liquidity_data", edge=edge)
+        L("skip", "no_liquidity_data", edge=edge, meta={"geometry": geometry})
         return "no_liquidity_data"
     if (avg_turnover / 1e7) < LIQUIDITY_MIN_CR:
-        L("skip", "liquidity", edge=edge, meta={"avg_turnover_inr": avg_turnover})
+        L("skip", "liquidity", edge=edge,
+          meta={"avg_turnover_inr": avg_turnover, "geometry": geometry})
         return "liquidity"
 
     sector, cap_tier = _ticker_sector_and_cap(sb, ticker)
     if sector and _open_in_sector(sb, sector) >= SECTOR_CAP:
-        L("skip", "sector_cap", edge=edge, meta={"sector": sector})
+        L("skip", "sector_cap", edge=edge, meta={"sector": sector, "geometry": geometry})
         return "sector_cap"
 
     risk_budget = portfolio_base * RISK_PER_TRADE
@@ -1134,8 +1148,11 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         L("skip", "bad_risk", edge=edge)
         return "bad_risk"
 
+    geometry = {"intent": intent_px, "target": target_px, "stop": stop_px,
+                "horizon_days": 1}
+
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "off":
-        L("skip", "regime_off", edge=edge, meta={"regime": regime})
+        L("skip", "regime_off", edge=edge, meta={"regime": regime, "geometry": geometry})
         return "regime_off"
 
     next_earnings = _next_earnings_date(sb, ticker, cache=earnings_cache)
@@ -1143,21 +1160,21 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         delta = _weekday_sessions_between(now.date(), next_earnings)
         if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
             L("skip", "earnings_blackout", edge=edge,
-              meta={"earnings_date": next_earnings.isoformat()})
+              meta={"earnings_date": next_earnings.isoformat(), "geometry": geometry})
             return "earnings_blackout"
 
     avg_turnover = _yf_avg_turnover(ticker)
     if avg_turnover is None:
-        L("skip", "no_liquidity_data", edge=edge)
+        L("skip", "no_liquidity_data", edge=edge, meta={"geometry": geometry})
         return "no_liquidity_data"
     if (avg_turnover / 1e7) < LIQUIDITY_MIN_CR:
         L("skip", "liquidity", edge=edge,
-          meta={"avg_turnover_inr": avg_turnover})
+          meta={"avg_turnover_inr": avg_turnover, "geometry": geometry})
         return "liquidity"
 
     sector, cap_tier = _ticker_sector_and_cap(sb, ticker)
     if sector and _open_in_sector(sb, sector) >= SECTOR_CAP:
-        L("skip", "sector_cap", edge=edge, meta={"sector": sector})
+        L("skip", "sector_cap", edge=edge, meta={"sector": sector, "geometry": geometry})
         return "sector_cap"
 
     risk_budget = portfolio_base * RISK_PER_TRADE
