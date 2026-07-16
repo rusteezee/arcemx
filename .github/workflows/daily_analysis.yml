@@ -59,6 +59,10 @@ jobs:
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+          # RAG Phase 1 (blueprint 14): activated 2026-07-16 after the full
+          # re-embed under one model (bge-base-en-v1.5) confirmed clean via
+          # a live match_exemplars probe. Rollback = flip this to "0".
+          RAG_PHASE1_ENABLED: "1"
           # Manual dispatches always run; only the scheduled fallback
           # defers to a fresh row from the bot's 08:30 IST primary run.
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' }}
