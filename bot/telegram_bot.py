@@ -61,9 +61,10 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ContextTypes, filters
 )
 from supabase import create_client
 
@@ -80,6 +81,24 @@ def sb():
 
 
 DISCLAIMER = "\n\n_Not SEBI-registered advice. Educational only. DYOR._"
+
+# Blueprint 19: INDstocks real-order execution layer. off (default) = fully
+# inert. confirm = Telegram Execute/Skip button per new paper trade. auto is
+# not implemented - locked behind the Phase B Tier-1 + DSR gate.
+EXEC_MODE = os.getenv("INDSTOCKS_EXEC_MODE", "off").lower()
+MAX_ORDER_INR = float(os.getenv("INDSTOCKS_MAX_ORDER_INR", "5000"))
+MAX_DAILY_ORDERS = int(os.getenv("INDSTOCKS_MAX_DAILY_ORDERS", "3"))
+if EXEC_MODE == "auto":
+    print("INDSTOCKS_EXEC_MODE=auto is locked behind the Phase B Tier-1 + DSR gate; falling back to off")
+    EXEC_MODE = "off"
+
+_indstocks = None
+def indstocks():
+    global _indstocks
+    if _indstocks is None:
+        from fetchers.indstocks_api import IndstocksClient
+        _indstocks = IndstocksClient(sb())
+    return _indstocks
 
 
 # GitHub Actions workflow dispatch. Render free tier is 512 MB; the
@@ -478,6 +497,96 @@ async def trade_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"trade_status error: {str(e)[:200]}")
+
+
+def _exec_halted(s) -> bool:
+    row = s.table("exec_state").select("halted").eq("id", 1).limit(1).execute().data
+    return bool(row[0]["halted"]) if row else False
+
+
+def _ist_today_start_utc() -> str:
+    from datetime import timezone as _tz, timedelta as _td
+    ist_offset = _td(hours=5, minutes=30)
+    now_ist = datetime.now(_tz.utc) + ist_offset
+    ist_midnight = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    return (ist_midnight - ist_offset).isoformat()
+
+
+def _placed_today_count(s) -> int:
+    res = (
+        s.table("real_orders")
+        .select("id", count="exact")
+        .eq("status", "placed")
+        .gte("acted_at", _ist_today_start_utc())
+        .execute()
+    )
+    return res.count or 0
+
+
+async def token_ind(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Usage: /token_ind YOURTOKEN (message is auto-deleted after storing)")
+        return
+    token = ctx.args[0]
+    try:
+        indstocks().store_token(token)
+    except Exception as e:
+        await update.message.reply_text(f"Token store failed: {str(e)[:200]}")
+        return
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    await ctx.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="INDstocks token stored. Valid ~24h. Never share this token; "
+        "if leaked, revoke it at indstocks.com/app/api-trading.",
+    )
+
+
+async def exec_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    try:
+        s = sb()
+        age = indstocks().token_age_hours()
+        token_line = "no token" if age is None else f"{age:.1f}h old"
+        halted = _exec_halted(s)
+        placed_today = _placed_today_count(s)
+        try:
+            funds = indstocks().funds()
+            data = funds.get("data", funds) if isinstance(funds, dict) else {}
+            avail = data.get("available") if isinstance(data, dict) else None
+            funds_line = f"₹{avail}" if avail is not None else str(funds)[:80]
+        except Exception:
+            funds_line = "auth failed"
+        msg = (
+            "*Execution status*\n"
+            f"mode: {EXEC_MODE}\n"
+            f"token: {token_line}\n"
+            f"halted: {halted}\n"
+            f"orders today: {placed_today}/{MAX_DAILY_ORDERS}\n"
+            f"funds available: {funds_line}"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"exec_status error: {str(e)[:200]}")
+
+
+async def halt_exec(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    from datetime import timezone as _tz
+    s = sb()
+    s.table("exec_state").update(
+        {"halted": True, "updated_at": datetime.now(_tz.utc).isoformat()}
+    ).eq("id", 1).execute()
+    await update.message.reply_text("Execution halted. /resume to re-arm.")
+
+
+async def resume_exec(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    from datetime import timezone as _tz
+    s = sb()
+    s.table("exec_state").update(
+        {"halted": False, "updated_at": datetime.now(_tz.utc).isoformat()}
+    ).eq("id", 1).execute()
+    await update.message.reply_text("Execution re-armed.")
 
 
 async def backtest_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1290,6 +1399,204 @@ async def _startup_catchup():
         print(f"Startup catch-up failed: {e}")
 
 
+def _exec_proposal_text(order_id, root, qty, fill_px, target_px, stop_px) -> str:
+    notional = qty * fill_px
+    return (
+        f"*Trade Proposal {order_id}*\n"
+        f"BUY {root} x {qty} at ~₹{fill_px}\n"
+        f"Target ₹{target_px} · Stop ₹{stop_px}\n"
+        f"Notional ₹{notional:,.0f} + ₹5 brokerage"
+    )
+
+
+async def check_exec_proposals():
+    """Every 5 minutes, 09:15-15:30 IST Mon-Fri (window enforced below since
+    APScheduler's cron fields can't express a :15-to-:30 bound directly).
+    Proposes real orders for fresh open long paper trades when
+    EXEC_MODE=confirm, not halted, token fresh, and under the daily cap."""
+    if EXEC_MODE != "confirm":
+        return
+    from datetime import timezone as _tz, timedelta as _td
+    now_utc = datetime.now(_tz.utc)
+    now_ist = now_utc + _td(hours=5, minutes=30)
+    if now_ist.weekday() >= 5:
+        return
+    minutes_of_day = now_ist.hour * 60 + now_ist.minute
+    if not (9 * 60 + 15 <= minutes_of_day <= 15 * 60 + 30):
+        return
+    try:
+        s = sb()
+        if _exec_halted(s):
+            return
+        client = indstocks()
+        age = client.token_age_hours()
+        if age is None or age > 24:
+            return
+        if _placed_today_count(s) >= MAX_DAILY_ORDERS:
+            return
+
+        since = (now_utc - _td(minutes=45)).isoformat()
+        rows = s.table("paper_trades").select(
+            "id,ticker,side,fill_px,qty,target_px,stop_px,entered_at"
+        ).eq("status", "open").gte("entered_at", since).execute().data or []
+        if not rows:
+            return
+
+        existing = s.table("real_orders").select("paper_trade_id").execute().data or []
+        seen_ids = {r["paper_trade_id"] for r in existing if r.get("paper_trade_id")}
+
+        from telegram import Bot
+        bot = Bot(TOKEN)
+
+        for t in rows:
+            if t["id"] in seen_ids:
+                continue
+            if (t.get("side") or "long") not in ("long", "buy"):
+                continue
+            fill_px = t.get("fill_px") or 0
+            qty_paper = t.get("qty") or 0
+            if fill_px <= 0 or qty_paper <= 0:
+                continue
+            notional_paper = fill_px * qty_paper
+            qty = int(min(MAX_ORDER_INR, notional_paper) // fill_px)
+            if qty < 1:
+                s.table("real_orders").insert({
+                    "paper_trade_id": t["id"], "ticker": t["ticker"],
+                    "status": "skipped", "error": "above cap",
+                }).execute()
+                continue
+
+            ins = s.table("real_orders").insert({
+                "paper_trade_id": t["id"], "ticker": t["ticker"], "qty": qty,
+                "limit_price": fill_px, "sl_price": t.get("stop_px"),
+                "tgt_price": t.get("target_px"), "status": "proposed",
+            }).execute()
+            order_id = ins.data[0]["id"]
+            root = t["ticker"].split(".")[0]
+            msg = _exec_proposal_text(order_id, root, qty, fill_px, t.get("target_px"), t.get("stop_px"))
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Execute", callback_data=f"exec:{order_id}"),
+                InlineKeyboardButton("Skip", callback_data=f"skipexec:{order_id}"),
+            ]])
+            if CHAT_ID:
+                await bot.send_message(
+                    chat_id=CHAT_ID, text=msg, parse_mode="Markdown", reply_markup=keyboard
+                )
+    except Exception as e:
+        print(f"exec proposal poller failed: {e}")
+
+
+async def exec_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action, _, id_str = query.data.partition(":")
+    try:
+        order_id = int(id_str)
+    except ValueError:
+        return
+    s = sb()
+    row = s.table("real_orders").select("*").eq("id", order_id).limit(1).execute().data
+    if not row:
+        return
+    row = row[0]
+    if row["status"] != "proposed":
+        await query.answer("Already handled.")
+        return
+
+    if action == "skipexec":
+        from datetime import timezone as _tz
+        s.table("real_orders").update(
+            {"status": "skipped", "acted_at": datetime.now(_tz.utc).isoformat()}
+        ).eq("id", order_id).execute()
+        await query.edit_message_text(query.message.text + "\n\nSkipped.")
+        return
+
+    from datetime import timezone as _tz, timedelta as _td
+
+    def _fail(status: str, error: str, note: str):
+        s.table("real_orders").update(
+            {"status": status, "error": error[:200], "acted_at": datetime.now(_tz.utc).isoformat()}
+        ).eq("id", order_id).execute()
+        return query.edit_message_text(query.message.text + f"\n\n{note}")
+
+    if EXEC_MODE != "confirm":
+        await _fail("skipped", "exec mode off", "Execution is off.")
+        return
+    if _exec_halted(s):
+        await _fail("skipped", "halted", "Execution halted.")
+        return
+    client = indstocks()
+    age = client.token_age_hours()
+    if age is None or age > 24:
+        await _fail("skipped", "token stale", "Token missing or stale.")
+        return
+    if _placed_today_count(s) >= MAX_DAILY_ORDERS:
+        await _fail("skipped", "daily cap", "Daily order cap reached.")
+        return
+
+    proposed_at = row.get("proposed_at")
+    if proposed_at:
+        age_min = (datetime.now(_tz.utc) - datetime.fromisoformat(proposed_at.replace("Z", "+00:00"))).total_seconds() / 60
+        if age_min > 45:
+            await _fail("skipped", "expired", "Proposal expired.")
+            return
+
+    root = row["ticker"].split(".")[0]
+    try:
+        security_id = client.resolve_security_id(root)
+    except Exception as e:
+        await _fail("failed", str(e), f"Order failed: {str(e)[:150]}")
+        return
+    if not security_id:
+        await _fail("failed", "security_id not resolved", "Could not resolve instrument.")
+        return
+
+    ltp = client.ltp(security_id)
+    limit_price = row["limit_price"]
+    if ltp is not None and limit_price and abs(ltp - limit_price) / limit_price > 0.02:
+        await _fail("skipped", "moved >2%", "Price moved more than 2% since proposal. Skipped.")
+        return
+
+    try:
+        result = client.place_gtt_buy(
+            security_id, row["qty"], ltp or limit_price, row["sl_price"], row["tgt_price"]
+        )
+        order_id_broker = result.get("order_id")
+        s.table("real_orders").update(
+            {
+                "status": "placed",
+                "order_id": order_id_broker,
+                "security_id": security_id,
+                "acted_at": datetime.now(_tz.utc).isoformat(),
+            }
+        ).eq("id", order_id).execute()
+        await query.edit_message_text(query.message.text + f"\n\nPlaced. Order {order_id_broker}.")
+    except Exception as e:
+        await _fail("failed", str(e), f"Order failed: {str(e)[:150]}")
+
+
+async def check_token_stale():
+    """Daily 08:15 IST. Warns if EXEC_MODE is on and the token is missing
+    or older than 20h, ahead of the 24h hard expiry."""
+    if EXEC_MODE == "off":
+        return
+    if not CHAT_ID:
+        return
+    try:
+        age = indstocks().token_age_hours()
+        if age is not None and age <= 20:
+            return
+        from telegram import Bot
+        bot = Bot(TOKEN)
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="INDstocks token is stale. Generate a new one at "
+            "indstocks.com/app/api-trading and send /token_ind NEWTOKEN",
+        )
+    except Exception as e:
+        print(f"token stale check failed: {e}")
+
+
 async def _post_init(app: Application):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -1325,6 +1632,12 @@ async def _post_init(app: Application):
     # Sensei also self-grades before synthesizing, so even a late fire
     # never produces a data-thin retrospective again.
     scheduler.add_job(scheduled_sensei, CronTrigger(hour=20, minute=5, day_of_week="mon-fri", timezone=_IST))
+    # Blueprint 19: exec proposal poller. Cron can't express a :15-to-:30
+    # bound directly, so this fires every 5 min across the 9-15 hour block
+    # and check_exec_proposals() itself gates on the exact 09:15-15:30 window.
+    scheduler.add_job(check_exec_proposals, CronTrigger(minute="*/5", hour="9-15", day_of_week="mon-fri", timezone=_IST))
+    # 08:15 IST: warn if the INDstocks token is stale, ahead of daily 08:30 use.
+    scheduler.add_job(check_token_stale, CronTrigger(hour=8, minute=15, day_of_week="mon-fri", timezone=_IST))
     scheduler.start()
     app.bot_data["scheduler"] = scheduler
 
@@ -1367,6 +1680,11 @@ def main():
     app.add_handler(CommandHandler("trade_status", trade_status))
     app.add_handler(CommandHandler("trade", trade_status))
     app.add_handler(CommandHandler("backtest", backtest_status))
+    app.add_handler(CommandHandler("token_ind", token_ind))
+    app.add_handler(CommandHandler("exec_status", exec_status))
+    app.add_handler(CommandHandler("halt", halt_exec))
+    app.add_handler(CommandHandler("resume", resume_exec))
+    app.add_handler(CallbackQueryHandler(exec_callback, pattern=r"^(exec|skipexec):"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
     print("Bot running...")
     app.run_polling()

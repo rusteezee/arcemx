@@ -177,6 +177,36 @@ Render filesystem is ephemeral on free tier. token file disappears on restart. T
 
 Start with Option 3. Move to Option 2 once habits form.
 
+## Real-order execution (INDstocks)
+
+Staged design, off by default. `INDSTOCKS_EXEC_MODE`:
+- `off` (default): fully inert, no proposals, no orders.
+- `confirm`: every fresh open long paper trade produces a Telegram message
+  with Execute / Skip buttons. An order fires only when you tap Execute.
+- `auto`: not implemented. Locked behind the Phase B Tier-1 + DSR gate
+  (see ROADMAP.md); setting this env var falls back to `off` at boot with
+  a log line naming the gate.
+
+**Daily token routine**: access tokens expire every ~24h and can only be
+generated manually. Go to indstocks.com/app/api-trading, generate a token,
+then send `/token_ind YOURTOKEN` to the bot. The message is auto-deleted
+right after storing so the token never sits in chat history. If the token
+goes stale (>20h) while execution is on, the bot warns you at 08:15 IST.
+
+**IP note**: if the API rejects calls from the bot host, whitelist the
+host's static IP on the portal's Access Tokens page.
+
+**Caps**: `INDSTOCKS_MAX_ORDER_INR` (default 5000) per-order notional cap,
+`INDSTOCKS_MAX_DAILY_ORDERS` (default 3) daily placed-order cap. Both
+enforced before every order, not just at proposal time.
+
+**Controls**: `/exec_status` (mode, token age, halted flag, orders today,
+funds), `/halt` (immediately stop proposing/executing), `/resume` (re-arm).
+
+₹5 flat brokerage per order. Not SEBI-registered advice; this applies
+doubly to real orders placed through this feature - you are responsible
+for every trade your thumb confirms.
+
 ## Commands
 
 | Command | Purpose |
@@ -195,6 +225,9 @@ Start with Option 3. Move to Option 2 once habits form.
 | `/sync` | Pull holdings + watchlist from INDmoney |
 | `/trade` | Paper-trader status + tier gate |
 | `/backtest` | Latest full-history replay result |
+| `/token_ind TOKEN` | Store today's INDstocks access token (auto-deletes) |
+| `/exec_status` | Real-order execution mode, token age, caps, funds |
+| `/halt` `/resume` | Stop / re-arm real-order execution |
 
 ## How the analysis works
 

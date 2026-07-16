@@ -528,3 +528,47 @@ end$$;
 -- No anon policy on: news, trends, ticker_enrichment, mcp_tokens (OAuth
 -- tokens - must never be anon-readable), prediction_embeddings (internal
 -- training data). All fully blocked to anon.
+
+-- Blueprint 19: symbol root -> INDstocks security_id, filled lazily from the
+-- instrument master CSV so we never bulk-load ~100k rows into Supabase.
+create table if not exists instrument_map (
+    id bigserial primary key,
+    symbol_root text not null unique,
+    security_id text not null,
+    exchange text not null default 'NSE',
+    updated_at timestamptz default now()
+);
+
+-- Blueprint 19: every real-order proposal and its outcome. One row per
+-- paper_trade proposed; status: proposed | skipped | placed | failed | cancelled.
+create table if not exists real_orders (
+    id bigserial primary key,
+    paper_trade_id bigint references paper_trades(id) on delete set null,
+    ticker text not null,
+    security_id text,
+    qty integer,
+    limit_price numeric,
+    sl_price numeric,
+    tgt_price numeric,
+    order_id text,
+    status text not null default 'proposed',
+    error text,
+    proposed_at timestamptz default now(),
+    acted_at timestamptz,
+    meta jsonb
+);
+create index if not exists idx_real_orders_status on real_orders(status, proposed_at desc);
+
+-- Blueprint 19: single-row runtime halt switch for the execution layer.
+create table if not exists exec_state (
+    id int primary key default 1,
+    halted boolean not null default false,
+    updated_at timestamptz default now()
+);
+insert into exec_state (id, halted) values (1, false) on conflict (id) do nothing;
+
+alter table instrument_map enable row level security;
+alter table real_orders    enable row level security;
+alter table exec_state     enable row level security;
+-- No anon policy on any of the three above: real_orders/exec_state control
+-- live trading, instrument_map is internal cache. Fully blocked to anon.
