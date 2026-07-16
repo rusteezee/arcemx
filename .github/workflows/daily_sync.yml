@@ -49,6 +49,13 @@ jobs:
 
           asyncio.run(main())
           EOF
+      - name: TEMP debug - options_chain GH-runner IP check (blueprint 05, revert after)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "from fetchers.options_chain import fetch_options_signals; print('options_signals:', fetch_options_signals())"
       - name: Dead-man ping
         if: always()
         env:
