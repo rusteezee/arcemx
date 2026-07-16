@@ -79,6 +79,7 @@ const SKIP_LABEL: Record<string, string> = {
   no_ticker: "Missing ticker",
   regime_off: "Regime risk-off",
   earnings_blackout: "Earnings blackout",
+  circuit_breaker: "Circuit breaker",
 };
 
 const EXIT_LABEL: Record<string, string> = {
@@ -113,6 +114,7 @@ interface MetricsSnapshot {
   psr: number | null;
   calmar: number | null;
   cleared_tier: number | null;
+  bundle: { breaker_tripped?: boolean; breaker_dd_pct?: number } | null;
 }
 
 export default function TraderPage() {
@@ -161,7 +163,7 @@ export default function TraderPage() {
       // is moving the needle. Empty until first grader pass writes.
       const msRes = await sb
         .from("metrics_snapshot")
-        .select("computed_at,trade_count,sharpe,max_dd_pct,psr,calmar,cleared_tier")
+        .select("computed_at,trade_count,sharpe,max_dd_pct,psr,calmar,cleared_tier,bundle")
         .order("computed_at", { ascending: true })
         .limit(500);
       setTierHistory((msRes.data || []) as MetricsSnapshot[]);
@@ -220,6 +222,13 @@ export default function TraderPage() {
   }, [signals]);
   const enteredCount = signals.filter((s) => s.action === "enter").length;
   const totalEvaluated = signals.length;
+
+  // Circuit breaker state (blueprint 08): read from the latest
+  // metrics_snapshot's bundle rather than recomputed here, so the page
+  // shows exactly what the last grader pass actually gated on.
+  const latestSnapshot = tierHistory.length ? tierHistory[tierHistory.length - 1] : null;
+  const breakerTripped = latestSnapshot?.bundle?.breaker_tripped ?? false;
+  const breakerLabel = !latestSnapshot ? "·" : (breakerTripped ? "TRIPPED" : "ARMED");
 
   if (loading) {
     return (
@@ -364,6 +373,11 @@ export default function TraderPage() {
           <Stat
             label="Calmar"
             value={metrics.tradeCount ? metrics.calmar.toFixed(2) : "·"}
+          />
+          <Stat
+            label="Breaker"
+            value={breakerLabel}
+            deltaPositive={!breakerTripped}
           />
         </div>
         <div className="card overflow-hidden mt-5">

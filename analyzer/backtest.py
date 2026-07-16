@@ -56,6 +56,9 @@ from analyzer.paper_trader import (
     REGIME_GATE_ON,
     REGIME_HALF_MULT,
     EARNINGS_BLACKOUT_SESSIONS,
+    BREAKER_DD_PCT,
+    BREAKER_REARM_PCT,
+    BREAKER_MIN_TRADES,
     _weekday_sessions_between,
     _apply_slippage,
     _broker_friction,
@@ -288,6 +291,34 @@ def _platt_recalibrate(calib_by_dim: dict[str, list[dict]], dim: str, asof: date
     return calibration.apply(fit, float(stated_conf))
 
 
+def _update_breaker(book: ShadowBook, portfolio_base: float, prev_tripped: bool) -> bool:
+    """Drawdown circuit breaker (blueprint 08), backtest mirror. Mirrors
+    paper_trader._breaker_state's arithmetic (current drawdown from the
+    running peak, same denominator convention), but walked forward
+    across the replay instead of reading a persisted metrics_snapshot
+    row - hysteresis carries via prev_tripped, the caller's own running
+    state through the events loop (no Telegram; the caller just counts
+    circuit_breaker skips like any other skip reason)."""
+    if len(book.closed) < BREAKER_MIN_TRADES:
+        return False
+    trades_for_metrics = [
+        {**t, "exit_at": t["exit_at"].isoformat() if isinstance(t.get("exit_at"), datetime) else t.get("exit_at")}
+        for t in book.closed
+    ]
+    curve = metrics.equity_curve(trades_for_metrics)
+    if not curve:
+        return False
+    peak = curve[0][1]
+    for _, v in curve:
+        if v > peak:
+            peak = v
+    denom = portfolio_base + peak
+    dd_pct = ((peak - curve[-1][1]) / denom * 100.0) if denom > 0 else 0.0
+    if prev_tripped:
+        return dd_pct >= BREAKER_REARM_PCT
+    return dd_pct > BREAKER_DD_PCT
+
+
 # ---------------------------------------------------------------------------
 # Mark-to-market on the shadow book (mirrors paper_trader._mark_one /
 # _close_trade, but reads cached historical bars instead of a live
@@ -375,7 +406,8 @@ def _open_shadow_trade(book: ShadowBook, *, source_kind, source_run_id, ticker, 
     }
 
 
-def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfolio_base: float) -> str | None:
+def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfolio_base: float,
+                        breaker_tripped: bool = False) -> str | None:
     sa_id = row["id"]
     ticker = row["ticker"]
     j = row.get("llm_json") or {}
@@ -385,6 +417,8 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
     horizon = int(row.get("horizon_days") or j.get("horizon_days") or 30)
     asof = row["_asof"]
 
+    if breaker_tripped:
+        return "circuit_breaker"
     if rating != "buy":
         return "not_buy"
     if not isinstance(edge, (int, float)):
@@ -447,11 +481,15 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
 
 
 def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, hist: HistCache,
-                        sb, portfolio_base: float, calib_by_dim: dict) -> str | None:
+                        sb, portfolio_base: float, calib_by_dim: dict,
+                        breaker_tripped: bool = False) -> str | None:
     raw_ticker = (tp.get("ticker") or "").strip().upper()
     if not raw_ticker:
         return None
     ticker = raw_ticker if (raw_ticker.endswith(".NS") or raw_ticker.endswith(".BO") or raw_ticker.startswith("^")) else raw_ticker + ".NS"
+
+    if breaker_tripped:
+        return "circuit_breaker"
 
     conf = _conf_from_winprob(tp)
     edge = tp.get("expected_edge_pct")
@@ -526,11 +564,15 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
 
 
 def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, book: ShadowBook,
-                  hist: HistCache, sb, portfolio_base: float, calib_by_dim: dict) -> str | None:
+                  hist: HistCache, sb, portfolio_base: float, calib_by_dim: dict,
+                  breaker_tripped: bool = False) -> str | None:
     raw_ticker = (outlook.get("ticker") or "").strip().upper()
     if not raw_ticker:
         return None
     ticker = raw_ticker if (raw_ticker.endswith(".NS") or raw_ticker.endswith(".BO") or raw_ticker.startswith("^")) else raw_ticker + ".NS"
+
+    if breaker_tripped:
+        return "circuit_breaker"
 
     direction = (outlook.get("direction") or "").lower()
     if direction != "up":
@@ -682,16 +724,21 @@ def run_backtest() -> dict[str, Any]:
 
     counts = {"evaluated": 0, "entered": 0}
     skips: dict[str, int] = {}
+    breaker_tripped = False
 
     for asof, kind, payload in events:
         _mark_shadow_book(book, hist, asof)
         counts["evaluated"] += 1
+        breaker_tripped = _update_breaker(book, portfolio_base, breaker_tripped)
         if kind == "stock_analyst":
-            outcome = _eval_stock_analyst(payload, book, hist, sb, portfolio_base)
+            outcome = _eval_stock_analyst(payload, book, hist, sb, portfolio_base,
+                                          breaker_tripped=breaker_tripped)
         elif kind == "top_performer":
-            outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, portfolio_base, calib_by_dim)
+            outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, portfolio_base,
+                                          calib_by_dim, breaker_tripped=breaker_tripped)
         else:
-            outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, portfolio_base, calib_by_dim)
+            outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, portfolio_base,
+                                    calib_by_dim, breaker_tripped=breaker_tripped)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome:

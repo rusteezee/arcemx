@@ -481,6 +481,38 @@ def compute_paper_metrics(base_inr: float = PORTFOLIO_BASE_INR) -> dict[str, Any
     tiers = evaluate_tiers(sharpe_v, dd["max_dd_pct"], psr_v)
     per_dim = per_dim_skill(sb)
     wf = walk_forward_confidence_floor(sb=sb, base_inr=base_inr)
+
+    # Circuit breaker (blueprint 08): CURRENT drawdown from the curve's
+    # running peak, NOT max_drawdown()'s worst-historical-window figure
+    # above - the breaker cares where the curve sits right now. Same
+    # denominator convention (base_inr + peak). Deferred import avoids a
+    # module-load cycle (paper_trader.py itself imports this module for
+    # equity_curve); see paper_trader._breaker_state for the canonical
+    # implementation this mirrors.
+    breaker_dd_pct = 0.0
+    breaker_tripped = False
+    if curve:
+        peak = curve[0][1]
+        for _, v in curve:
+            if v > peak:
+                peak = v
+        denom = base_inr + peak
+        breaker_dd_pct = ((peak - curve[-1][1]) / denom * 100.0) if denom > 0 else 0.0
+        from analyzer.paper_trader import BREAKER_DD_PCT, BREAKER_REARM_PCT, BREAKER_MIN_TRADES
+        if len(rows) >= BREAKER_MIN_TRADES:
+            prev_tripped = False
+            try:
+                prev = sb.table("metrics_snapshot").select("bundle").order(
+                    "computed_at", desc=True).limit(1).execute().data or []
+                if prev:
+                    prev_tripped = bool((prev[0].get("bundle") or {}).get("breaker_tripped"))
+            except Exception:
+                pass
+            breaker_tripped = (
+                breaker_dd_pct >= BREAKER_REARM_PCT if prev_tripped
+                else breaker_dd_pct > BREAKER_DD_PCT
+            )
+
     return {
         "trade_count": len(rows),
         "span_days": span_days,
@@ -494,6 +526,8 @@ def compute_paper_metrics(base_inr: float = PORTFOLIO_BASE_INR) -> dict[str, Any
         "equity_curve": [(d.isoformat(), v) for d, v in curve],
         "per_dim_skill": per_dim,
         "walk_forward": wf,
+        "breaker_tripped": breaker_tripped,
+        "breaker_dd_pct": round(breaker_dd_pct, 2),
     }
 
 

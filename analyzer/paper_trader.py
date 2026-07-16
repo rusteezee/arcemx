@@ -42,7 +42,7 @@ import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client
 
-from analyzer import calibration
+from analyzer import calibration, metrics
 from analyzer.regime import fetch_regime
 
 load_dotenv()
@@ -93,6 +93,9 @@ REGIME_GATE_ON = os.getenv("ARCEMX_REGIME_GATE", "1") != "0"  # market-regime
 REGIME_HALF_MULT = 0.5           # position-size multiplier when regime risk_mode == "half"
 EARNINGS_BLACKOUT_SESSIONS = 3   # no new entries when next earnings is within this many
                                  # trading sessions ahead, or yesterday/today (blueprint 07)
+BREAKER_DD_PCT = 8.0             # circuit breaker trips above this current drawdown-from-peak
+BREAKER_REARM_PCT = 4.0          # re-arms once drawdown recovers below this (half the trip level)
+BREAKER_MIN_TRADES = 10          # below this closed-trade count the curve is too noisy; pass through
 
 
 def _sb():
@@ -170,6 +173,79 @@ def _dim_confidence_bias(sb, dim: str) -> float:
         return max(-25.0, min(25.0, gap))
     except Exception:
         return 0.0
+
+
+def _breaker_state(sb, portfolio_base: float) -> tuple[bool, float, bool]:
+    """Drawdown circuit breaker (blueprint 08), computed statelessly
+    each pass from closed paper_trades - no new table, no state drift,
+    since the equity curve itself is deterministic. Computes the CURRENT
+    drawdown from the curve's running peak (NOT metrics.max_drawdown's
+    worst-historical-window figure; the breaker cares where the curve
+    sits right now), same denominator convention (base_inr + peak) as
+    metrics.max_drawdown. Hysteresis (trip above BREAKER_DD_PCT, re-arm
+    below BREAKER_REARM_PCT) carries via the previous pass's flag, read
+    from the latest metrics_snapshot row's bundle - metrics_snapshot
+    already writes every grader pass. Below BREAKER_MIN_TRADES closed
+    trades the curve is too noisy to trust; pass through untripped.
+
+    Returns (tripped, dd_pct, transitioned) - transitioned is True only
+    on the pass where the flag actually flips, so the caller pushes the
+    trip/re-arm Telegram copy exactly once per transition, not every
+    pass while the state holds steady."""
+    rows = sb.table("paper_trades").select("exit_at,net_pnl").like(
+        "status", "closed_%"
+    ).execute().data or []
+    if len(rows) < BREAKER_MIN_TRADES:
+        return False, 0.0, False
+
+    curve = metrics.equity_curve(rows)
+    if not curve:
+        return False, 0.0, False
+    peak = curve[0][1]
+    for _, v in curve:
+        if v > peak:
+            peak = v
+    denom = portfolio_base + peak
+    dd_pct = ((peak - curve[-1][1]) / denom * 100.0) if denom > 0 else 0.0
+
+    prev_tripped = False
+    try:
+        prev = sb.table("metrics_snapshot").select("bundle").order(
+            "computed_at", desc=True
+        ).limit(1).execute().data or []
+        if prev:
+            prev_tripped = bool((prev[0].get("bundle") or {}).get("breaker_tripped"))
+    except Exception:
+        pass
+
+    tripped = (dd_pct >= BREAKER_REARM_PCT) if prev_tripped else (dd_pct > BREAKER_DD_PCT)
+    return tripped, dd_pct, (tripped != prev_tripped)
+
+
+def _breaker_notify(text: str) -> None:
+    """Sync Telegram push for breaker trip/re-arm transitions, mirroring
+    grader._telegram_notify's simple sendMessage POST rather than
+    alerts_checker.py's async telegram.Bot pattern - paper_trader.py has
+    no asyncio elsewhere, and this same call chain (grader -> paper
+    trader daily run) already pushes its "first trade fired" alert this
+    same simple way. Soft-fails: a notification hiccup must never block
+    the eval pass."""
+    try:
+        import requests
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        if not token or not chat_id:
+            print("  breaker_notify skipped (env missing)")
+            return
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+        if r.status_code >= 300:
+            print(f"  breaker_notify HTTP {r.status_code}: {r.text[:120]}")
+    except Exception as e:
+        print(f"  breaker_notify skipped ({type(e).__name__}): {str(e)[:120]}")
 
 
 def _ticker_is_frozen(sb, ticker: str, now: datetime) -> tuple[bool, dict]:
@@ -512,7 +588,8 @@ def _log_signal(sb, ticker: str, sa_id: int, action: str,
 def _evaluate_one(sb, analysis_row: dict, now: datetime,
                   portfolio_base: float | None = None,
                   regime: dict | None = None,
-                  earnings_cache: dict | None = None) -> str:
+                  earnings_cache: dict | None = None,
+                  breaker_tripped: bool = False) -> str:
     """Apply gate stack to one stock_analyses row. Returns action or
     skip_reason string for logging. ALWAYS writes a paper_signals row
     so the skipped-winner attribution is computable later."""
@@ -532,6 +609,13 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
     ).eq("source_run_id", sa_id).eq("ticker", ticker).limit(1).execute()
     if existing.data:
         return "already_evaluated"
+
+    # Circuit breaker (blueprint 08): cheapest gate, checked first so a
+    # tripped book does no further work per signal. Blocks entries only;
+    # mark_to_market/exits are untouched.
+    if breaker_tripped:
+        _log_signal(sb, ticker, sa_id, "skip", "circuit_breaker", confidence=confidence, edge=edge)
+        return "circuit_breaker"
 
     # Pre-schema attribution: Stock Analyst runs that predate the edge
     # decomposition commit (f406518) have edge=None. Distinguish that
@@ -718,6 +802,25 @@ def eval_signals(now: datetime | None = None) -> dict:
     portfolio_base = _resolve_portfolio_base(sb)
     print(f"paper_trader: portfolio_base resolved = {portfolio_base:.0f}")
 
+    # Circuit breaker (blueprint 08): cheapest gate, computed once per
+    # pass and checked first inside every evaluator. Blocks entries
+    # only - mark_to_market/exits already ran before eval_signals and
+    # are untouched by this. Pushes the exact Telegram copy only on a
+    # trip/re-arm TRANSITION, not every pass while the state holds.
+    breaker_tripped, breaker_dd_pct, breaker_transitioned = _breaker_state(sb, portfolio_base)
+    if breaker_transitioned:
+        if breaker_tripped:
+            _breaker_notify(
+                f"⛔ Circuit breaker TRIPPED: paper book drawdown {breaker_dd_pct:.1f}% > 8%. "
+                f"New entries paused until drawdown < 4%. Open positions continue to manage themselves."
+            )
+        else:
+            _breaker_notify(
+                f"✅ Circuit breaker re-armed: drawdown recovered to {breaker_dd_pct:.1f}%. Entries resume."
+            )
+    if breaker_tripped:
+        print(f"paper_trader: CIRCUIT BREAKER TRIPPED (dd={breaker_dd_pct:.1f}%), entries paused")
+
     # Fetched once per pass (regime.fetch_regime has its own 30-min cache
     # on top, so a burst of calls in the same window is still one
     # download set). None when the gate is disabled via env, matching
@@ -743,7 +846,8 @@ def eval_signals(now: datetime | None = None) -> dict:
     for r in sa_rows:
         counts["evaluated"] += 1
         outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base,
-                               regime=regime, earnings_cache=earnings_cache)
+                               regime=regime, earnings_cache=earnings_cache,
+                               breaker_tripped=breaker_tripped)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome == "already_evaluated":
@@ -780,7 +884,8 @@ def eval_signals(now: datetime | None = None) -> dict:
                 counts["evaluated"] += 1
                 outcome = _evaluate_outlook(sb, a, outlook, source_kind, now,
                                            portfolio_base=portfolio_base, regime=regime,
-                                           earnings_cache=earnings_cache)
+                                           earnings_cache=earnings_cache,
+                                           breaker_tripped=breaker_tripped)
                 if outcome == "enter":
                     counts["entered"] += 1
                 elif outcome == "already_evaluated":
@@ -797,7 +902,8 @@ def eval_signals(now: datetime | None = None) -> dict:
             counts["evaluated"] += 1
             outcome = _evaluate_top_performer(sb, a, tp, now,
                                               portfolio_base=portfolio_base, regime=regime,
-                                              earnings_cache=earnings_cache)
+                                              earnings_cache=earnings_cache,
+                                              breaker_tripped=breaker_tripped)
             if outcome == "enter":
                 counts["entered"] += 1
             elif outcome == "already_evaluated":
@@ -812,7 +918,8 @@ def eval_signals(now: datetime | None = None) -> dict:
 
 def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
                             portfolio_base: float, regime: dict | None = None,
-                            earnings_cache: dict | None = None) -> str:
+                            earnings_cache: dict | None = None,
+                            breaker_tripped: bool = False) -> str:
     """Gate-stack a single top_performers entry. Unlike outlook signals
     (which synthesize geometry from a range band), top_performers carry
     the model's explicit entry / target / stop_loss + a pre-computed
@@ -840,6 +947,10 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
     ).eq("source_run_id", a_id).eq("ticker", ticker).limit(1).execute()
     if existing.data:
         return "already_evaluated"
+
+    if breaker_tripped:
+        L("skip", "circuit_breaker")
+        return "circuit_breaker"
 
     conf = _conf_from_winprob(tp)
     edge = tp.get("expected_edge_pct")
@@ -1068,7 +1179,8 @@ def _parse_range_band(s) -> tuple[float, float] | None:
 def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                       source_kind: str, now: datetime,
                       portfolio_base: float, regime: dict | None = None,
-                      earnings_cache: dict | None = None) -> str:
+                      earnings_cache: dict | None = None,
+                      breaker_tripped: bool = False) -> str:
     """Gate-stack a single outlook entry. outlook carries direction +
     range + confidence + key_driver. Target/stop synthesized from the
     range band: long entry at mid, target = upper of range, stop = lower.
@@ -1100,6 +1212,10 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
     ).eq("source_run_id", a_id).eq("ticker", ticker).limit(1).execute()
     if existing.data:
         return "already_evaluated"
+
+    if breaker_tripped:
+        L("skip", "circuit_breaker")
+        return "circuit_breaker"
 
     direction = (outlook.get("direction") or "").lower()
     stated_conf = outlook.get("confidence")
