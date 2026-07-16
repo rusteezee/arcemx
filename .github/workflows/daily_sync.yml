@@ -6,6 +6,9 @@ name: Daily INDmoney Sync
 # Verified 12 Jul via a throwaway test dispatch that INDmoney's holdings
 # API does NOT rate-limit GitHub Actions' shared runner IPs (clean
 # success, zero retries needed, same call Render already makes).
+# Re-verified 16 Jul for the newer get_indian_stocks_option_chain tool
+# (blueprint 05) via a temp debug step, dispatch, then revert - same
+# clean-success, zero-retry result.
 #
 # 02:25 UTC = 07:55 IST, Mon-Fri. 5 min before Render's own 08:00 IST
 # APScheduler sync, 25 min before daily_analysis.yml's 02:50 UTC primary
@@ -49,13 +52,6 @@ jobs:
 
           asyncio.run(main())
           EOF
-      - name: TEMP debug - options_chain GH-runner IP check (blueprint 05, revert after)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python -c "from fetchers.options_chain import fetch_options_signals; print('options_signals:', fetch_options_signals())"
       - name: Dead-man ping
         if: always()
         env:
