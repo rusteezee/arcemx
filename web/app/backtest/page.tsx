@@ -36,7 +36,7 @@ interface PboBundle {
 
 interface BacktestResults {
   portfolio_base: number;
-  compounding: boolean;
+  compounding?: boolean;
   replay_window: { from: string; to: string };
   counts: { evaluated: number; entered: number };
   skips: Record<string, number>;
@@ -50,10 +50,13 @@ interface BacktestResults {
   max_drawdown: { max_dd_pct: number; peak_at: string | null; trough_at: string | null };
   calmar: number;
   psr: number;
-  dsr: DsrBundle;
-  pbo: PboBundle | null;
-  compounded_final_equity: number;
-  simple_total_net_pnl: number;
+  // dsr/pbo/compounded fields are absent on backtest_runs rows saved
+  // before blueprint 10 - always optional-chain these, never assume
+  // they exist just because trade_count > 0.
+  dsr?: DsrBundle;
+  pbo?: PboBundle | null;
+  compounded_final_equity?: number;
+  simple_total_net_pnl?: number;
   tier_eval: { cleared_tier: number; next_tier: number; next_label: string };
   equity_curve: [string, number][];
   trades: BacktestTrade[];
@@ -227,8 +230,8 @@ export default function BacktestPage() {
               <Stat label="Calmar" value={results.trade_count ? results.calmar.toFixed(2) : "·"} />
               <Stat
                 label="DSR"
-                value={results.trade_count ? results.dsr.dsr.toFixed(3) : "·"}
-                deltaPositive={results.dsr.dsr >= 0.90}
+                value={results.dsr ? results.dsr.dsr.toFixed(3) : "n/a"}
+                deltaPositive={results.dsr ? results.dsr.dsr >= 0.90 : undefined}
               />
               <Stat
                 label="PBO"
