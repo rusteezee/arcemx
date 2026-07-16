@@ -19,6 +19,7 @@ emits. The LLM only needs the high-signal subset.
 import requests
 
 PRIMARY_URL = "https://fii-diidata.mrchartist.com/api/data"
+HISTORY_URL = "https://fii-diidata.mrchartist.com/api/history-full"
 BACKSTOP_URL = (
     "https://raw.githubusercontent.com/MrChartist/fii-dii-data/main/"
     "data/history.json"
@@ -78,6 +79,106 @@ def fetch_latest() -> dict | None:
     return None
 
 
+def _row_net(row: dict) -> tuple[float | None, float | None]:
+    """Tolerant (fii_net, dii_net) extraction across two schemas seen in
+    the wild: /api/history-full's short keys (d/fn/dn - verified live
+    2026-07-16; grader.py's fii_flow_1d dim hit this exact schema and a
+    long-key lookup silently returned None for weeks, see grader.py's
+    own comment on that fix) and the GitHub raw backstop's long keys
+    (date/fii_net/dii_net, same data, verified same day)."""
+    fn = row.get("fn")
+    if fn is None:
+        fn = row.get("fii_net")
+    dn = row.get("dn")
+    if dn is None:
+        dn = row.get("dii_net")
+    fn = float(fn) if isinstance(fn, (int, float)) else None
+    dn = float(dn) if isinstance(dn, (int, float)) else None
+    return fn, dn
+
+
+def fetch_history(days: int = 20) -> dict | None:
+    """5d/20d cumulative FII/DII net flows plus a signed FII streak, so
+    the morning payload's FII/DII block carries trend context instead
+    of only yesterday's single number. Tries the mirror's /api/history-
+    full first (rows newest-first), falls back to the GitHub raw
+    backstop on failure - same two-tier pattern as fetch_latest().
+    Computed strictly from TRADING days present in the data, no
+    calendar padding. Returns None on any failure or with fewer than 5
+    usable trading-day rows, so the payload just omits the key rather
+    than embedding a stale or partial trend."""
+    rows = None
+    try:
+        r = requests.get(HISTORY_URL, headers=_HEADERS, timeout=_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+        if isinstance(data, list) and data:
+            rows = data
+    except Exception as e:
+        print(f"fii_dii history primary fail: {e}")
+
+    if rows is None:
+        try:
+            r = requests.get(BACKSTOP_URL, headers=_HEADERS, timeout=_TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, list) and data:
+                rows = data
+        except Exception as e:
+            print(f"fii_dii history backstop fail: {e}")
+            return None
+
+    if not rows:
+        return None
+
+    fii_nets: list[float] = []
+    dii_nets: list[float] = []
+    for row in rows:
+        fn, dn = _row_net(row)
+        if fn is None or dn is None:
+            continue
+        fii_nets.append(fn)
+        dii_nets.append(dn)
+
+    if len(fii_nets) < 5:
+        return None
+
+    fii_net_5d = sum(fii_nets[:5])
+    dii_net_5d = sum(dii_nets[:5])
+    n20 = min(days, len(fii_nets))
+    fii_net_20d = sum(fii_nets[:n20])
+    dii_net_20d = sum(dii_nets[:n20])
+
+    # Signed consecutive-day streak of same-sign FII net, walking back
+    # from the most recent trading day (e.g. -4 = 4 straight selling
+    # days). A flat (zero-net) day breaks the streak at 0.
+    streak = 0
+    sign = 0
+    for net in fii_nets:
+        cur_sign = 1 if net > 0 else (-1 if net < 0 else 0)
+        if cur_sign == 0 or (sign and cur_sign != sign):
+            break
+        sign = cur_sign
+        streak += 1
+    fii_streak = streak * sign
+
+    # ASSUMPTION: "read" is the fixed-rule classifier tag itself
+    # ("notable"/"mixed"), not a generated natural-language sentence -
+    # the numeric fields already give the LLM everything it needs to
+    # compose its own sentence (per the GOAL section's example).
+    read = "notable" if (abs(fii_streak) >= 3 or abs(fii_net_5d) > 5000) else "mixed"
+
+    return {
+        "fii_net_5d": round(fii_net_5d, 2),
+        "fii_net_20d": round(fii_net_20d, 2),
+        "dii_net_5d": round(dii_net_5d, 2),
+        "dii_net_20d": round(dii_net_20d, 2),
+        "fii_streak": fii_streak,
+        "read": read,
+    }
+
+
 if __name__ == "__main__":
     import json
     print(json.dumps(fetch_latest(), indent=2, default=str))
+    print(json.dumps(fetch_history(), indent=2, default=str))

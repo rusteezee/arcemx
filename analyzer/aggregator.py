@@ -14,7 +14,7 @@ from supabase import create_client
 from fetchers.prices import load_universe, latest_snapshot
 from fetchers.news import fetch_rss, fetch_gnews
 from fetchers.reddit import fetch_hot
-from fetchers.fii_dii import fetch_latest as fetch_fii_dii
+from fetchers.fii_dii import fetch_latest as fetch_fii_dii, fetch_history as fetch_fii_dii_history
 from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm_router import analyze
 from analyzer.feedback import build_feedback as _load_feedback
@@ -420,6 +420,17 @@ def build_payload() -> dict:
     except Exception as e:
         print(f"flows fail: {e}")
 
+    flows_trend = None
+    try:
+        flows_trend = fetch_fii_dii_history()
+        if flows_trend:
+            print(f"  flows_trend: FII 5d {flows_trend.get('fii_net_5d')} cr, "
+                  f"streak {flows_trend.get('fii_streak')}, read={flows_trend.get('read')}")
+        else:
+            print("  no flows_trend data available")
+    except Exception as e:
+        print(f"flows_trend fail: {e}")
+
     print("User holdings + wishlist...")
     holdings, wishlist, prior_call = [], [], None
     holding_technicals, wishlist_technicals = {}, {}
@@ -575,6 +586,7 @@ def build_payload() -> dict:
         "sensei_yesterday": sensei_yesterday,
         "market_context": market_context,
         "flows": flows,
+        "flows_trend": flows_trend,
         "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],
         "user_holdings": holdings,
         "user_wishlist": wishlist,

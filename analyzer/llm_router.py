@@ -266,6 +266,8 @@ as primary directional evidence; institutional flow is genuinely market-moving:
 - Cite at least one flows number (fii_cash_cr, fii_idx_fut_net, or pcr) in every
   nifty_outlook drivers entry, sector_outlooks key_driver where relevant, and the
   reasoning_breakdown.sentiment key.
+flows_trend (when present) gives 5d/20d cumulative FII/DII nets and a same-direction
+streak; weigh persistent flows more than any single day.
 
 fii_flow_outlook predicts tomorrow's FII cash flow. Direction: inflow if you
 expect >+500 cr, outflow if <-500 cr, else flat. Anchor expected_cash_net_cr to
@@ -977,7 +979,7 @@ _PAYLOAD_DROP_ORDER = (
     # broader technical screen. self_feedback, sensei_yesterday,
     # market_context, holding/wishlist technicals, and prior_call are
     # never droppable: lose them and the reasoning loop collapses.
-    "news_recent", "reddit_hot", "google_trends", "indices",
+    "news_recent", "reddit_hot", "flows_trend", "google_trends", "indices",
     "wishlist_news", "wishlist_fundamentals",
     "holding_news",
     "technical_bearish_top", "technical_bullish_top",
