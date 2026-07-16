@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client
 
-from analyzer.embed import encode, features_for_analysis, features_to_text
+from analyzer.embed import encode, features_for_analysis, features_to_text, model_name
 
 
 def _sb():
@@ -80,14 +80,26 @@ def _load_analyses(sb, ids: list[int]) -> dict[int, dict]:
     return meta
 
 
-def run(force: bool = False) -> None:
+def run(force: bool = False, re_embed_all: bool = False) -> None:
+    """re_embed_all (blueprint 14): functionally identical to force=True
+    (every row gets re-encoded, not just missing ones - --force already
+    did this for a post-model-swap top-up) but ALSO stamps each row's
+    feature_vector with which encoder produced it, so a future audit
+    can tell a bge-base row from a legacy MiniLM one without re-deriving
+    it from embedding norms. Use this specifically to clear the mixed-
+    model contamination blueprint 14 exists to fix; use plain --force
+    for an ordinary post-swap top-up where the audit trail is less load-
+    bearing (do not change behavior there to keep runs comparable)."""
     sb = _sb()
     scores = _all_prediction_scores(sb)
     print(f"backfill: {len(scores)} prediction_scores rows total")
 
-    skip = set() if force else _already_embedded_keys(sb)
+    skip = set() if (force or re_embed_all) else _already_embedded_keys(sb)
     if skip:
         print(f"backfill: {len(skip)} (analysis_id, dim) pairs already embedded; skipping")
+    stamp_model = model_name() if re_embed_all else None
+    if stamp_model:
+        print(f"backfill: re-embed-all under {stamp_model}, stamping feature_vector._embed_model")
 
     work = [s for s in scores
             if s.get("analysis_id") is not None
@@ -128,11 +140,12 @@ def run(force: bool = False) -> None:
         vecs = encode(pending_texts)
         rows = []
         for i, ((aid, dim, score, feat), vec) in enumerate(zip(pending_meta, vecs)):
+            fv = {**feat, "_embed_model": stamp_model} if stamp_model else feat
             rows.append({
                 "analysis_id": aid,
                 "dimension": dim,
                 "feature_text": pending_texts[i],
-                "feature_vector": feat,
+                "feature_vector": fv,
                 "embedding": vec,
                 "outcome_score": score,
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -187,4 +200,5 @@ def run(force: bool = False) -> None:
 
 if __name__ == "__main__":
     force = "--force" in sys.argv
-    run(force=force)
+    re_embed_all = "--re-embed-all" in sys.argv
+    run(force=force, re_embed_all=re_embed_all)

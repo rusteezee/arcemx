@@ -95,6 +95,18 @@ def get_model():
     raise RuntimeError(f"embed: no model could be loaded; last: {last_err}")
 
 
+def model_name() -> str:
+    """Which encoder actually produced the last/next encode() call.
+    Loads the model if not already loaded (encode() would anyway) so
+    this always returns a real name, never None. Used by embed_backfill
+    to stamp each row's feature_vector with which model embedded it -
+    the store has no dedicated model column (blueprint 14 ASSUMPTION:
+    prefix bookkeeping into the existing feature_vector jsonb rather
+    than add a schema column for this alone)."""
+    get_model()
+    return _MODEL_NAME or _PRIMARY
+
+
 def encode(texts: list[str]) -> list[list[float]]:
     """Encode a list of strings into 1024-dim normalized float vectors.
 

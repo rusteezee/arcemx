@@ -18,6 +18,12 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
+      re_embed_all:
+        description: "Full re-embed + stamp feature_vector._embed_model (blueprint 14 one-shot; use instead of force to clear mixed-model contamination)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
 
 # See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.
 env:
@@ -64,7 +70,9 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          if [ "${{ inputs.force }}" = "true" ]; then
+          if [ "${{ inputs.re_embed_all }}" = "true" ]; then
+            python -m analyzer.embed_backfill --re-embed-all
+          elif [ "${{ inputs.force }}" = "true" ]; then
             python -m analyzer.embed_backfill --force
           else
             python -m analyzer.embed_backfill

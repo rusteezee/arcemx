@@ -420,6 +420,30 @@ create table if not exists prediction_embeddings (
 );
 create index if not exists idx_pred_emb_analysis on prediction_embeddings(analysis_id, dimension);
 
+-- Phase 1 RAG activation (blueprint 14). ivfflat index + the match_exemplars
+-- RPC analyzer/feedback.py's _retrieve_exemplars_by_similarity actually calls
+-- (contract read from that function, not guessed: param names query_embedding/
+-- dim/match_count, only analysis_id/outcome_score/similarity are read from
+-- the result - dimension/feature_text are NOT read downstream so they are
+-- deliberately omitted from the return shape). This DDL cannot run through
+-- the Python/JS client - run it in the Supabase SQL Editor once.
+create index if not exists idx_pred_emb_ivfflat on prediction_embeddings
+  using ivfflat (embedding vector_cosine_ops) with (lists = 50);
+
+create or replace function match_exemplars(
+    query_embedding vector(1024),
+    dim text,
+    match_count int default 6
+) returns table (analysis_id bigint, outcome_score numeric, similarity float)
+language sql stable as $$
+  select analysis_id, outcome_score,
+         1 - (embedding <=> query_embedding) as similarity
+  from prediction_embeddings
+  where dimension = dim and embedding is not null
+  order by embedding <=> query_embedding
+  limit match_count;
+$$;
+
 create table if not exists realized_pnl (
     id bigserial primary key,
     user_id text not null default 'default',

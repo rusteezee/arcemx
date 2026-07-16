@@ -11,8 +11,15 @@
 
 # CPU-only torch wheel keeps the install at ~200 MB instead of 800 MB.
 # Pinned to the wheel index so GPU CUDA wheels are never pulled in.
+# torch==2.5.1+cpu was removed from the CPU wheel index at some point
+# after this pin was set (confirmed live 2026-07-16: pip reports no
+# matching distribution, minimum available is now 2.9.0+cpu) - relaxed
+# to a floor instead of an exact pin so this doesn't silently break the
+# next time the exact old wheel drops off the index. GH Actions' pip
+# cache (keyed on this file's hash) had been masking this for scheduled
+# runs; a cache miss would have hit the same failure there.
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1+cpu
+torch>=2.9.0
 
 # sentence-transformers handles the model load + tokenizer + pooling.
 # 3.x is the current stable line with native Qwen3 support.
