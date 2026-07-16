@@ -15,6 +15,7 @@ from fetchers.prices import load_universe, latest_snapshot
 from fetchers.news import fetch_rss, fetch_gnews
 from fetchers.reddit import fetch_hot
 from fetchers.fii_dii import fetch_latest as fetch_fii_dii, fetch_history as fetch_fii_dii_history
+from fetchers.options_chain import fetch_options_signals
 from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm_router import analyze
 from analyzer.feedback import build_feedback as _load_feedback
@@ -431,6 +432,18 @@ def build_payload() -> dict:
     except Exception as e:
         print(f"flows_trend fail: {e}")
 
+    print("Options chain signals (NIFTY)...")
+    options_signals = None
+    try:
+        options_signals = fetch_options_signals()
+        if options_signals:
+            print(f"  options_signals: PCR {options_signals.get('pcr')}, "
+                  f"max_pain {options_signals.get('max_pain')}, read={options_signals.get('read')}")
+        else:
+            print("  no options_signals data available")
+    except Exception as e:
+        print(f"options_signals fail: {e}")
+
     print("User holdings + wishlist...")
     holdings, wishlist, prior_call = [], [], None
     holding_technicals, wishlist_technicals = {}, {}
@@ -587,6 +600,7 @@ def build_payload() -> dict:
         "market_context": market_context,
         "flows": flows,
         "flows_trend": flows_trend,
+        "options_signals": options_signals,
         "indices": idx_snap.to_dict(orient="records") if not idx_snap.empty else [],
         "user_holdings": holdings,
         "user_wishlist": wishlist,

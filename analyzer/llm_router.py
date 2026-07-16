@@ -268,6 +268,11 @@ as primary directional evidence; institutional flow is genuinely market-moving:
   reasoning_breakdown.sentiment key.
 flows_trend (when present) gives 5d/20d cumulative FII/DII nets and a same-direction
 streak; weigh persistent flows more than any single day.
+options_signals (when present): NIFTY option-chain read. pcr (put/call OI ratio),
+call_walls (heavy call-OI strikes = likely resistance), put_walls (put-OI strikes =
+likely support), max_pain (expiry gravitation level). Use for nifty_outlook range
+placement and to sanity-check top_performers entries near walls. Do not invent
+options data for individual stocks; it is index-level only unless a ticker block exists.
 
 fii_flow_outlook predicts tomorrow's FII cash flow. Direction: inflow if you
 expect >+500 cr, outflow if <-500 cr, else flat. Anchor expected_cash_net_cr to
@@ -979,7 +984,7 @@ _PAYLOAD_DROP_ORDER = (
     # broader technical screen. self_feedback, sensei_yesterday,
     # market_context, holding/wishlist technicals, and prior_call are
     # never droppable: lose them and the reasoning loop collapses.
-    "news_recent", "reddit_hot", "flows_trend", "google_trends", "indices",
+    "news_recent", "reddit_hot", "options_signals", "flows_trend", "google_trends", "indices",
     "wishlist_news", "wishlist_fundamentals",
     "holding_news",
     "technical_bearish_top", "technical_bullish_top",
