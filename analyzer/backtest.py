@@ -37,7 +37,7 @@ import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client
 
-from analyzer import metrics
+from analyzer import calibration, metrics
 from analyzer.paper_trader import (
     MIN_CONF,
     MIN_EDGE_PCT,
@@ -253,6 +253,41 @@ def _calibration_bias(calib_by_dim: dict[str, list[dict]], dim: str, asof: datet
     return max(-25.0, min(25.0, gap))
 
 
+_platt_pairs_cache: dict[str, dict[str, list[tuple[float, int]]]] = {}
+_platt_fit_cache: dict[tuple[str, str], tuple[float, float] | None] = {}
+
+
+def _platt_recalibrate(calib_by_dim: dict[str, list[dict]], dim: str, asof: datetime,
+                       stated_conf: float) -> float | None:
+    """As-of Platt recalibration (blueprint 04) mirroring
+    analyzer.calibration.recalibrate, but reusing the calib_by_dim
+    structure already preloaded once at the top of run_backtest instead
+    of re-querying Supabase per event. Fits per-dim if that dim alone
+    has >= calibration.MIN_PAIRS rows graded strictly before asof; else
+    pools ALL dims into one global fit if the total has >= MIN_PAIRS;
+    else None (caller falls back to the legacy bias debit). Cached per
+    (dim, asof-date) so a replay day with many same-day events fits
+    once, not once per event."""
+    if not isinstance(stated_conf, (int, float)):
+        return None
+    day_key = asof.date().isoformat()
+    if day_key not in _platt_pairs_cache:
+        pairs_by_dim: dict[str, list[tuple[float, int]]] = {}
+        for d, rows in calib_by_dim.items():
+            pairs_by_dim[d] = [
+                (r["stated_confidence"] / 100.0, 1 if r["realized_score"] >= 60 else 0)
+                for r in rows if r["graded_at"] < asof
+            ]
+        _platt_pairs_cache[day_key] = pairs_by_dim
+    cache_key = (dim, day_key)
+    if cache_key not in _platt_fit_cache:
+        _platt_fit_cache[cache_key] = calibration.fit_for_dimension(_platt_pairs_cache[day_key], dim)
+    fit = _platt_fit_cache[cache_key]
+    if fit is None:
+        return None
+    return calibration.apply(fit, float(stated_conf))
+
+
 # ---------------------------------------------------------------------------
 # Mark-to-market on the shadow book (mirrors paper_trader._mark_one /
 # _close_trade, but reads cached historical bars instead of a live
@@ -323,7 +358,8 @@ def _mark_shadow_book(book: ShadowBook, hist: HistCache, asof: datetime) -> None
 # ---------------------------------------------------------------------------
 def _open_shadow_trade(book: ShadowBook, *, source_kind, source_run_id, ticker, entered_at,
                        intent_px, target_px, stop_px, horizon_days, qty, confidence,
-                       edge, sector, cap_tier, avg_turnover, hist: HistCache) -> None:
+                       edge, sector, cap_tier, avg_turnover, hist: HistCache,
+                       conf_method: str | None = None) -> None:
     next_open = hist.next_open(ticker, entered_at.date())
     anchor = next_open if next_open else intent_px
     fill_px, slippage_cost = _apply_slippage(anchor, qty, "buy", cap_tier, avg_turnover or 1e8)
@@ -335,7 +371,7 @@ def _open_shadow_trade(book: ShadowBook, *, source_kind, source_run_id, ticker, 
         "brokerage": buy_friction, "slippage_cost": slippage_cost,
         "confidence": confidence, "expected_edge_pct": edge,
         "sector": sector, "cap_tier": cap_tier, "avg_turnover_inr": avg_turnover,
-        "status": "open",
+        "status": "open", "conf_method": conf_method,
     }
 
 
@@ -411,7 +447,7 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
 
 
 def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, hist: HistCache,
-                        sb, portfolio_base: float) -> str | None:
+                        sb, portfolio_base: float, calib_by_dim: dict) -> str | None:
     raw_ticker = (tp.get("ticker") or "").strip().upper()
     if not raw_ticker:
         return None
@@ -421,7 +457,12 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
     edge = tp.get("expected_edge_pct")
     if not isinstance(edge, (int, float)):
         return "pre_schema"
-    if conf < MIN_CONF:
+    # Platt recalibration (blueprint 04): no legacy bias debit exists for
+    # this path, so "not enough data" just means gate on raw conf as before.
+    platt_conf = _platt_recalibrate(calib_by_dim, "top_performer_1d", asof, conf)
+    effective_conf = platt_conf if platt_conf is not None else conf
+    conf_method = "platt" if platt_conf is not None else "raw"
+    if effective_conf < MIN_CONF:
         return "low_conf"
     if edge < MIN_EDGE_PCT:
         return "low_edge"
@@ -479,7 +520,8 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
     _open_shadow_trade(book, source_kind="top_performer", source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
                        horizon_days=horizon, qty=qty, confidence=conf, edge=edge,
-                       sector=sector, cap_tier=cap_tier, avg_turnover=avg_turnover, hist=hist)
+                       sector=sector, cap_tier=cap_tier, avg_turnover=avg_turnover, hist=hist,
+                       conf_method=conf_method)
     return "enter"
 
 
@@ -495,11 +537,17 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
         return "not_buy"
 
     dim = "holding_outlook_dir_1d" if source_kind == "holding_outlook_1d" else "wishlist_outlook_dir_1d"
-    bias = _calibration_bias(calib_by_dim, dim, asof)
     stated_conf = outlook.get("confidence")
     if not isinstance(stated_conf, (int, float)):
         return "low_conf"
-    effective_conf = float(stated_conf) - bias
+    platt_conf = _platt_recalibrate(calib_by_dim, dim, asof, float(stated_conf))
+    if platt_conf is not None:
+        effective_conf = platt_conf
+        conf_method = "platt"
+    else:
+        bias = _calibration_bias(calib_by_dim, dim, asof)
+        effective_conf = float(stated_conf) - bias
+        conf_method = "bias"
     if effective_conf < OUTLOOK_MIN_CONF:
         return "low_conf"
 
@@ -554,7 +602,8 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
     _open_shadow_trade(book, source_kind=source_kind, source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
                        horizon_days=1, qty=qty, confidence=stated_conf, edge=edge,
-                       sector=sector, cap_tier=cap_tier, avg_turnover=avg_turnover, hist=hist)
+                       sector=sector, cap_tier=cap_tier, avg_turnover=avg_turnover, hist=hist,
+                       conf_method=conf_method)
     return "enter"
 
 
@@ -640,7 +689,7 @@ def run_backtest() -> dict[str, Any]:
         if kind == "stock_analyst":
             outcome = _eval_stock_analyst(payload, book, hist, sb, portfolio_base)
         elif kind == "top_performer":
-            outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, portfolio_base)
+            outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, portfolio_base, calib_by_dim)
         else:
             outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, portfolio_base, calib_by_dim)
         if outcome == "enter":

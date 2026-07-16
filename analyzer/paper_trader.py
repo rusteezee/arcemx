@@ -42,6 +42,7 @@ import yfinance as yf
 from dotenv import load_dotenv
 from supabase import create_client
 
+from analyzer import calibration
 from analyzer.regime import fetch_regime
 
 load_dotenv()
@@ -845,8 +846,15 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
     if not isinstance(edge, (int, float)):
         L("skip", "pre_schema")
         return "pre_schema"
-    if conf < MIN_CONF:
-        L("skip", "low_conf", edge=edge)
+    # Platt recalibration (A2): same treatment as _evaluate_outlook, but
+    # this path has no legacy bias debit to fall back to, so "not enough
+    # data yet" just means gate on the raw stated confidence unchanged.
+    platt_conf = calibration.recalibrate(sb, conf, "top_performer_1d")
+    effective_conf = platt_conf if platt_conf is not None else conf
+    conf_method = "platt" if platt_conf is not None else "raw"
+    if effective_conf < MIN_CONF:
+        L("skip", "low_conf", edge=edge,
+          meta={"effective_conf": effective_conf, "conf_method": conf_method})
         return "low_conf"
     if edge < MIN_EDGE_PCT:
         L("skip", "low_edge", edge=edge)
@@ -978,7 +986,8 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         return "insert_failed"
 
     L("enter", paper_trade_id=trade_id, edge=edge,
-      meta={"sector": sector, "conviction": (tp.get("conviction") or "").upper()})
+      meta={"sector": sector, "conviction": (tp.get("conviction") or "").upper(),
+            "effective_conf": effective_conf, "conf_method": conf_method})
     return "enter"
 
 
@@ -1105,14 +1114,24 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         "holding_outlook_dir_1d" if source_kind == "holding_outlook_1d"
         else "wishlist_outlook_dir_1d"
     )
-    bias = _dim_confidence_bias(sb, dim_for_calibration)
     if not isinstance(stated_conf, (int, float)):
         L("skip", "low_conf")
         return "low_conf"
-    effective_conf = float(stated_conf) - bias
+    # Platt recalibration (A2) supersedes the flat bias debit once
+    # calibration_log has enough pairs to fit; falls back to the old
+    # gap-subtraction mechanism until then (see analyzer/calibration.py).
+    platt_conf = calibration.recalibrate(sb, float(stated_conf), dim_for_calibration)
+    if platt_conf is not None:
+        effective_conf = platt_conf
+        conf_method = "platt"
+        bias = None
+    else:
+        bias = _dim_confidence_bias(sb, dim_for_calibration)
+        effective_conf = float(stated_conf) - bias
+        conf_method = "bias"
     if effective_conf < OUTLOOK_MIN_CONF:
         L("skip", "low_conf",
-          meta={"bias": bias, "effective_conf": effective_conf})
+          meta={"bias": bias, "effective_conf": effective_conf, "conf_method": conf_method})
         return "low_conf"
 
     band = _parse_range_band(outlook.get("range"))
@@ -1220,6 +1239,7 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                 "next_open_anchor": next_open,
                 "calibration_bias_applied": bias,
                 "effective_conf": effective_conf,
+                "conf_method": conf_method,
                 "key_driver": outlook.get("key_driver"),
                 "regime": regime,
                 "earnings_date": next_earnings.isoformat() if next_earnings else None,
@@ -1232,7 +1252,7 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         return "insert_failed"
 
     L("enter", paper_trade_id=trade_id, edge=edge,
-      meta={"sector": sector, "calibration_bias_applied": bias})
+      meta={"sector": sector, "calibration_bias_applied": bias, "conf_method": conf_method})
     return "enter"
 
 
