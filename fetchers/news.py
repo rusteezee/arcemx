@@ -119,10 +119,10 @@ RSS_FEEDS = {
     "et_markets": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
     "et_stocks": "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
     "livemint_markets": "https://www.livemint.com/rss/markets",
-    "business_standard": "https://www.business-standard.com/rss/markets-106.rss",
-    "reuters_business": "https://feeds.reuters.com/reuters/businessNews",
     "cnbc_world": "https://www.cnbc.com/id/100727362/device/rss/rss.html",
     "bloomberg_markets": "https://feeds.bloomberg.com/markets/news.rss",
+    "ndtv_profit": "https://feeds.feedburner.com/ndtvprofit-latest",
+    "businessline_markets": "https://www.thehindubusinessline.com/markets/feeder/default.rss",
 }
 
 
@@ -146,6 +146,43 @@ def fetch_rss() -> list[dict]:
                 })
         except Exception as e:
             print(f"RSS fail {source}: {e}")
+    return items
+
+
+GOOGLE_NEWS_RSS = ("https://news.google.com/rss/search"
+                   "?q=nifty+OR+sensex+OR+%22indian+stock+market%22"
+                   "&hl=en-IN&gl=IN&ceid=IN:en")
+
+
+def fetch_google_news(max_n: int = 40) -> list[dict]:
+    """Google News query feed. Item titles end with ' - Publisher'; split
+    that off so clustering sees the clean headline and the digest can
+    weight the real outlet (source becomes 'gnn:<publisher lowercase>')."""
+    items = []
+    try:
+        feed = feedparser.parse(GOOGLE_NEWS_RSS)
+    except Exception as e:
+        print(f"Google News fail: {e}")
+        return items
+    for entry in feed.entries[:max_n]:
+        raw_title = (entry.get("title") or "").strip()
+        if not raw_title:
+            continue
+        title, publisher = raw_title, ""
+        if " - " in raw_title:
+            title, publisher = raw_title.rsplit(" - ", 1)
+        published = entry.get("published") or entry.get("updated")
+        try:
+            pub_dt = dateparser.parse(published) if published else datetime.now(timezone.utc)
+        except Exception:
+            pub_dt = datetime.now(timezone.utc)
+        items.append({
+            "source": f"gnn:{publisher.strip().lower()}" if publisher else "gnn:unknown",
+            "title": title.strip(),
+            "url": entry.get("link", ""),
+            "summary": "",
+            "published_at": pub_dt.isoformat(),
+        })
     return items
 
 
@@ -194,7 +231,8 @@ def push(items: list[dict]) -> int:
 
 
 if __name__ == "__main__":
-    items = fetch_rss() + fetch_gnews()
+    items = (fetch_rss() + fetch_google_news()
+             + fetch_gnews() + fetch_gnews(query="nifty sensex earnings results"))
     for it in items:
         it["tickers"] = link_tickers(it["title"], it.get("summary") or "")
     print(f"Fetched {len(items)} news items")

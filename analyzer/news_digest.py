@@ -26,6 +26,10 @@ SOURCE_WEIGHTS = {
     "moneycontrol_markets": 0.8, "moneycontrol_business": 0.8, "moneycontrol": 0.8,
     "livemint_markets": 0.8, "livemint": 0.8, "mint": 0.8,
     "business_standard": 0.8,
+    "ndtv_profit": 0.8, "ndtv profit": 0.8,
+    "businessline": 0.85,
+    "economic times": 0.85,
+    "business standard": 0.8,
 }
 
 POS_WORDS = {
