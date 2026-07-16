@@ -14,6 +14,7 @@ turns the feed into signal:
 
 Everything here is deterministic and explainable, no extra API or model call.
 """
+import hashlib
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -123,8 +124,14 @@ def _recency_weight(pub: str | None) -> float:
         return 0.5
 
 
-def build_news_digest(items: list[dict], top_n: int = 20) -> dict:
-    """items: list of dicts with title, source/src, published_at/pub."""
+def build_news_digest(items: list[dict], top_n: int = 20, held=None, watched=None) -> dict:
+    """items: list of dicts with title, source/src, published_at/pub.
+    `held`/`watched` are the user's portfolio/wishlist tickers (blueprint
+    17) - when a cluster's linked tickers intersect either set, its
+    relevance is boosted so portfolio-touching news doesn't get buried
+    under generic-but-source-heavy noise."""
+    held = set(held or ())
+    watched = set(watched or ())
     norm = []
     for it in items:
         title = (it.get("title") or "").strip()
@@ -135,6 +142,7 @@ def build_news_digest(items: list[dict], top_n: int = 20) -> dict:
             "source": it.get("source") or it.get("src") or "",
             "pub": it.get("published_at") or it.get("pub"),
             "tokens": _tokens(title),
+            "tickers": list(it.get("tickers") or []),
         })
     if not norm:
         return {"n_raw": 0, "clusters": [], "note": "no news"}
@@ -168,8 +176,21 @@ def build_news_digest(items: list[dict], top_n: int = 20) -> dict:
         src_cred = max(_source_weight(m["source"]) for m in members)
         recency = max(_recency_weight(m["pub"]) for m in members)
         relevance = max(_relevance(m["title"]) for m in members)
+
+        cluster_tickers = sorted({t for m in members for t in m["tickers"]})[:5]
+        portfolio_hit = bool(set(cluster_tickers) & held)
+        watchlist_hit = bool(set(cluster_tickers) & watched)
+        # Relevance override: a story touching the user's own holdings or
+        # watchlist matters regardless of what the generic India/macro
+        # term heuristic above says.
+        if portfolio_hit:
+            relevance = 1.3
+        elif watchlist_hit:
+            relevance = 1.15
+
         label, score = _sentiment(rep["title"])
         materiality = round(len(sources) * src_cred * recency * relevance, 3)
+        cluster_key = hashlib.md5(",".join(sorted(c["seed"])).encode()).hexdigest()[:16]
 
         if label == "positive":
             pos_n += 1
@@ -187,6 +208,11 @@ def build_news_digest(items: list[dict], top_n: int = 20) -> dict:
             "sentiment": label,
             "materiality": materiality,
             "pub": rep["pub"],
+            "tickers": cluster_tickers,
+            "portfolio_hit": portfolio_hit,
+            "watchlist_hit": watchlist_hit,
+            "cluster_key": cluster_key,
+            "sent_score": score,
         })
 
     digest.sort(key=lambda d: d["materiality"], reverse=True)
@@ -212,7 +238,9 @@ def build_news_digest(items: list[dict], top_n: int = 20) -> dict:
             "Stories are deduped and ranked by materiality (credible-source count "
             "x source credibility x recency). sentiment/net_sentiment is a "
             "deterministic lexicon HINT, not gospel; judge nuance yourself. Weigh "
-            "high-materiality stories far more than one-off headlines."
+            "high-materiality stories far more than one-off headlines. Stories "
+            "tagged portfolio_hit touch the user's holdings and are "
+            "relevance-boosted."
         ),
     }
 
@@ -225,6 +253,6 @@ if __name__ == "__main__":
     sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
     from datetime import timedelta
     since = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
-    rows = sb.table("news").select("source,title,published_at").gte(
+    rows = sb.table("news").select("source,title,published_at,tickers").gte(
         "published_at", since).order("published_at", desc=True).limit(200).execute().data or []
     print(json.dumps(build_news_digest(rows), indent=2, default=str)[:3000])

@@ -444,6 +444,18 @@ create table if not exists realized_pnl (
 create index if not exists idx_realized_pnl_user_fy on realized_pnl(user_id, fy);
 
 
+-- Blueprint 17: one row per news story alerted to Telegram, so the hourly
+-- news-alert job never re-sends the same story.
+create table if not exists news_alerts_sent (
+    id bigserial primary key,
+    cluster_key text not null unique,
+    ticker text,
+    title text,
+    sent_at timestamptz default now()
+);
+alter table news_alerts_sent enable row level security;
+
+
 -- Row Level Security. Defense uniformity: anon (browser, NEXT_PUBLIC) gets
 -- SELECT on the tables the dashboard reads, nothing else. Service role
 -- (bot + GH crons) bypasses RLS so writes keep working unchanged. No INSERT

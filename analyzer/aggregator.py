@@ -146,7 +146,7 @@ def _ticker_calendar(t) -> dict:
                     out["ex_dividend_date"] = str(ex)[:10]
         else:
             # Older yfinance: DataFrame with columns named after the
-            # dates. Skip — the dict form covers every recent version.
+            # dates. Skip. the dict form covers every recent version.
             pass
     except Exception:
         pass
@@ -351,16 +351,24 @@ def build_payload() -> dict:
     # DB lookback: pull last 72h to bridge weekend/gap days
     lookback_hours = 72
     db_news = []
+    # Pre-initialized so build_news_digest below always has a value even
+    # when Supabase is unconfigured or this block raises - sb itself is
+    # only ever assigned inside the guard, so anything that needs it must
+    # live in here too rather than assuming it exists afterward.
+    _held: set[str] = set()
+    _watched: set[str] = set()
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
     if url and key:
         try:
             sb = create_client(url, key)
             since = (datetime.utcnow() - timedelta(hours=lookback_hours)).isoformat()
-            res = sb.table("news").select("source,title,url,published_at").gte(
+            res = sb.table("news").select("source,title,url,published_at,tickers").gte(
                 "published_at", since
             ).order("published_at", desc=True).limit(200).execute()
             db_news = res.data or []
             print(f"DB news (last {lookback_hours}h): {len(db_news)}")
+            _held = {r["ticker"] for r in (sb.table("portfolio").select("ticker").execute().data or [])}
+            _watched = {r["ticker"] for r in (sb.table("wishlist").select("ticker").execute().data or [])}
         except Exception as e:
             print(f"DB news fetch fail: {e}")
 
@@ -377,7 +385,7 @@ def build_payload() -> dict:
     # Sort by published_at desc
     merged.sort(key=lambda n: n.get("published_at") or "", reverse=True)
     # Structured, deduped, materiality-ranked digest is the primary news signal.
-    news_digest = build_news_digest(merged, top_n=20)
+    news_digest = build_news_digest(merged, top_n=20, held=_held, watched=_watched)
     # Keep a small raw tail so the model can still see exact headlines if needed.
     news_compact = [
         {"src": n["source"], "title": n["title"], "pub": n.get("published_at")}
