@@ -857,6 +857,40 @@ def grade_all(lookback_days: int = 90):
                                   {"results": tp_results}, avg_tp, 0,
                                   notes=f"target-before-stop hit score across {len(tp_scores)} picks")
 
+            # ----- Short pick target/SL hit, leveled channel (blueprint 11) -----
+            # worst_performers now carry entry/target/stop_loss (target
+            # BELOW entry, stop ABOVE - a short) once the LLM schema +
+            # paper trader wire them. grade_pick_tp_sl is already
+            # direction-agnostic (long = target>=entry, short otherwise -
+            # see its own docstring), so the exact same function used
+            # above for the legacy long-shaped short_term_picks handles
+            # this inverted geometry with zero changes. New dim name
+            # (short_pick_tp_sl) keeps this separate from the legacy
+            # pick_tp_sl dim above, which stays reading the dead
+            # short_term_picks key so pre-rename history still re-grades.
+            if age >= 11:
+                wpicks = [p for p in (raw.get("worst_performers", []) or [])
+                         if isinstance(p, dict) and p.get("entry") and p.get("target") and p.get("stop_loss")]
+                sp_scores = []
+                sp_results = []
+                for p in wpicks[:5]:
+                    tk = p.get("ticker")
+                    if not tk:
+                        continue
+                    sc = grade_pick_tp_sl(tk, run_at, p.get("entry"),
+                                          p.get("target"), p.get("stop_loss"), 10)
+                    if sc is None:
+                        continue
+                    sp_scores.append(sc)
+                    sp_results.append({"ticker": tk, "score": sc,
+                                        "target": p.get("target"), "stop_loss": p.get("stop_loss")})
+                if sp_scores:
+                    avg_sp = sum(sp_scores) / len(sp_scores)
+                    _upsert_score(sb, aid, "short_pick_tp_sl", 10,
+                                  {"picks": [r["ticker"] for r in sp_results]},
+                                  {"results": sp_results}, avg_sp, 0,
+                                  notes=f"short target-before-stop hit score across {len(sp_scores)} picks")
+
             # ----- Long picks (180d) -----
             if age >= 181:
                 lpicks = raw.get("long_term_picks", []) or []

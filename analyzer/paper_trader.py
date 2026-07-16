@@ -332,14 +332,22 @@ def _apply_slippage(
     return float(fill), float(slippage)
 
 
-def _broker_friction(notional_inr: float, action: str) -> tuple[float, float]:
+def _broker_friction(notional_inr: float, action: str, side: str = "long") -> tuple[float, float]:
     """Return (total_friction_inr, stt_component_inr). action: 'buy'/'sell'.
     Buy side has zero STT for delivery; sell side has 0.1% delivery STT.
-    GST is on brokerage + exchange charges, not on STT/SEBI fees."""
+    GST is on brokerage + exchange charges, not on STT/SEBI fees.
+
+    side: 'long'/'short' (blueprint 11). A short's entry IS a sell and
+    its exit IS a buy-to-cover; this project's idealized-short
+    simulation charges STT on BOTH legs (intraday-style treatment,
+    conservative/honest about round-trip cost) rather than the single
+    sell-side STT a real delivery long pays. side='long' (the default)
+    preserves the exact pre-existing behavior byte-for-byte."""
     brokerage = BROKERAGE_FLAT
     exch = notional_inr * EXCHANGE_TXN
     sebi = notional_inr * SEBI_TXN
-    stt = notional_inr * STT_DELIVERY_SELL if action == "sell" else 0.0
+    stt_applies = (action == "sell") or (side == "short")
+    stt = notional_inr * STT_DELIVERY_SELL if stt_applies else 0.0
     gst = (brokerage + exch) * GST_RATE
     total = brokerage + exch + sebi + stt + gst
     return float(total), float(stt)
@@ -910,6 +918,22 @@ def eval_signals(now: datetime | None = None) -> dict:
                 pass
             else:
                 skips[outcome] = skips.get(outcome, 0) + 1
+        # worst_performers: the model's INDEPENDENT bearish calls, traded
+        # as SHORTS (blueprint 11) - the mirror of top_performers above.
+        for wp in (raw.get("worst_performers") or []):
+            if not isinstance(wp, dict):
+                continue
+            counts["evaluated"] += 1
+            outcome = _evaluate_worst_performer(sb, a, wp, now,
+                                                portfolio_base=portfolio_base, regime=regime,
+                                                earnings_cache=earnings_cache,
+                                                breaker_tripped=breaker_tripped)
+            if outcome == "enter":
+                counts["entered"] += 1
+            elif outcome == "already_evaluated":
+                pass
+            else:
+                skips[outcome] = skips.get(outcome, 0) + 1
 
     counts["skips"] = skips
     print(f"paper_trader.eval_signals: {counts}")
@@ -1099,6 +1123,192 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
     L("enter", paper_trade_id=trade_id, edge=edge,
       meta={"sector": sector, "conviction": (tp.get("conviction") or "").upper(),
             "effective_conf": effective_conf, "conf_method": conf_method})
+    return "enter"
+
+
+def _evaluate_worst_performer(sb, analysis_row: dict, wp: dict, now: datetime,
+                              portfolio_base: float, regime: dict | None = None,
+                              earnings_cache: dict | None = None,
+                              breaker_tripped: bool = False) -> str:
+    """Gate-stack a single worst_performers entry as a SHORT (blueprint 11).
+    Structural mirror of _evaluate_top_performer with inverted geometry:
+    for a short, target sits BELOW entry (profit on a fall) and stop
+    ABOVE entry (loss on a rally) - the opposite of a long. This is a
+    RESEARCH idealization: real Indian retail delivery cannot short
+    overnight, so every such trade is tagged meta.simulation_note =
+    "idealized_short" as an honesty marker that these fills assume
+    borrow availability retail delivery lacks. Regime interaction is
+    also inverted from the long path: shorts are ALLOWED when
+    risk_mode == "off" (that's when they hedge the book) but blocked
+    specifically when vix_band == "stressed" AND trend == "up" (a
+    stressed-but-rising tape is the one regime where a short is most
+    likely to get squeezed)."""
+    a_id = analysis_row["id"]
+    raw_ticker = (wp.get("ticker") or "").strip().upper()
+    if not raw_ticker:
+        return "no_ticker"
+    if not raw_ticker.endswith(".NS") and not raw_ticker.endswith(".BO") \
+            and not raw_ticker.startswith("^"):
+        ticker = raw_ticker + ".NS"
+    else:
+        ticker = raw_ticker
+
+    def L(action, skip_reason=None, paper_trade_id=None, edge=None, meta=None):
+        _log_signal(sb, ticker, a_id, action, skip_reason=skip_reason,
+                    paper_trade_id=paper_trade_id, confidence=_conf_from_winprob(wp),
+                    edge=edge, meta=meta, source_kind="worst_performer")
+
+    existing = sb.table("paper_signals").select("id").eq(
+        "source_kind", "worst_performer"
+    ).eq("source_run_id", a_id).eq("ticker", ticker).limit(1).execute()
+    if existing.data:
+        return "already_evaluated"
+
+    if breaker_tripped:
+        L("skip", "circuit_breaker")
+        return "circuit_breaker"
+
+    conf = _conf_from_winprob(wp)
+    edge = wp.get("expected_edge_pct")
+    if not isinstance(edge, (int, float)):
+        L("skip", "pre_schema")
+        return "pre_schema"
+    platt_conf = calibration.recalibrate(sb, conf, "worst_performer_1d")
+    effective_conf = platt_conf if platt_conf is not None else conf
+    conf_method = "platt" if platt_conf is not None else "raw"
+    if effective_conf < MIN_CONF:
+        L("skip", "low_conf", edge=edge,
+          meta={"effective_conf": effective_conf, "conf_method": conf_method})
+        return "low_conf"
+    if edge < MIN_EDGE_PCT:
+        L("skip", "low_edge", edge=edge)
+        return "low_edge"
+    rr = wp.get("risk_reward")
+    if isinstance(rr, (int, float)) and rr < MIN_RR:
+        L("skip", "low_rr", edge=edge, meta={"risk_reward": rr})
+        return "low_rr"
+
+    intent_px = _parse_inr(wp.get("entry"))
+    target_px = _parse_inr(wp.get("target"))
+    stop_px = _parse_inr(wp.get("stop_loss"))
+    if not intent_px or intent_px <= 0:
+        L("skip", "no_intent_px", edge=edge)
+        return "no_intent_px"
+    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
+        L("skip", "no_target_stop", edge=edge)
+        return "no_target_stop"
+    # Degenerate geometry guard, inverted from the long side: for a
+    # short the target must sit BELOW entry and the stop ABOVE it.
+    if target_px >= intent_px or stop_px <= intent_px:
+        L("skip", "degenerate_geometry", edge=edge,
+          meta={"entry": intent_px, "target": target_px, "stop": stop_px})
+        return "degenerate_geometry"
+    if _has_open_position(sb, ticker):
+        L("skip", "already_open", edge=edge)
+        return "already_open"
+    frozen, freeze_meta = _ticker_is_frozen(sb, ticker, now)
+    if frozen:
+        L("skip", "ticker_freeze", edge=edge, meta=freeze_meta)
+        return "ticker_freeze"
+
+    risk_per_share = abs(intent_px - stop_px)
+    if risk_per_share <= 0:
+        L("skip", "bad_risk", edge=edge)
+        return "bad_risk"
+
+    geometry = {"intent": intent_px, "target": target_px, "stop": stop_px,
+                "horizon_days": int(wp.get("horizon_days") or 1)}
+
+    # Inverted regime interaction (blueprint 11): a down/stressed regime
+    # is exactly when a short hedges the book, so risk_mode=="off" does
+    # NOT block shorts. The specific danger for a short is a squeeze -
+    # stressed vol with an UP trend - so that combination blocks instead.
+    if REGIME_GATE_ON and regime and regime.get("vix_band") == "stressed" and regime.get("trend") == "up":
+        L("skip", "regime_off", edge=edge, meta={"regime": regime, "geometry": geometry})
+        return "regime_off"
+
+    next_earnings = _next_earnings_date(sb, ticker, cache=earnings_cache)
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(now.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            L("skip", "earnings_blackout", edge=edge,
+              meta={"earnings_date": next_earnings.isoformat(), "geometry": geometry})
+            return "earnings_blackout"
+
+    avg_turnover = _yf_avg_turnover(ticker)
+    if avg_turnover is None:
+        L("skip", "no_liquidity_data", edge=edge, meta={"geometry": geometry})
+        return "no_liquidity_data"
+    if (avg_turnover / 1e7) < LIQUIDITY_MIN_CR:
+        L("skip", "liquidity", edge=edge,
+          meta={"avg_turnover_inr": avg_turnover, "geometry": geometry})
+        return "liquidity"
+
+    sector, cap_tier = _ticker_sector_and_cap(sb, ticker)
+    if sector and _open_in_sector(sb, sector) >= SECTOR_CAP:
+        L("skip", "sector_cap", edge=edge, meta={"sector": sector, "geometry": geometry})
+        return "sector_cap"
+
+    risk_budget = portfolio_base * RISK_PER_TRADE
+    qty = max(1, min(int(risk_budget / risk_per_share),
+                     int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
+    if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
+    horizon = int(wp.get("horizon_days") or 1)
+
+    run_at = analysis_row.get("run_at") or now.isoformat()
+    try:
+        ra_dt = datetime.fromisoformat(str(run_at).replace("Z", "+00:00"))
+    except Exception:
+        ra_dt = now
+    next_open = _yf_next_open(ticker, ra_dt)
+    anchor = next_open if next_open else intent_px
+    # Entry is a SELL (short the stock): adverse direction flips vs a
+    # long entry, so the fill lands BELOW reference, same as an exit
+    # would for a long. STT applies here too (side="short").
+    fill_px, slippage_cost = _apply_slippage(anchor, qty, "sell", cap_tier, avg_turnover)
+    entry_friction, _ = _broker_friction(fill_px * qty, "sell", side="short")
+
+    try:
+        t_res = sb.table("paper_trades").insert({
+            "source_kind": "worst_performer",
+            "source_run_id": a_id,
+            "ticker": ticker,
+            "side": "short",
+            "entered_at": now.isoformat(),
+            "intent_px": float(intent_px),
+            "fill_px": float(fill_px),
+            "qty": int(qty),
+            "target_px": float(target_px),
+            "stop_px": float(stop_px),
+            "horizon_days": horizon,
+            "brokerage": float(entry_friction),
+            "stt": 0.0,
+            "slippage_cost": float(slippage_cost),
+            "confidence": int(conf),
+            "expected_edge_pct": float(edge),
+            "status": "open",
+            "meta": {
+                "sector": sector, "cap_tier": cap_tier,
+                "avg_turnover_inr": avg_turnover, "next_open_anchor": next_open,
+                "conviction": (wp.get("conviction") or "").upper(),
+                "expected_move_pct": wp.get("expected_move_pct"),
+                "thesis": (wp.get("thesis") or "")[:200],
+                "regime": regime,
+                "earnings_date": next_earnings.isoformat() if next_earnings else None,
+                "simulation_note": "idealized_short",
+            },
+        }).execute()
+        trade_id = (t_res.data or [{}])[0].get("id") if t_res.data else None
+    except Exception as e:
+        print(f"  worst_performer insert failed ({ticker}): {str(e)[:200]}")
+        L("skip", "insert_failed", edge=edge)
+        return "insert_failed"
+
+    L("enter", paper_trade_id=trade_id, edge=edge,
+      meta={"sector": sector, "conviction": (wp.get("conviction") or "").upper(),
+            "effective_conf": effective_conf, "conf_method": conf_method,
+            "simulation_note": "idealized_short"})
     return "enter"
 
 
@@ -1382,33 +1592,42 @@ def _close_trade(
     exit_ref_px: float,
     exit_reason: str,
 ) -> None:
-    """Apply sell-side slippage + STT + brokerage to compute the realised
-    fill, then write the close-out row update. Buy-side slippage + buy
-    brokerage are already booked at entry; this only adds the sell-side
-    components and updates net_pnl."""
+    """Apply exit-side slippage + STT + brokerage to compute the realised
+    fill, then write the close-out row update. Entry-side slippage +
+    brokerage are already booked at entry; this only adds the exit-side
+    components and updates net_pnl.
+
+    Side-aware (blueprint 11): a long's exit is a sell (fill below
+    reference, profit = exit-minus-entry); a short's exit is a
+    buy-to-cover (fill above reference, profit = entry-minus-exit,
+    since the short profits when price fell between entry and exit).
+    side="long" (the default via t_row.get) reproduces the exact
+    pre-existing long-only arithmetic byte-for-byte."""
     qty = int(t_row["qty"])
     fill_px = float(t_row["fill_px"])
+    side = t_row.get("side") or "long"
     cap_tier = (t_row.get("meta") or {}).get("cap_tier", "small")
     avg_turnover = (t_row.get("meta") or {}).get("avg_turnover_inr") or 1e8
 
+    exit_action = "buy" if side == "short" else "sell"
     sim_exit_fill, exit_slippage = _apply_slippage(
-        exit_ref_px, qty, "sell", cap_tier, float(avg_turnover)
+        exit_ref_px, qty, exit_action, cap_tier, float(avg_turnover)
     )
-    sell_friction, stt_amt = _broker_friction(sim_exit_fill * qty, "sell")
+    exit_friction, stt_amt = _broker_friction(sim_exit_fill * qty, exit_action, side=side)
 
-    gross_pnl = (sim_exit_fill - fill_px) * qty
-    buy_friction = float(t_row.get("brokerage") or BROKERAGE_FLAT)
-    buy_slippage = float(t_row.get("slippage_cost") or 0.0)
-    net_pnl = gross_pnl - (buy_friction + sell_friction) - (buy_slippage + exit_slippage)
+    gross_pnl = ((fill_px - sim_exit_fill) if side == "short" else (sim_exit_fill - fill_px)) * qty
+    entry_friction = float(t_row.get("brokerage") or BROKERAGE_FLAT)
+    entry_slippage = float(t_row.get("slippage_cost") or 0.0)
+    net_pnl = gross_pnl - (entry_friction + exit_friction) - (entry_slippage + exit_slippage)
 
     sb.table("paper_trades").update({
         "exit_at": exit_at.isoformat(),
         "exit_px": float(sim_exit_fill),
         "exit_reason": exit_reason,
         "gross_pnl": float(gross_pnl),
-        "brokerage": float(buy_friction + sell_friction),
+        "brokerage": float(entry_friction + exit_friction),
         "stt": float(stt_amt),
-        "slippage_cost": float(buy_slippage + exit_slippage),
+        "slippage_cost": float(entry_slippage + exit_slippage),
         "net_pnl": float(net_pnl),
         "status": f"closed_{exit_reason}",
     }).eq("id", t_row["id"]).execute()
@@ -1452,6 +1671,17 @@ def _mark_one(sb, t_row: dict, now: datetime) -> bool:
                 _close_trade(sb, t_row, bar_dt, stop_px, "stop")
                 return True
             if high >= target_px:
+                _close_trade(sb, t_row, bar_dt, target_px, "target")
+                return True
+        elif side == "short":
+            # Mirror of the long branch: a short's stop is ABOVE entry
+            # (loss if price rallies) and target is BELOW entry (profit
+            # if price falls). Same pessimistic stop-first-on-ambiguous-
+            # bar ordering (blueprint 11).
+            if high >= stop_px:
+                _close_trade(sb, t_row, bar_dt, stop_px, "stop")
+                return True
+            if low <= target_px:
                 _close_trade(sb, t_row, bar_dt, target_px, "target")
                 return True
         # Horizon exit: close at the close of the first session at or

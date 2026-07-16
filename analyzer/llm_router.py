@@ -471,8 +471,9 @@ Each top_performers / worst_performers entry MUST quote:
 - expected_edge_pct (signed = expected_return_pct * win_prob - expected_loss_pct * loss_prob)
 - reasons_could_be_wrong (>=1 concrete failure mode citing the data field that contradicts)
 Aim for 8-15 names in EACH list. The paper trader consumes top_performers
-directly as long entries and scores every call against the next session's actual
-move, so an unaudited or vague entry is a wasted, ungraded signal.
+directly as long entries and worst_performers directly as SHORT entries,
+scoring every call against the next session's actual move, so an unaudited
+or vague entry is a wasted, ungraded signal.
 
 Return STRICT JSON only matching this schema:
 {
@@ -484,7 +485,7 @@ Return STRICT JSON only matching this schema:
   "volatility_regime": {"call": "expansion|contraction|normal", "rationale": "expected NIFTY volatility over the next ~5 sessions vs recent, from India VIX + ATR"},
   "sensex_outlook": {"direction": "up|down|sideways", "range": "string", "confidence": 0-100, "drivers": ["..."]},
   "top_performers": [{"ticker": "...", "thesis": "...", "horizon_days": 1, "expected_move_pct": float (positive), "entry": "<numeric INR>", "target": "<numeric INR>", "stop_loss": "<numeric INR>", "conviction": "A|B|C", "expected_return_pct": float, "expected_loss_pct": float, "win_prob": 0.0-1.0, "loss_prob": 0.0-1.0, "expected_edge_pct": float, "reasons_could_be_wrong": ["concrete failure mode citing data field"]}],
-  "worst_performers": [{"ticker": "...", "thesis": "...", "horizon_days": 1, "expected_move_pct": float (negative), "conviction": "A|B|C", "win_prob": 0.0-1.0, "loss_prob": 0.0-1.0, "reasons_could_be_wrong": ["concrete failure mode citing data field"]}],
+  "worst_performers": [{"ticker": "...", "thesis": "...", "horizon_days": 1, "expected_move_pct": float (negative), "entry": "<numeric INR>", "target": "<numeric INR, BELOW entry - this is a SHORT>", "stop_loss": "<numeric INR, ABOVE entry>", "conviction": "A|B|C", "expected_return_pct": float, "expected_loss_pct": float, "win_prob": 0.0-1.0, "loss_prob": 0.0-1.0, "expected_edge_pct": float, "reasons_could_be_wrong": ["concrete failure mode citing data field"]}],
   "stocks_to_avoid": [{"ticker": "...", "reason": "..."}],
   "portfolio_verdicts": [{"ticker": "...", "verdict": "hold|add|trim|exit", "reason": "...", "target": "<numeric INR or INR range, e.g. 380 or 360-400>", "stop_loss": "<numeric INR, e.g. 290>"}],
   "wishlist_signals": [{"ticker": "...", "signal": "buy_now|wait|skip", "entry_zone": "...", "reason": "..."}],
@@ -511,11 +512,13 @@ Return STRICT JSON only matching this schema:
 If user_holdings empty, return empty portfolio_verdicts.
 If user_wishlist empty, return empty wishlist_signals.
 
-CRITICAL - every top_performers row MUST include concrete numeric INR values
-for entry, target, AND stop_loss (worst_performers are short-side calls scored
-on direction, so they need expected_move_pct but not a tradeable entry/stop).
-The dashboard + paper trader render these as actionable prices and will skip
-the row if any of the three is missing on a top_performers entry.
+CRITICAL - every top_performers AND worst_performers row MUST include concrete
+numeric INR values for entry, target, AND stop_loss. top_performers are LONG
+calls (target ABOVE entry, stop BELOW); worst_performers are SHORT calls
+(target BELOW entry, stop ABOVE - you profit when the price falls). The
+dashboard + paper trader render these as actionable prices and will skip the
+row if any of the three is missing on either a top_performers or
+worst_performers entry.
 
 CRITICAL - portfolio_verdicts target / stop_loss MUST be concrete numeric INR
 values, never "N/A" or prose. This applies to EVERY verdict including HOLD:
@@ -1189,11 +1192,16 @@ def _enforce_pick_quality(result: dict) -> None:
                 if stated and str(stated).upper() != tier:
                     p["conviction_stated"] = stated
                 p["conviction"] = tier
-            if key == "top_performers":
-                sd = _stop_distance_pct(p)  # risk leg, % of entry
+            if key in ("top_performers", "worst_performers"):
+                sd = _stop_distance_pct(p)  # risk leg, % of entry (sign-agnostic already)
                 e, t = _num(p.get("entry")), _num(p.get("target"))
                 if e and t and sd and e > 0 and sd > 0:
-                    reward_pct = (t - e) / e * 100.0
+                    # A long profits when price rises (target above entry);
+                    # a short (worst_performers) profits when price falls
+                    # (target below entry) - flip the reward leg's sign so
+                    # a correctly-shaped short still yields a POSITIVE
+                    # reward_pct instead of reading as a loss.
+                    reward_pct = (t - e) / e * 100.0 if key == "top_performers" else (e - t) / e * 100.0
                     p["risk_reward"] = round(reward_pct / sd, 2)
                     # Geometry-truth the edge. The model's
                     # expected_return_pct routinely decouples from the

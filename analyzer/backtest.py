@@ -327,25 +327,27 @@ def _update_breaker(book: ShadowBook, portfolio_base: float, prev_tripped: bool)
 def _close_shadow(book: ShadowBook, t: dict, exit_at: datetime, exit_ref_px: float, exit_reason: str) -> None:
     qty = t["qty"]
     fill_px = t["fill_px"]
+    side = t.get("side") or "long"
     cap_tier = t.get("cap_tier", "small")
     avg_turnover = t.get("avg_turnover_inr") or 1e8
 
-    sim_exit_fill, exit_slippage = _apply_slippage(exit_ref_px, qty, "sell", cap_tier, avg_turnover)
-    sell_friction, stt_amt = _broker_friction(sim_exit_fill * qty, "sell")
+    exit_action = "buy" if side == "short" else "sell"
+    sim_exit_fill, exit_slippage = _apply_slippage(exit_ref_px, qty, exit_action, cap_tier, avg_turnover)
+    exit_friction, stt_amt = _broker_friction(sim_exit_fill * qty, exit_action, side=side)
 
-    gross_pnl = (sim_exit_fill - fill_px) * qty
-    buy_friction = t.get("brokerage") or 0.0
-    buy_slippage = t.get("slippage_cost") or 0.0
-    net_pnl = gross_pnl - (buy_friction + sell_friction) - (buy_slippage + exit_slippage)
+    gross_pnl = ((fill_px - sim_exit_fill) if side == "short" else (sim_exit_fill - fill_px)) * qty
+    entry_friction = t.get("brokerage") or 0.0
+    entry_slippage = t.get("slippage_cost") or 0.0
+    net_pnl = gross_pnl - (entry_friction + exit_friction) - (entry_slippage + exit_slippage)
 
     t.update({
         "exit_at": exit_at,
         "exit_px": sim_exit_fill,
         "exit_reason": exit_reason,
         "gross_pnl": gross_pnl,
-        "brokerage": buy_friction + sell_friction,
+        "brokerage": entry_friction + exit_friction,
         "stt": stt_amt,
-        "slippage_cost": buy_slippage + exit_slippage,
+        "slippage_cost": entry_slippage + exit_slippage,
         "net_pnl": net_pnl,
         "status": f"closed_{exit_reason}",
     })
@@ -356,11 +358,12 @@ def _close_shadow(book: ShadowBook, t: dict, exit_at: datetime, exit_ref_px: flo
 def _mark_shadow_book(book: ShadowBook, hist: HistCache, asof: datetime) -> None:
     """Walk every shadow-open position and close it if target/stop/horizon
     resolved on or before `asof`. Same pessimistic same-bar ordering as
-    live (stop wins ties)."""
+    live (stop wins ties), side-aware for shorts (blueprint 11)."""
     for ticker in list(book.open.keys()):
         t = book.open[ticker]
         entered_at = t["entered_at"]
         horizon_days = t["horizon_days"]
+        side = t.get("side") or "long"
         expiry = entered_at + timedelta(days=horizon_days)
         bars = hist.bars_after(ticker, entered_at.date(), min(asof, expiry + timedelta(days=2)).date())
         if bars is None or not all(c in bars.columns for c in ("High", "Low", "Close")):
@@ -371,12 +374,20 @@ def _mark_shadow_book(book: ShadowBook, hist: HistCache, asof: datetime) -> None
             if bar_dt > asof:
                 break
             high, low, close = float(row["High"]), float(row["Low"]), float(row["Close"])
-            if low <= t["stop_px"]:
-                _close_shadow(book, t, bar_dt, t["stop_px"], "stop")
-                break
-            if high >= t["target_px"]:
-                _close_shadow(book, t, bar_dt, t["target_px"], "target")
-                break
+            if side == "short":
+                if high >= t["stop_px"]:
+                    _close_shadow(book, t, bar_dt, t["stop_px"], "stop")
+                    break
+                if low <= t["target_px"]:
+                    _close_shadow(book, t, bar_dt, t["target_px"], "target")
+                    break
+            else:
+                if low <= t["stop_px"]:
+                    _close_shadow(book, t, bar_dt, t["stop_px"], "stop")
+                    break
+                if high >= t["target_px"]:
+                    _close_shadow(book, t, bar_dt, t["target_px"], "target")
+                    break
             if bar_dt >= expiry:
                 _close_shadow(book, t, bar_dt, close, "horizon")
                 break
@@ -390,19 +401,24 @@ def _mark_shadow_book(book: ShadowBook, hist: HistCache, asof: datetime) -> None
 def _open_shadow_trade(book: ShadowBook, *, source_kind, source_run_id, ticker, entered_at,
                        intent_px, target_px, stop_px, horizon_days, qty, confidence,
                        edge, sector, cap_tier, avg_turnover, hist: HistCache,
-                       conf_method: str | None = None) -> None:
+                       conf_method: str | None = None, side: str = "long") -> None:
     next_open = hist.next_open(ticker, entered_at.date())
     anchor = next_open if next_open else intent_px
-    fill_px, slippage_cost = _apply_slippage(anchor, qty, "buy", cap_tier, avg_turnover or 1e8)
-    buy_friction, _ = _broker_friction(fill_px * qty, "buy")
+    # Entry action flips for a short (blueprint 11): entering a short IS
+    # a sell (adverse fill lands below reference), mirroring how a long
+    # exits via a sell. side="long" (the default) reproduces the exact
+    # pre-existing buy-side arithmetic byte-for-byte.
+    entry_action = "sell" if side == "short" else "buy"
+    fill_px, slippage_cost = _apply_slippage(anchor, qty, entry_action, cap_tier, avg_turnover or 1e8)
+    entry_friction, _ = _broker_friction(fill_px * qty, entry_action, side=side)
     book.open[ticker] = {
         "source_kind": source_kind, "source_run_id": source_run_id, "ticker": ticker,
         "entered_at": entered_at, "intent_px": intent_px, "fill_px": fill_px, "qty": qty,
         "target_px": target_px, "stop_px": stop_px, "horizon_days": horizon_days,
-        "brokerage": buy_friction, "slippage_cost": slippage_cost,
+        "brokerage": entry_friction, "slippage_cost": slippage_cost,
         "confidence": confidence, "expected_edge_pct": edge,
         "sector": sector, "cap_tier": cap_tier, "avg_turnover_inr": avg_turnover,
-        "status": "open", "conf_method": conf_method,
+        "status": "open", "conf_method": conf_method, "side": side,
     }
 
 
@@ -563,6 +579,90 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
     return "enter"
 
 
+def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook, hist: HistCache,
+                          sb, portfolio_base: float, calib_by_dim: dict,
+                          breaker_tripped: bool = False) -> str | None:
+    """Backtest mirror of paper_trader._evaluate_worst_performer (blueprint
+    11): worst_performers traded as SHORTS, inverted geometry + inverted
+    regime interaction (shorts allowed in risk_mode=off, blocked only on
+    vix_band=stressed AND trend=up)."""
+    raw_ticker = (wp.get("ticker") or "").strip().upper()
+    if not raw_ticker:
+        return None
+    ticker = raw_ticker if (raw_ticker.endswith(".NS") or raw_ticker.endswith(".BO") or raw_ticker.startswith("^")) else raw_ticker + ".NS"
+
+    if breaker_tripped:
+        return "circuit_breaker"
+
+    conf = _conf_from_winprob(wp)
+    edge = wp.get("expected_edge_pct")
+    if not isinstance(edge, (int, float)):
+        return "pre_schema"
+    platt_conf = _platt_recalibrate(calib_by_dim, "worst_performer_1d", asof, conf)
+    effective_conf = platt_conf if platt_conf is not None else conf
+    if effective_conf < MIN_CONF:
+        return "low_conf"
+    if edge < MIN_EDGE_PCT:
+        return "low_edge"
+    rr = wp.get("risk_reward")
+    if isinstance(rr, (int, float)) and rr < MIN_RR:
+        return "low_rr"
+
+    intent_px = _parse_inr(wp.get("entry"))
+    target_px = _parse_inr(wp.get("target"))
+    stop_px = _parse_inr(wp.get("stop_loss"))
+    if not intent_px or intent_px <= 0:
+        return "no_intent_px"
+    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
+        return "no_target_stop"
+    if target_px >= intent_px or stop_px <= intent_px:
+        return "degenerate_geometry"
+    if book.has_open(ticker):
+        return "already_open"
+    if book.ticker_frozen(ticker, asof):
+        return "ticker_freeze"
+
+    risk_per_share = abs(intent_px - stop_px)
+    if risk_per_share <= 0:
+        return "bad_risk"
+
+    if REGIME_GATE_ON:
+        regime = hist.regime(asof.date())
+        if regime.get("vix_band") == "stressed" and regime.get("trend") == "up":
+            return "regime_off"
+    else:
+        regime = None
+
+    next_earnings = hist.next_earnings_asof(ticker, asof.date())
+    if next_earnings is not None:
+        delta = _weekday_sessions_between(asof.date(), next_earnings)
+        if -1 <= delta <= EARNINGS_BLACKOUT_SESSIONS:
+            return "earnings_blackout"
+
+    avg_turnover = hist.avg_turnover(ticker, asof.date())
+    if avg_turnover is None:
+        return "no_liquidity_data"
+    if (avg_turnover / 1e7) < LIQUIDITY_MIN_CR:
+        return "liquidity"
+
+    sector, cap_tier = _ticker_sector_and_cap(sb, ticker)
+    if sector and book.open_in_sector(sector) >= SECTOR_CAP:
+        return "sector_cap"
+
+    risk_budget = portfolio_base * RISK_PER_TRADE
+    qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
+    if regime and regime.get("risk_mode") == "half":
+        qty = max(1, int(qty * REGIME_HALF_MULT))
+    horizon = int(wp.get("horizon_days") or 1)
+
+    _open_shadow_trade(book, source_kind="worst_performer", source_run_id=a_id, ticker=ticker,
+                       entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
+                       horizon_days=horizon, qty=qty, confidence=conf, edge=edge,
+                       sector=sector, cap_tier=cap_tier, avg_turnover=avg_turnover, hist=hist,
+                       side="short")
+    return "enter"
+
+
 def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, book: ShadowBook,
                   hist: HistCache, sb, portfolio_base: float, calib_by_dim: dict,
                   breaker_tripped: bool = False) -> str | None:
@@ -712,6 +812,11 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
             if not isinstance(tp, dict):
                 continue
             events.append((asof, "top_performer", {"a_id": a["id"], "tp": tp}))
+        for wp in (raw.get("worst_performers") or []):
+            # Same legacy-schema guard as outlooks above.
+            if not isinstance(wp, dict):
+                continue
+            events.append((asof, "worst_performer", {"a_id": a["id"], "wp": wp}))
     events.sort(key=lambda e: e[0])
 
     if not events:
@@ -748,6 +853,9 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
         elif kind == "top_performer":
             outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, sizing_base,
                                           calib_by_dim, breaker_tripped=breaker_tripped)
+        elif kind == "worst_performer":
+            outcome = _eval_worst_performer(payload["a_id"], payload["wp"], asof, book, hist, sb, sizing_base,
+                                            calib_by_dim, breaker_tripped=breaker_tripped)
         else:
             outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, sizing_base,
                                     calib_by_dim, breaker_tripped=breaker_tripped)

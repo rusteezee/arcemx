@@ -98,6 +98,16 @@ function humaniseExit(s: string | null): string {
   return EXIT_LABEL[s] || s.replace(/_/g, " ");
 }
 
+function SidePill({ side }: { side: string | null }) {
+  const s = (side || "long").toLowerCase();
+  const cls = s === "short" ? "pill-loss" : "pill-gain";
+  return (
+    <span className={`pill ${cls}`} style={{ minWidth: 64, justifyContent: "center" }}>
+      {s.toUpperCase()}
+    </span>
+  );
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "·";
   const d = new Date(iso);
@@ -515,6 +525,7 @@ export default function TraderPage() {
                 <thead>
                   <tr>
                     <th>Ticker</th>
+                    <th>Side</th>
                     <th>Entered</th>
                     <th>Qty</th>
                     <th>Fill</th>
@@ -529,6 +540,7 @@ export default function TraderPage() {
                   {open.map((t) => (
                     <tr key={t.id}>
                       <td className="font-medium whitespace-nowrap">{stripTicker(t.ticker)}</td>
+                      <td><SidePill side={t.side} /></td>
                       <td className="whitespace-nowrap">{fmtDate(t.entered_at)}</td>
                       <td className="num">{t.qty ?? "·"}</td>
                       <td className="num whitespace-nowrap">{t.fill_px != null ? formatINR(t.fill_px) : "·"}</td>
@@ -559,6 +571,7 @@ export default function TraderPage() {
                 <thead>
                   <tr>
                     <th>Ticker</th>
+                    <th>Side</th>
                     <th>Entered</th>
                     <th>Exited</th>
                     <th>Reason</th>
@@ -577,6 +590,7 @@ export default function TraderPage() {
                     return (
                       <tr key={t.id}>
                         <td className="font-medium whitespace-nowrap">{stripTicker(t.ticker)}</td>
+                        <td><SidePill side={t.side} /></td>
                         <td className="whitespace-nowrap">{fmtDate(t.entered_at)}</td>
                         <td className="whitespace-nowrap">{fmtDate(t.exit_at)}</td>
                         <td className="whitespace-nowrap">{humaniseExit(t.exit_reason)}</td>
