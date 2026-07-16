@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import os
 from datetime import date, datetime, timedelta, timezone
+from itertools import combinations
 from typing import Any
 
 from dotenv import load_dotenv
@@ -46,6 +47,40 @@ def _norm_cdf(x: float) -> float:
     """Standard normal CDF via math.erf. Identical to scipy.stats.norm.cdf
     to ~15 decimal places; avoids the scipy import cost."""
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_ppf(p: float) -> float:
+    """Inverse standard normal CDF (percent-point function), Acklam's
+    rational approximation (Acklam 2003) - max abs error ~1.15e-9,
+    identical to scipy.stats.norm.ppf to that tolerance. Used by
+    deflated_sharpe() to turn a trial count into a z-score without a
+    scipy dependency."""
+    if p <= 0.0:
+        return float("-inf")
+    if p >= 1.0:
+        return float("inf")
+    a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+         1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00]
+    b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+         6.680131188771972e+01, -1.328068155288572e+01]
+    c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+         -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00]
+    d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+         3.754408661907416e+00]
+    p_low = 0.02425
+    p_high = 1.0 - p_low
+    if p < p_low:
+        q = math.sqrt(-2.0 * math.log(p))
+        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
+               ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1.0)
+    if p <= p_high:
+        q = p - 0.5
+        r = q * q
+        return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / \
+               (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1.0)
+    q = math.sqrt(-2.0 * math.log(1.0 - p))
+    return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
+             ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1.0)
 
 
 def _mean(xs: list[float]) -> float:
@@ -196,7 +231,7 @@ def calmar(sharpe_value: float, max_dd_pct: float, annual_return_pct: float) -> 
 
 
 # ---------------------------------------------------------------------------
-# PSR (Probabilistic Sharpe Ratio) — Bailey & Lopez de Prado 2012
+# PSR (Probabilistic Sharpe Ratio). Bailey & Lopez de Prado 2012
 # ---------------------------------------------------------------------------
 def psr(returns: list[float],
         benchmark_sr_annual: float = 0.0,
@@ -211,7 +246,7 @@ def psr(returns: list[float],
     benchmark, N is the sample size, skew + kurt are sample moments.
 
     A negative-skewed strategy with fat tails gets a lower PSR for the
-    same point Sharpe — exactly what we want as a discipline gate."""
+    same point Sharpe. exactly what we want as a discipline gate."""
     n = len(returns)
     if n < 4:
         return 0.0
@@ -226,6 +261,45 @@ def psr(returns: list[float],
     return float(_norm_cdf(z))
 
 
+_EULER_MASCHERONI = 0.5772156649
+
+
+def deflated_sharpe(returns: list[float], trial_sharpes: list[float],
+                    periods_per_year: int = PERIODS_PER_YEAR) -> dict[str, Any]:
+    """Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014): PSR evaluated
+    at a benchmark SR* that corrects for how many strategy variants
+    (trials) were tried before picking this one - the multiple-testing
+    correction plain PSR does not make.
+
+        SR* = sqrt(Var[{SR_n}]) * ((1-gamma)*z(1-1/N) + gamma*z(1-1/(N*e)))
+
+    trial_sharpes are the N per-period Sharpe estimates whose spread
+    stands in for how far luck alone could move the Sharpe (Trials
+    definition, decided in blueprint 10: N = the walk-forward confidence-
+    floor grid, 9 floors 40..80 step 5, run once against the FULL closed-
+    trade set - the parameter sweep itself IS the multiple-testing event.
+    Nothing else is counted as a trial). SR* comes out per-period from
+    the formula above; annualised to sr_star_annual so it plugs straight
+    into psr()'s existing benchmark_sr_annual parameter unchanged.
+
+    Returns dsr=psr (no deflation applied) with degenerate=True when
+    N<2 or the trial variance is 0 - deflation is meaningless without
+    cross-trial spread, and the caller must never mistake "couldn't
+    deflate" for "deflated to a real number"."""
+    n_trials = len(trial_sharpes)
+    var_sr = _stdev(trial_sharpes, ddof=1) ** 2 if n_trials >= 2 else 0.0
+    if n_trials < 2 or var_sr <= 0:
+        psr_v = psr(returns, benchmark_sr_annual=0.0, periods_per_year=periods_per_year)
+        return {"dsr": psr_v, "sr_star_annual": 0.0, "n_trials": n_trials, "degenerate": True}
+    z1 = _norm_ppf(1.0 - 1.0 / n_trials)
+    z2 = _norm_ppf(1.0 - 1.0 / (n_trials * math.e))
+    sr_star_per_period = math.sqrt(var_sr) * ((1.0 - _EULER_MASCHERONI) * z1 + _EULER_MASCHERONI * z2)
+    sr_star_annual = sr_star_per_period * math.sqrt(periods_per_year)
+    dsr = psr(returns, benchmark_sr_annual=sr_star_annual, periods_per_year=periods_per_year)
+    return {"dsr": dsr, "sr_star_annual": round(sr_star_annual, 4),
+            "n_trials": n_trials, "degenerate": False}
+
+
 # ---------------------------------------------------------------------------
 # Per-dim skill ratio from prediction_scores
 # ---------------------------------------------------------------------------
@@ -238,7 +312,7 @@ def per_dim_skill(sb, days: int = 90, min_samples: int = 5) -> list[dict[str, An
     comfortably above noise; <0 = systematically worse than guessing.
 
     Dims with sample_size < min_samples are flagged but not filtered out
-    (caller decides how to render — exclude from charts, show in table)."""
+    (caller decides how to render. exclude from charts, show in table)."""
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     rows = sb.table("prediction_scores").select(
         "dimension,score"
@@ -341,7 +415,7 @@ def _filter_trades_by_confidence(trades: list[dict], floor: int) -> list[dict]:
 def _window_sharpe(trades: list[dict], base_inr: float) -> float:
     """Per-trade-treated-as-day Sharpe over a window. NOT annualised the
     same way the equity-curve Sharpe is because per-trade frequency may
-    not be daily — we use sqrt(len(returns)) as a coarse n adjustment
+    not be daily. we use sqrt(len(returns)) as a coarse n adjustment
     only, so two windows with the same return distribution but different
     trade counts can be compared. Caller should think of this as a
     relative score across window-floor pairs, not an absolute Sharpe."""
@@ -356,6 +430,52 @@ def _window_sharpe(trades: list[dict], base_inr: float) -> float:
     if s <= 0:
         return 0.0
     return (_mean(rets) / s) * math.sqrt(len(rets))
+
+
+def pbo_cscv(trades: list[dict], grid: list[int], base_inr: float,
+            blocks: int = 8) -> dict[str, Any] | None:
+    """Probability of Backtest Overfitting via Combinatorially Symmetric
+    Cross-Validation (Bailey, Borwein, Lopez de Prado & Zhu 2015),
+    minimal correct version. Splits the chronological closed-trade
+    return series into `blocks` equal contiguous slices, tries every
+    way to hold out half of them as in-sample (C(8,4) = 70 combos for
+    blocks=8), and for each combo: pick the confidence-floor grid point
+    with the best IN-SAMPLE Sharpe, then find where that SAME floor's
+    Sharpe actually ranks OUT-OF-SAMPLE among the grid (0 = best). PBO
+    is the fraction of combos where the in-sample pick's OOS rank lands
+    in the bottom half (relative rank > 0.5) - i.e. how often "trust the
+    best in-sample floor" would have actively misled you.
+
+    Returns None ("pbo_insufficient_data" - caller checks this) below
+    40 closed trades; 8 blocks need real per-block sample size to carry
+    any signal."""
+    closed = [t for t in trades if t.get("exit_at") and t.get("net_pnl") is not None]
+    if len(closed) < 40:
+        return None
+    closed_sorted = sorted(closed, key=lambda t: t["exit_at"])
+    n = len(closed_sorted)
+    bounds = [round(i * n / blocks) for i in range(blocks + 1)]
+    block_slices = [closed_sorted[bounds[i]:bounds[i + 1]] for i in range(blocks)]
+
+    half = blocks // 2
+    combos = list(combinations(range(blocks), half))
+    below_median = 0
+    for is_idx in combos:
+        oos_idx = [i for i in range(blocks) if i not in is_idx]
+        is_trades = [t for b in is_idx for t in block_slices[b]]
+        oos_trades = [t for b in oos_idx for t in block_slices[b]]
+
+        is_sharpes = {f: _window_sharpe(_filter_trades_by_confidence(is_trades, f), base_inr) for f in grid}
+        oos_sharpes = {f: _window_sharpe(_filter_trades_by_confidence(oos_trades, f), base_inr) for f in grid}
+
+        best_floor = max(grid, key=lambda f: is_sharpes[f])
+        oos_rank_order = sorted(grid, key=lambda f: oos_sharpes[f], reverse=True)
+        rank = oos_rank_order.index(best_floor)
+        relative_rank = rank / (len(grid) - 1) if len(grid) > 1 else 0.0
+        if relative_rank > 0.5:
+            below_median += 1
+
+    return {"pbo": round(below_median / len(combos), 4), "combos": len(combos), "grid": grid}
 
 
 def walk_forward_confidence_floor(

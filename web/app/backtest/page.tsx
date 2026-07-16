@@ -21,8 +21,22 @@ interface BacktestTrade {
   net_pnl: number | null;
 }
 
+interface DsrBundle {
+  dsr: number;
+  sr_star_annual: number;
+  n_trials: number;
+  degenerate: boolean;
+}
+
+interface PboBundle {
+  pbo: number;
+  combos: number;
+  grid: number[];
+}
+
 interface BacktestResults {
   portfolio_base: number;
+  compounding: boolean;
   replay_window: { from: string; to: string };
   counts: { evaluated: number; entered: number };
   skips: Record<string, number>;
@@ -36,6 +50,10 @@ interface BacktestResults {
   max_drawdown: { max_dd_pct: number; peak_at: string | null; trough_at: string | null };
   calmar: number;
   psr: number;
+  dsr: DsrBundle;
+  pbo: PboBundle | null;
+  compounded_final_equity: number;
+  simple_total_net_pnl: number;
   tier_eval: { cleared_tier: number; next_tier: number; next_label: string };
   equity_curve: [string, number][];
   trades: BacktestTrade[];
@@ -207,6 +225,16 @@ export default function BacktestPage() {
                 deltaPositive={results.psr >= 0.95}
               />
               <Stat label="Calmar" value={results.trade_count ? results.calmar.toFixed(2) : "·"} />
+              <Stat
+                label="DSR"
+                value={results.trade_count ? results.dsr.dsr.toFixed(3) : "·"}
+                deltaPositive={results.dsr.dsr >= 0.90}
+              />
+              <Stat
+                label="PBO"
+                value={results.pbo ? results.pbo.pbo.toFixed(3) : "n/a"}
+                deltaPositive={results.pbo ? results.pbo.pbo <= 0.30 : undefined}
+              />
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
               <Stat

@@ -661,7 +661,7 @@ def _parse_dt(s) -> datetime | None:
         return None
 
 
-def run_backtest() -> dict[str, Any]:
+def run_backtest(compounding: bool = True) -> dict[str, Any]:
     sb = _sb()
     portfolio_base = _resolve_portfolio_base(sb)
 
@@ -730,14 +730,26 @@ def run_backtest() -> dict[str, Any]:
         _mark_shadow_book(book, hist, asof)
         counts["evaluated"] += 1
         breaker_tripped = _update_breaker(book, portfolio_base, breaker_tripped)
+        # Compounding sizing (blueprint 10): when on, each evaluator's
+        # qty math reads the CURRENT equity (portfolio_base + cumulative
+        # closed net_pnl) instead of the fixed cost basis for the whole
+        # replay. Gate order/entry decisions are untouched by this - the
+        # only thing that changes is which `portfolio_base` value feeds
+        # the sizing formula each evaluator already had. The breaker's
+        # drawdown-pct denominator stays on the FIXED portfolio_base
+        # above (a % of original working capital, not of a moving base).
+        sizing_base = (
+            portfolio_base + sum(t.get("net_pnl") or 0.0 for t in book.closed)
+            if compounding else portfolio_base
+        )
         if kind == "stock_analyst":
-            outcome = _eval_stock_analyst(payload, book, hist, sb, portfolio_base,
+            outcome = _eval_stock_analyst(payload, book, hist, sb, sizing_base,
                                           breaker_tripped=breaker_tripped)
         elif kind == "top_performer":
-            outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, portfolio_base,
+            outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, sizing_base,
                                           calib_by_dim, breaker_tripped=breaker_tripped)
         else:
-            outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, portfolio_base,
+            outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, sizing_base,
                                     calib_by_dim, breaker_tripped=breaker_tripped)
         if outcome == "enter":
             counts["entered"] += 1
@@ -765,8 +777,31 @@ def run_backtest() -> dict[str, Any]:
     wins = sum(1 for t in closed if (t.get("net_pnl") or 0) > 0)
     win_rate = (wins / len(closed) * 100.0) if closed else 0.0
 
+    # DSR + PBO honesty layer (blueprint 10). Trial Sharpes = the SAME
+    # confidence-floor grid (40..80 step 5, 9 floors) walk_forward_
+    # confidence_floor grid-searches per-window, run ONCE here against
+    # the FULL closed-trade set - the parameter sweep itself IS the
+    # multiple-testing event; nothing else counts as a trial (see
+    # metrics.deflated_sharpe's docstring).
+    trial_grid = list(range(40, 85, 5))
+    trial_sharpes = [
+        metrics._window_sharpe(metrics._filter_trades_by_confidence(trades_for_metrics, floor), portfolio_base)
+        for floor in trial_grid
+    ]
+    dsr_bundle = metrics.deflated_sharpe(rets, trial_sharpes)
+    pbo_bundle = metrics.pbo_cscv(trades_for_metrics, trial_grid, portfolio_base)
+
+    # Compounding fix (blueprint 10): "simple" is the plain rupee P&L sum
+    # (what total_net_pnl already was); "compounded" is what the working
+    # capital actually grew to under this run's sizing mode (portfolio_
+    # base + that same P&L). Both reported so a reader never has to
+    # guess which one a given run's headline numbers reflect.
+    compounded_final_equity = portfolio_base + float(total_net)
+    simple_total_net_pnl = float(total_net)
+
     return {
         "portfolio_base": portfolio_base,
+        "compounding": compounding,
         "replay_window": {"from": earliest.isoformat(), "to": latest_today.date().isoformat()},
         "counts": counts,
         "skips": skips,
@@ -780,6 +815,10 @@ def run_backtest() -> dict[str, Any]:
         "max_drawdown": dd,
         "calmar": round(calmar_v, 3),
         "psr": round(psr_v, 4),
+        "dsr": dsr_bundle,
+        "pbo": pbo_bundle,
+        "compounded_final_equity": round(compounded_final_equity, 2),
+        "simple_total_net_pnl": round(simple_total_net_pnl, 2),
         "tier_eval": tiers,
         "equity_curve": [(d.isoformat(), v) for d, v in curve],
         "trades": [
