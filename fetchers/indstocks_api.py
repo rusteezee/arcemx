@@ -184,3 +184,21 @@ class IndstocksClient:
 
     def cancel_order(self, order_id: str) -> dict:
         return self._post("/smart/order/cancel", {"order_id": order_id, "segment": "EQUITY"})
+
+    def sell_market(self, security_id: str, qty: int) -> dict:
+        """Exit a held CNC position now. MARKET orders are auto-converted
+        to LIMIT at live price by the broker (per CONTEXT in blueprint 19).
+        Used to manually close a position ahead of its GTT stop/target."""
+        body = {
+            "txn_type": "SELL",
+            "exchange": "NSE",
+            "segment": "EQUITY",
+            "product": "CNC",
+            "order_type": "MARKET",
+            "validity": "DAY",
+            "security_id": security_id,
+            "qty": qty,
+            "algo_id": "99999",
+        }
+        data = self._post("/smart/order", body)
+        return data["data"]["order_data"][0]

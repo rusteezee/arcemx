@@ -228,6 +228,8 @@ for every trade your thumb confirms.
 | `/token_ind TOKEN` | Store today's INDstocks access token (auto-deletes) |
 | `/exec_status` | Real-order execution mode, token age, caps, funds |
 | `/halt` `/resume` | Stop / re-arm real-order execution |
+| `/real_open` | List open real positions (with ids for /close_order) |
+| `/close_order ID` | Cancel the pending stop/target and exit a real position now (confirm button) |
 
 ## How the analysis works
 

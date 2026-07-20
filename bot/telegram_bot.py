@@ -589,6 +589,53 @@ async def resume_exec(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Execution re-armed.")
 
 
+async def real_open(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    s = sb()
+    rows = s.table("real_orders").select(
+        "id,ticker,qty,limit_price,sl_price,tgt_price,order_id"
+    ).eq("status", "placed").order("id", desc=True).execute().data or []
+    if not rows:
+        await update.message.reply_text("No open real positions.")
+        return
+    msg = "*Open real positions*\n\n"
+    for r in rows:
+        root = r["ticker"].split(".")[0]
+        msg += (
+            f"id {r['id']}: {root} x {r['qty']} entry ~Rs{r.get('limit_price')} "
+            f"SL {r.get('sl_price')} TGT {r.get('tgt_price')} (broker order {r.get('order_id')})\n"
+        )
+    msg += "\nUse /close_order ID to exit one early."
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def close_order(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Usage: /close_order ID (see /real_open for IDs)")
+        return
+    try:
+        order_id = int(ctx.args[0])
+    except ValueError:
+        await update.message.reply_text("ID must be a number. See /real_open.")
+        return
+    s = sb()
+    row = s.table("real_orders").select("*").eq("id", order_id).eq("status", "placed").execute().data
+    if not row:
+        await update.message.reply_text("No open real position with that id.")
+        return
+    r = row[0]
+    root = r["ticker"].split(".")[0]
+    msg = (
+        f"*Close position {order_id}*\n"
+        f"{root} x {r['qty']}, entry ~Rs{r.get('limit_price')}\n"
+        f"This cancels the pending stop/target and sells at MARKET now. Confirm?"
+    )
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("Confirm Close", callback_data=f"closeconfirm:{order_id}"),
+        InlineKeyboardButton("Cancel", callback_data=f"closecancel:{order_id}"),
+    ]])
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=keyboard)
+
+
 async def backtest_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Latest backtest_runs row: full-history replay of every analysis
     through the live paper trader's gate stack. Read-only - triggering a
@@ -1575,6 +1622,62 @@ async def exec_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _fail("failed", str(e), f"Order failed: {str(e)[:150]}")
 
 
+async def close_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action, _, id_str = query.data.partition(":")
+    try:
+        order_id = int(id_str)
+    except ValueError:
+        return
+    s = sb()
+    row = s.table("real_orders").select("*").eq("id", order_id).limit(1).execute().data
+    if not row:
+        return
+    row = row[0]
+    if row["status"] != "placed":
+        await query.answer("Already handled.")
+        return
+
+    if action == "closecancel":
+        await query.edit_message_text(query.message.text + "\n\nNot closed.")
+        return
+
+    from datetime import timezone as _tz
+
+    if EXEC_MODE != "confirm":
+        await query.edit_message_text(query.message.text + "\n\nExecution is off, cannot close via bot.")
+        return
+    if _exec_halted(s):
+        await query.edit_message_text(query.message.text + "\n\nExecution halted, cannot close via bot.")
+        return
+    client = indstocks()
+    age = client.token_age_hours()
+    if age is None or age > 24:
+        await query.edit_message_text(query.message.text + "\n\nToken missing or stale, cannot close via bot.")
+        return
+
+    try:
+        if row.get("order_id"):
+            client.cancel_order(row["order_id"])
+        result = client.sell_market(row["security_id"], row["qty"])
+        close_order_id = result.get("order_id")
+        s.table("real_orders").update(
+            {
+                "status": "closed_manual",
+                "error": None,
+                "acted_at": datetime.now(_tz.utc).isoformat(),
+                "meta": {"close_order_id": close_order_id},
+            }
+        ).eq("id", order_id).execute()
+        await query.edit_message_text(query.message.text + f"\n\nClosed. Sell order {close_order_id}.")
+    except Exception as e:
+        s.table("real_orders").update(
+            {"error": str(e)[:200], "acted_at": datetime.now(_tz.utc).isoformat()}
+        ).eq("id", order_id).execute()
+        await query.edit_message_text(query.message.text + f"\n\nClose failed: {str(e)[:150]}")
+
+
 async def check_token_stale():
     """Daily 08:15 IST. Warns if EXEC_MODE is on and the token is missing
     or older than 20h, ahead of the 24h hard expiry."""
@@ -1684,7 +1787,10 @@ def main():
     app.add_handler(CommandHandler("exec_status", exec_status))
     app.add_handler(CommandHandler("halt", halt_exec))
     app.add_handler(CommandHandler("resume", resume_exec))
+    app.add_handler(CommandHandler("real_open", real_open))
+    app.add_handler(CommandHandler("close_order", close_order))
     app.add_handler(CallbackQueryHandler(exec_callback, pattern=r"^(exec|skipexec):"))
+    app.add_handler(CallbackQueryHandler(close_callback, pattern=r"^(closeconfirm|closecancel):"))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_doc))
     print("Bot running...")
     app.run_polling()
