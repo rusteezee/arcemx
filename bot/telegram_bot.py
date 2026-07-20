@@ -554,8 +554,12 @@ async def exec_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             funds = indstocks().funds()
             data = funds.get("data", funds) if isinstance(funds, dict) else {}
-            avail = data.get("available") if isinstance(data, dict) else None
-            funds_line = f"₹{avail}" if avail is not None else str(funds)[:80]
+            # Real /funds response has no top-level "available" key; the
+            # CNC-equity-tradeable figure is data.detailed_avl_balance.eq_cnc
+            # (verified live 2026-07-20 - was previously an unverified guess).
+            avl = data.get("detailed_avl_balance") if isinstance(data, dict) else None
+            eq_cnc = avl.get("eq_cnc") if isinstance(avl, dict) else None
+            funds_line = f"₹{eq_cnc} CNC" if eq_cnc is not None else "unknown (check INDstocks app)"
         except Exception:
             funds_line = "auth failed"
         msg = (

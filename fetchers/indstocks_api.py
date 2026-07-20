@@ -94,22 +94,19 @@ class IndstocksClient:
         return self._get("/order-book")
 
     def ltp(self, security_id: str) -> float | None:
-        # ASSUMPTION: exact query param shape undocumented in our notes; using
-        # security_id/exchange/segment. Adjust here if the real API rejects it.
+        # Verified live 2026-07-20: requires scrip-codes=SEGMENT_TOKEN (comma
+        # separated), response is data[scrip_code]["live_price"]. Replaces an
+        # earlier unverified guess (security_id/exchange/segment params,
+        # data.ltp) that was wrong on both the request and response shape.
+        scrip_code = f"NSE_{security_id}"
         try:
-            data = self._get(
-                "/market/quotes/ltp",
-                params={"security_id": security_id, "exchange": "NSE", "segment": "EQUITY"},
-            )
+            data = self._get("/market/quotes/ltp", params={"scrip-codes": scrip_code})
         except IndstocksError:
             return None
         try:
-            return float(data["data"]["ltp"])
+            return float(data["data"][scrip_code]["live_price"])
         except Exception:
-            try:
-                return float(data["ltp"])
-            except Exception:
-                return None
+            return None
 
     def resolve_security_id(self, symbol_root: str) -> str | None:
         cached = (
@@ -122,21 +119,33 @@ class IndstocksClient:
         if cached.data:
             return cached.data[0]["security_id"]
 
-        r = requests.get(f"{BASE}/market/instruments", headers=self._headers(), timeout=60)
+        # Verified live 2026-07-20: /market/instruments requires
+        # source=equity|fno|index (was missing entirely before, causing a
+        # 400 "Source not present or invalid"). Real columns confirmed:
+        # TRADING_SYMBOL, SECURITY_ID, EXCH.
+        r = requests.get(
+            f"{BASE}/market/instruments",
+            headers=self._headers(),
+            params={"source": "equity"},
+            timeout=60,
+        )
         if r.status_code != 200:
             raise IndstocksError(r.text[:200])
 
-        # ASSUMPTION: CSV column names undocumented in our notes; detect by
-        # header inspection (symbol/trading + security/id substrings).
         reader = csv.DictReader(io.StringIO(r.text))
         fieldnames = reader.fieldnames or []
         symbol_col = next(
-            (c for c in fieldnames if "symbol" in c.lower() or "trading" in c.lower()), None
+            (c for c in fieldnames if c.upper() == "TRADING_SYMBOL"),
+            next((c for c in fieldnames if "symbol" in c.lower()), None),
         )
         security_col = next(
-            (c for c in fieldnames if "security" in c.lower() or c.lower() == "id"), None
+            (c for c in fieldnames if c.upper() == "SECURITY_ID"),
+            next((c for c in fieldnames if "security" in c.lower()), None),
         )
-        exchange_col = next((c for c in fieldnames if "exchange" in c.lower()), None)
+        exchange_col = next(
+            (c for c in fieldnames if c.upper() == "EXCH"),
+            next((c for c in fieldnames if "exch" in c.lower()), None),
+        )
         if not symbol_col or not security_col:
             return None
 
