@@ -61,6 +61,16 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python -m analyzer.grader
+      # Was never wired into any scheduled job; stock_analyses rows sat
+      # ungraded indefinitely, starving stock_analyst_llm's learning loop
+      # of ground truth. Deterministic (yfinance-only, no LLM cost), same
+      # env as the grader step above, so it rides this existing 17:00 IST
+      # slot instead of a new workflow.
+      - name: Grade matured Stock Analyst rows
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -m analyzer.stock_analyst_grader
       # Manual backfill: triggers re-embedding when the workflow is
       # dispatched with backfill=true. Idempotent (embed_backfill skips
       # already-embedded analysis_id, dimension pairs unless --force).
