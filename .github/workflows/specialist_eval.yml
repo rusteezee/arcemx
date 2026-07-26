@@ -42,10 +42,15 @@ jobs:
         run: pip install supabase python-dotenv requests
       - name: Install llama.cpp CLI (prebuilt binary)
         run: |
+          # "*ubuntu-x64*" (not "*ubuntu*x64*") - the loose pattern also
+          # matches 5 other ubuntu backend variants (rocm/sycl/vulkan/
+          # openvino), and the real asset is .tar.gz, not .zip - both
+          # confirmed live 2026-07-26 against ggml-org/llama.cpp's actual
+          # release assets (a real gh release view showed the true names).
           mkdir -p /tmp/llamacpp
-          gh release download --repo ggml-org/llama.cpp --pattern "*ubuntu*x64*" --dir /tmp/llamacpp --clobber
+          gh release download --repo ggml-org/llama.cpp --pattern "*ubuntu-x64*" --dir /tmp/llamacpp --clobber
           cd /tmp/llamacpp
-          for f in *.zip; do [ -f "$f" ] && unzip -o "$f"; done
+          for f in *.tar.gz; do [ -f "$f" ] && tar xzf "$f"; done
           find /tmp/llamacpp -name "llama-cli" -exec chmod +x {} \;
           find /tmp/llamacpp -name "llama-cli" | head -1 > /tmp/llama_binary_path.txt
           cat /tmp/llama_binary_path.txt
