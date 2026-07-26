@@ -23,6 +23,21 @@ load_dotenv()
 
 _MATERIALITY_MIN = 1.0
 _MAX_ALERTS_PER_RUN = 3
+
+
+def _md_safe(s) -> str:
+    """Strip Telegram legacy-Markdown special chars from a raw news
+    headline before it goes in a parse_mode=Markdown message. Headlines
+    routinely carry [ ] ( ) * _ and an unescaped one breaks Telegram's
+    parser - this alert already fails gracefully (skips just this one
+    cluster) rather than crashing the run, but sanitizing means fewer
+    alerts get silently dropped (same root cause as the 2026-07-21/24
+    daily_push.py failures)."""
+    if not s:
+        return ""
+    for ch in "_*`[]":
+        s = s.replace(ch, "")
+    return s
 _LOOKBACK_HOURS = 2
 
 
@@ -70,10 +85,10 @@ async def check() -> dict:
         if not matched or bot is None:
             continue
 
-        first_source = (s["sources"][0] if s["sources"] else "").replace("_", " ")
+        first_source = _md_safe((s["sources"][0] if s["sources"] else "").replace("_", " "))
         msg = (
             f"*News Alert: {', '.join(t.split('.')[0] for t in matched)}*\n"
-            f"{s['title']}\n"
+            f"{_md_safe(s['title'])}\n"
             f"Sources: {s['source_count']} · {first_source}\n"
             f"Sentiment: {s['sentiment']}"
         )
