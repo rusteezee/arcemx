@@ -207,6 +207,29 @@ funds), `/halt` (immediately stop proposing/executing), `/resume` (re-arm).
 doubly to real orders placed through this feature - you are responsible
 for every trade your thumb confirms.
 
+## LoRA specialist fine-tune (blueprint 13)
+
+A small model fine-tuned on arcemx's own graded prediction history,
+run beside the live LLM chain as an advisory second opinion - it never
+influences a live pick. Promotion to "counts for something" only
+happens if its 30-day accuracy beats the live chain on 2+ dimensions,
+and that call is yours, documented in ROADMAP.md, never automated.
+Gated on 3,000 `prediction_scores` rows before the first run (cleared
+2026-07-26).
+
+**Monthly loop, run by hand:**
+1. `python -m analyzer.finetune_export` - writes `data/finetune/train.jsonl` + `eval.jsonl` (gitignored; repo is public, these never get committed)
+2. Upload both files as a **Kaggle private dataset**
+3. Open `notebooks/arcemx_lora_kaggle.ipynb` on Kaggle, attach that dataset, set a GPU accelerator (T4 x2 or P100), run all cells (~1-3h)
+4. Download the exported `.gguf` from the notebook's Output tab
+5. Attach it to a new GitHub Release (tag it e.g. `specialist-v1`)
+6. Dispatch `.github/workflows/specialist_eval.yml` with that release tag + a `model_slug` (e.g. `specialist-v1`), and set the repo variables so the weekly schedule (Sat 08:30 IST) knows what to run without you dispatching it every time: `gh variable set SPECIALIST_RELEASE_TAG --body specialist-v1` and `gh variable set SPECIALIST_MODEL_SLUG --body specialist-v1`
+7. Compare `specialist-v{n}` against the live chain on the accuracy dashboard after ~2-4 weeks of scoring
+
+No always-on serving exists for this model (researched: no viable free
+path) - it only ever runs as a scheduled/dispatched CPU batch job via
+llama.cpp on GitHub Actions.
+
 ## Commands
 
 | Command | Purpose |

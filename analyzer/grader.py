@@ -1362,7 +1362,7 @@ def compute_summaries(windows=(7, 30, 90, 180, 365, 1095, 1825, 99999)):
     while True:
         page = sb.table("prediction_scores").select(
             "dimension,score,delta,predicted,analysis_id"
-        ).order("id", desc=False).range(off, off + 999).execute().data or []
+        ).is_("model_slug", "null").order("id", desc=False).range(off, off + 999).execute().data or []
         scores.extend(page)
         if len(page) < 1000:
             break

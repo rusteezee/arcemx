@@ -1,0 +1,94 @@
+name: Specialist Model Eval
+
+on:
+  schedule:
+    # Weekly Sat, 03:00 UTC = 08:30 IST. No always-on serving exists for
+    # this model (researched: no viable free path, blueprint 13) - this
+    # scheduled CPU batch job is the only path the specialist ever runs.
+    - cron: "0 3 * * 6"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub Release tag holding the specialist .gguf (e.g. specialist-v1). Leave blank only if gguf_url is set."
+        required: false
+        type: string
+      gguf_url:
+        description: "Smoke-test only: direct URL to a small public GGUF, bypasses release_tag"
+        required: false
+        type: string
+      model_slug:
+        description: "model_slug to tag prediction_scores rows with. Leave blank on the weekly schedule - it falls back to repo variable SPECIALIST_MODEL_SLUG"
+        required: false
+        type: string
+      days:
+        description: "How many days back to evaluate"
+        required: false
+        default: "10"
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python deps
+        run: pip install supabase python-dotenv requests
+      - name: Install llama.cpp CLI (prebuilt binary)
+        run: |
+          mkdir -p /tmp/llamacpp
+          gh release download --repo ggml-org/llama.cpp --pattern "*ubuntu*x64*" --dir /tmp/llamacpp --clobber
+          cd /tmp/llamacpp
+          for f in *.zip; do [ -f "$f" ] && unzip -o "$f"; done
+          find /tmp/llamacpp -name "llama-cli" -exec chmod +x {} \;
+          find /tmp/llamacpp -name "llama-cli" | head -1 > /tmp/llama_binary_path.txt
+          cat /tmp/llama_binary_path.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run specialist eval
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          # The weekly schedule trigger carries no workflow_dispatch
+          # inputs at all - it can only ever see repo Variables. Set
+          # these once after publishing each new specialist version:
+          #   gh variable set SPECIALIST_RELEASE_TAG --body specialist-v1
+          #   gh variable set SPECIALIST_MODEL_SLUG --body specialist-v1
+          MODEL_SLUG="${{ inputs.model_slug || vars.SPECIALIST_MODEL_SLUG }}"
+          RELEASE_TAG="${{ inputs.release_tag || vars.SPECIALIST_RELEASE_TAG }}"
+          if [ -z "$MODEL_SLUG" ]; then
+            echo "No model_slug given and no SPECIALIST_MODEL_SLUG repo variable set - nothing to evaluate."
+            exit 1
+          fi
+          LLAMA_BIN=$(cat /tmp/llama_binary_path.txt)
+          ARGS="--model-slug $MODEL_SLUG --llama-binary $LLAMA_BIN --days ${{ inputs.days || '10' }}"
+          if [ -n "${{ inputs.gguf_url }}" ]; then
+            ARGS="$ARGS --gguf-url ${{ inputs.gguf_url }}"
+          elif [ -n "$RELEASE_TAG" ]; then
+            ARGS="$ARGS --release-tag $RELEASE_TAG"
+          else
+            echo "No release_tag/gguf_url given and no SPECIALIST_RELEASE_TAG repo variable set."
+            exit 1
+          fi
+          python -m analyzer.specialist_eval $ARGS
+      - name: Dead-man ping
+        if: always()
+        env:
+          HC_PING_URLS: ${{ secrets.HC_PING_URLS }}
+        run: |
+          url=$(python3 -c "import json,os;print(json.loads(os.environ.get('HC_PING_URLS') or '{}').get('specialist_eval',''))" 2>/dev/null || true)
+          if [ -n "$url" ]; then
+            if [ "${{ job.status }}" = "success" ]; then
+              curl -fsS -m 10 --retry 3 "$url" || true
+            else
+              curl -fsS -m 10 --retry 3 "$url/fail" || true
+            fi
+          fi

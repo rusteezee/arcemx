@@ -572,3 +572,31 @@ alter table real_orders    enable row level security;
 alter table exec_state     enable row level security;
 -- No anon policy on any of the three above: real_orders/exec_state control
 -- live trading, instrument_map is internal cache. Fully blocked to anon.
+
+-- Blueprint 13: the original unique(analysis_id, dimension, horizon_days)
+-- constraint has no room for a specialist model's row alongside the live
+-- chain's row for the same (analysis_id, dimension, horizon_days) - an
+-- upsert would silently overwrite live grading history with the
+-- specialist's score. Split into two partial unique indexes: one for the
+-- live chain (model_slug is null, unchanged behavior), one per specialist
+-- version (model_slug is not null). Postgres NULLs are never equal to
+-- each other, so a plain table-level unique(..., model_slug) would NOT
+-- give the live chain its "exactly one row" guarantee back - partial
+-- indexes are the correct fix, not a workaround.
+-- Constraint name not guessed - looked up dynamically so this runs
+-- correctly regardless of what Postgres auto-named it.
+do $$
+declare c text;
+begin
+  select con.conname into c
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  where rel.relname = 'prediction_scores' and con.contype = 'u';
+  if c is not null then
+    execute format('alter table prediction_scores drop constraint %I', c);
+  end if;
+end$$;
+create unique index if not exists idx_ps_live_unique
+    on prediction_scores(analysis_id, dimension, horizon_days) where model_slug is null;
+create unique index if not exists idx_ps_specialist_unique
+    on prediction_scores(analysis_id, dimension, horizon_days, model_slug) where model_slug is not null;

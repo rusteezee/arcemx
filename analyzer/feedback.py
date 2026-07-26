@@ -40,7 +40,7 @@ def _direction_history(sb) -> list[dict]:
     # history grows past it (unordered reads return an arbitrary subset).
     ds = sb.table("prediction_scores").select(
         "analysis_id,score,delta,predicted"
-    ).eq("dimension", "direction_1d").order(
+    ).eq("dimension", "direction_1d").is_("model_slug", "null").order(
         "id", desc=True).limit(200).execute().data or []
     ids = list({r["analysis_id"] for r in ds if r.get("analysis_id") is not None})
     meta: dict[int, dict] = {}
@@ -166,7 +166,7 @@ def _retrieve_exemplars_by_similarity(sb, dim: str, k: int = 6) -> list[dict]:
         try:
             pr = sb.table("prediction_scores").select(
                 "analysis_id,dimension,score,delta,predicted,actual"
-            ).in_("analysis_id", aids).eq("dimension", dim).execute().data or []
+            ).in_("analysis_id", aids).eq("dimension", dim).is_("model_slug", "null").execute().data or []
             for p in pr:
                 key = (int(p["analysis_id"]), p["dimension"])
                 pred_by_key[key] = p
@@ -262,11 +262,11 @@ def _mine_exemplars(sb, dim: str, n_each: int = 3) -> list[dict]:
     try:
         wins = sb.table("prediction_scores").select(
             "id,analysis_id,score,delta,predicted,actual"
-        ).eq("dimension", dim).gte("score", 80).order(
+        ).eq("dimension", dim).gte("score", 80).is_("model_slug", "null").order(
             "id", desc=True).limit(n_each).execute().data or []
         losses = sb.table("prediction_scores").select(
             "id,analysis_id,score,delta,predicted,actual"
-        ).eq("dimension", dim).lte("score", 20).order(
+        ).eq("dimension", dim).lte("score", 20).is_("model_slug", "null").order(
             "id", desc=True).limit(n_each).execute().data or []
     except Exception as e:
         # Soft-fail. Missing exemplars are a less-rich prompt, not a
@@ -468,7 +468,7 @@ def build_feedback() -> dict | None:
         try:
             last = sb.table("prediction_scores").select(
                 "score,predicted,notes"
-            ).eq("dimension", dim).order("id", desc=True).limit(1).execute().data or []
+            ).eq("dimension", dim).is_("model_slug", "null").order("id", desc=True).limit(1).execute().data or []
         except Exception:
             last = []
         if not last:
@@ -514,7 +514,7 @@ def build_feedback() -> dict | None:
         try:
             last = sb.table("prediction_scores").select(
                 "actual"
-            ).eq("dimension", dim).order("id", desc=True).limit(1).execute().data or []
+            ).eq("dimension", dim).is_("model_slug", "null").order("id", desc=True).limit(1).execute().data or []
         except Exception:
             last = []
         if not last:
