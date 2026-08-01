@@ -1334,7 +1334,7 @@ def grade_all(lookback_days: int = 90):
 
             print(f"  graded analysis {aid} ({age}d old)")
         except Exception as e:
-            print(f"  fail analysis {row.get('id')}: {e}")
+            print(f"  fail analysis {aid}: {e}")
 
     print("Done grading.")
 
