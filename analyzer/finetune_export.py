@@ -48,10 +48,39 @@ TARGET_DIMS = ["direction_1d", "range_1d", "market_mood_1d", "top_performer_1d"]
 EVAL_FRACTION = 0.20
 FLAT = 0.4  # matches analyzer.grader.grade_direction's noise band exactly
 
-SYSTEM_PROMPT = (
-    "You are a calibrated Indian-market signal grader. Given the day's "
-    'context, output JSON: {"call": ..., "confidence": 0-100}'
-)
+SYSTEM_PROMPT_BASE = "You are a calibrated Indian-market signal grader."
+
+# Same market-state text repeats across dimensions for one analysis row
+# (direction_1d, range_1d, market_mood_1d, top_performer_1d all share the
+# identical feature_text). Without a per-dimension task instruction, the
+# training set contains contradictory (same input, different target)
+# pairs - confirmed live: 87 of 89 unique prompts in the Jul-2026 export
+# had 2+ different target answers, causing train loss -> ~0 while eval
+# loss stayed ~4.6 (memorization, not generalization; not a hyperparameter
+# problem, an ambiguous-prompt problem).
+DIM_INSTRUCTIONS = {
+    "direction_1d": (
+        "Predict NIFTY's next-session direction. Output JSON: "
+        '{"call": "up"|"down"|"sideways", "confidence": 0-100}'
+    ),
+    "range_1d": (
+        "Predict NIFTY's next-session closing price range. Output JSON: "
+        '{"call": [low, high], "confidence": 0-100}'
+    ),
+    "market_mood_1d": (
+        "Predict the next-session overall market mood. Output JSON: "
+        '{"call": "bull"|"bear"|"neutral", "confidence": 0-100}'
+    ),
+    "top_performer_1d": (
+        "Of the originally picked tickers, predict which will show "
+        'positive alpha next session. Output JSON: {"call": [tickers...], '
+        '"confidence": 0-100}'
+    ),
+}
+
+
+def _system_prompt(dim: str) -> str:
+    return f"{SYSTEM_PROMPT_BASE} {DIM_INSTRUCTIONS[dim]}"
 
 
 def _sb():
@@ -175,7 +204,7 @@ def build_dataset() -> tuple[list[dict], dict]:
                 "dimension": dim,
                 "run_at": run_at_by_id[aid],
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": _system_prompt(dim)},
                     {"role": "user", "content": emb[0]["feature_text"]},
                     {"role": "assistant", "content": json.dumps(assistant)},
                 ],

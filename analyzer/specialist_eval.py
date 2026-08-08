@@ -29,13 +29,11 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from supabase import create_client
 
+from analyzer.finetune_export import _system_prompt
+
 load_dotenv()
 
 TARGET_DIMS = ["direction_1d", "range_1d", "market_mood_1d", "top_performer_1d"]
-SYSTEM_PROMPT = (
-    "You are a calibrated Indian-market signal grader. Given the day's "
-    'context, output JSON: {"call": ..., "confidence": 0-100}'
-)
 FLAT = 0.4  # matches analyzer.grader.grade_direction exactly
 
 
@@ -73,12 +71,19 @@ def download_gguf_url(url: str, dest_dir: str) -> str:
     return dest
 
 
-def run_llama(binary: str, model_path: str, feature_text: str, n_predict: int = 128) -> str:
+def run_llama(binary: str, model_path: str, dim: str, feature_text: str, n_predict: int = 128) -> str:
     """One-shot: -cnv applies the GGUF's own embedded chat template, -sys
     sets the system turn, -p the single user turn, -no-cnv-save avoids
-    writing chat history to disk. Returns the model's raw completion."""
+    writing chat history to disk. Returns the model's raw completion.
+
+    System prompt must match training exactly (analyzer.finetune_export's
+    per-dimension instruction) - the same market-state feature_text is
+    shared across all 4 target dims, so a generic system prompt here
+    would reintroduce the identical-input/different-output ambiguity
+    the training-side fix (finetune_export._system_prompt) already
+    closed, just moved from train time to eval time."""
     result = subprocess.run(
-        [binary, "-m", model_path, "-cnv", "-sys", SYSTEM_PROMPT, "-p", feature_text,
+        [binary, "-m", model_path, "-cnv", "-sys", _system_prompt(dim), "-p", feature_text,
          "-n", str(n_predict), "--temp", "0.1", "--single-turn", "--no-display-prompt"],
         capture_output=True, text=True, timeout=120,
     )
@@ -171,7 +176,7 @@ def run_eval(model_slug: str, binary: str, model_path: str, days: int = 10) -> i
     targets = recent_targets(sb, days)
     scored = 0
     for t in targets:
-        raw = run_llama(binary, model_path, t["feature_text"])
+        raw = run_llama(binary, model_path, t["dimension"], t["feature_text"])
         parsed = extract_json(raw)
         if parsed is None:
             print(f"  {t['dimension']} analysis_id={t['analysis_id']}: no parseable JSON, skipped")
