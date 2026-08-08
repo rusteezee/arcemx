@@ -176,7 +176,11 @@ def run_eval(model_slug: str, binary: str, model_path: str, days: int = 10) -> i
     targets = recent_targets(sb, days)
     scored = 0
     for t in targets:
-        raw = run_llama(binary, model_path, t["dimension"], t["feature_text"])
+        try:
+            raw = run_llama(binary, model_path, t["dimension"], t["feature_text"])
+        except subprocess.TimeoutExpired:
+            print(f"  {t['dimension']} analysis_id={t['analysis_id']}: llama.cpp timed out, skipped")
+            continue
         parsed = extract_json(raw)
         if parsed is None:
             print(f"  {t['dimension']} analysis_id={t['analysis_id']}: no parseable JSON, skipped")
