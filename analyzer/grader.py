@@ -506,7 +506,7 @@ def _upsert_score(sb, analysis_id: int, dimension: str, horizon_days: int,
     pre-existing duplicate during a re-grade) cannot break the score
     upsert it shadows.
     """
-    res = sb.table("prediction_scores").upsert({
+    payload = {
         "analysis_id": analysis_id,
         "dimension": dimension,
         "horizon_days": horizon_days,
@@ -515,22 +515,29 @@ def _upsert_score(sb, analysis_id: int, dimension: str, horizon_days: int,
         "score": float(score),
         "delta": float(delta),
         "notes": notes,
-    }, on_conflict="analysis_id,dimension,horizon_days").execute()
+    }
+    # PostgREST's upsert(on_conflict=...) can only target a plain
+    # (non-partial) unique constraint - idx_ps_live_unique is a partial
+    # index (where model_slug is null, so a specialist model's row for
+    # the same analysis_id/dimension/horizon_days can coexist alongside
+    # the live chain's), which PostgREST has no way to express, so it
+    # 42P10s regardless (confirmed live 2026-08-08). Manual
+    # select-then-write instead, scoped to model_slug IS NULL - mirrors
+    # the same fix already proven in specialist_eval.py.
+    existing = sb.table("prediction_scores").select("id").eq(
+        "analysis_id", analysis_id
+    ).eq("dimension", dimension).eq("horizon_days", horizon_days).is_(
+        "model_slug", "null"
+    ).limit(1).execute()
+    if existing.data:
+        ps_id = existing.data[0]["id"]
+        sb.table("prediction_scores").update(payload).eq("id", ps_id).execute()
+    else:
+        res = sb.table("prediction_scores").insert(payload).execute()
+        ps_id = (res.data[0] or {}).get("id") if getattr(res, "data", None) else None
 
     if stated_confidence is None or prediction_date is None:
         return
-    ps_id = None
-    if getattr(res, "data", None):
-        ps_id = (res.data[0] or {}).get("id")
-    if ps_id is None:
-        try:
-            existing = sb.table("prediction_scores").select("id").eq(
-                "analysis_id", analysis_id
-            ).eq("dimension", dimension).eq("horizon_days", horizon_days).limit(1).execute()
-            if existing.data:
-                ps_id = existing.data[0].get("id")
-        except Exception:
-            pass
     if ps_id is None:
         return
     pdate = prediction_date
