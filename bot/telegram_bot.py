@@ -63,14 +63,22 @@ from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters
+    Application, ApplicationHandlerStop, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, TypeHandler, filters
 )
 from supabase import create_client
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+if not CHAT_ID:
+    # Fail loud, not open. Every handler in this bot is owner-only
+    # (see _owner_only_guard) - a bot with no configured owner would
+    # otherwise silently accept commands from anyone on Telegram.
+    raise SystemExit(
+        "TELEGRAM_CHAT_ID is not set - refusing to start unprotected. "
+        "Set it to your own chat id (see the /start reply for how to find it)."
+    )
 
 _sb = None
 def sb():
@@ -78,6 +86,23 @@ def sb():
     if _sb is None:
         _sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
     return _sb
+
+
+async def _owner_only_guard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Registered first (group=-1, see main()), ahead of every command,
+    button, and document handler. No per-handler check existed before this -
+    /buy /sell /add_wish etc scoped writes to the caller's own telegram uid
+    (so a stranger couldn't touch the owner's rows), but /halt /resume
+    /real_open /close_order had zero check at all and act on GLOBAL state -
+    any stranger who could message this bot could halt/resume live trade
+    execution or close a real position. Silent drop, no reply: telling a
+    stranger "unauthorized" just confirms the bot exists and is worth
+    probing further.
+    """
+    uid = str(update.effective_user.id) if update.effective_user else None
+    if uid != str(CHAT_ID):
+        print(f"[owner_guard] blocked message from unauthorized telegram user_id={uid}")
+        raise ApplicationHandlerStop
 
 
 DISCLAIMER = "\n\n_Not SEBI-registered advice. Educational only. DYOR._"
@@ -1766,6 +1791,9 @@ def main():
     # finished loading. _start_health_server will swap the stub for the
     # real async handler once PTB's post_init runs.
     app = Application.builder().token(TOKEN).post_init(_post_init).build()
+    # group=-1 runs before every other handler below - blocks anyone but
+    # the configured owner from reaching any command, button, or doc upload.
+    app.add_handler(TypeHandler(Update, _owner_only_guard), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("today", today))
