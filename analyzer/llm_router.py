@@ -585,7 +585,20 @@ def _content_ok(data: dict, json_format: bool) -> bool:
     bad-but-200 response used to short-circuit every retry AND every
     fallback model in the chain in one shot (the root cause behind
     Friday's "not saving an analysis row" total failure despite a
-    3-model fallback chain being configured)."""
+    3-model fallback chain being configured).
+
+    Also rejects a fourth variant of the same failure class: valid,
+    complete-looking JSON where holding_outlooks_1d + wishlist_outlooks_1d
+    all carry the IDENTICAL direction despite being per-ticker fields on
+    genuinely different stocks with genuinely different technicals (full
+    per-ticker enrichment confirmed present - not a missing-data issue).
+    Live-measured 2026-08-15: whenever gemini/gemini-3.5-flash served this
+    call, it returned all-"sideways" 3/3 times with zero variation across
+    13-14 different names; the primary model did this once in the same
+    sample out of many calls. A response that never differentiates a
+    single one of 5+ names is not doing per-ticker analysis, just filling
+    the schema - as useless as the literal "{}" case above, just harder
+    to spot at a glance because every field is populated."""
     if not isinstance(data, dict) or data.get("error"):
         return False
     try:
@@ -609,7 +622,25 @@ def _content_ok(data: dict, json_format: bool) -> bool:
         # real market call with every field blank).
         if not isinstance(parsed, dict) or not parsed:
             return False
+        if _outlooks_degenerate(parsed):
+            return False
     return True
+
+
+_DEGENERATE_MIN_NAMES = 5  # below this, "all agree" is plausibly real, not lazy
+
+
+def _outlooks_degenerate(parsed: dict) -> bool:
+    """True when holding_outlooks_1d + wishlist_outlooks_1d together cover
+    at least _DEGENERATE_MIN_NAMES tickers and every single one carries
+    the identical stated direction - see _content_ok's docstring."""
+    ho = parsed.get("holding_outlooks_1d")
+    wo = parsed.get("wishlist_outlooks_1d")
+    outlooks = (ho if isinstance(ho, list) else []) + (wo if isinstance(wo, list) else [])
+    dirs = [o.get("direction") for o in outlooks if isinstance(o, dict) and o.get("direction")]
+    if len(dirs) < _DEGENERATE_MIN_NAMES:
+        return False
+    return len(set(dirs)) == 1
 
 
 def _post_provider(provider: dict, messages: list[dict], models: list[str],
