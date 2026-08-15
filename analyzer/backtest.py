@@ -38,10 +38,10 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from analyzer import calibration, metrics
+from analyzer import geometry as vol_geometry
 from analyzer.paper_trader import (
     MIN_CONF,
     MIN_EDGE_PCT,
-    MIN_RR,
     SECTOR_CAP,
     LIQUIDITY_MIN_CR,
     RISK_PER_TRADE,
@@ -133,6 +133,22 @@ class HistCache:
         if turnover.empty:
             return None
         return float(turnover.mean())
+
+    def realized_sigma(self, ticker: str, asof: date, days: int = 20) -> float | None:
+        """No-lookahead daily-return std (fraction) strictly before asof
+        - same slicing discipline as avg_turnover above. Feeds
+        analyzer.geometry.volatility_scaled_barriers; see that module's
+        docstring for why raw LLM target/stop levels are not trusted."""
+        h = self.get(ticker)
+        if h is None or "Close" not in h:
+            return None
+        window = h[h.index.date < asof]["Close"].dropna()
+        if len(window) < 2:
+            return None
+        ret = window.pct_change().dropna().tail(days)
+        if ret.empty:
+            return None
+        return float(ret.std())
 
     def next_open(self, ticker: str, after: date) -> float | None:
         h = self.get(ticker)
@@ -441,8 +457,6 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
         return "pre_schema"
     if not isinstance(confidence, (int, float)) or confidence < MIN_CONF:
         return "low_conf"
-    if edge < MIN_EDGE_PCT:
-        return "low_edge"
     if book.has_open(ticker):
         return "already_open"
     if book.ticker_frozen(ticker, asof):
@@ -453,13 +467,23 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
     intent_px = ((lo or 0) + (hi or 0)) / 2 if lo and hi else None
     if not intent_px or intent_px <= 0:
         return "no_intent_px"
-    ew = j.get("exit_window") or {}
-    target_px, stop_px = ew.get("target_price"), ew.get("stop_loss")
-    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
-        return "no_target_stop"
+
+    # Geometry not trusted from the LLM (see analyzer/geometry.py). No-
+    # lookahead sigma via hist.realized_sigma (data strictly before asof).
+    sigma_daily = hist.realized_sigma(ticker, asof.date())
+    if sigma_daily is None:
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "long", sigma_daily, horizon)
     risk_per_share = abs(intent_px - stop_px)
     if risk_per_share <= 0:
         return "bad_risk"
+    tgt_pct = (target_px - intent_px) / intent_px * 100.0
+    stp_pct = (intent_px - stop_px) / intent_px * 100.0
+    win_prob = max(0.0, min(1.0, float(confidence) / 100.0))
+    edge = tgt_pct * win_prob - stp_pct * (1.0 - win_prob)
+    if edge < MIN_EDGE_PCT:
+        return "low_edge"
 
     if REGIME_GATE_ON:
         regime = hist.regime(asof.date())
@@ -518,29 +542,32 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
     conf_method = "platt" if platt_conf is not None else "raw"
     if effective_conf < MIN_CONF:
         return "low_conf"
-    if edge < MIN_EDGE_PCT:
-        return "low_edge"
-    rr = tp.get("risk_reward")
-    if isinstance(rr, (int, float)) and rr < MIN_RR:
-        return "low_rr"
 
     intent_px = _parse_inr(tp.get("entry"))
-    target_px = _parse_inr(tp.get("target"))
-    stop_px = _parse_inr(tp.get("stop_loss"))
     if not intent_px or intent_px <= 0:
         return "no_intent_px"
-    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
-        return "no_target_stop"
-    if target_px <= intent_px or stop_px >= intent_px:
-        return "degenerate_geometry"
     if book.has_open(ticker):
         return "already_open"
     if book.ticker_frozen(ticker, asof):
         return "ticker_freeze"
 
+    # Geometry not trusted from the LLM; retires the old nominal
+    # risk_reward/MIN_RR gate too (see analyzer/geometry.py).
+    horizon = int(tp.get("horizon_days") or 1)
+    sigma_daily = hist.realized_sigma(ticker, asof.date())
+    if sigma_daily is None:
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "long", sigma_daily, horizon)
     risk_per_share = abs(intent_px - stop_px)
     if risk_per_share <= 0:
         return "bad_risk"
+    tgt_pct = (target_px - intent_px) / intent_px * 100.0
+    stp_pct = (intent_px - stop_px) / intent_px * 100.0
+    win_prob = max(0.0, min(1.0, float(effective_conf) / 100.0))
+    edge = tgt_pct * win_prob - stp_pct * (1.0 - win_prob)
+    if edge < MIN_EDGE_PCT:
+        return "low_edge"
 
     if REGIME_GATE_ON:
         regime = hist.regime(asof.date())
@@ -569,7 +596,6 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
     if regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
-    horizon = int(tp.get("horizon_days") or 1)
 
     _open_shadow_trade(book, source_kind="top_performer", source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
@@ -602,29 +628,32 @@ def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook,
     effective_conf = platt_conf if platt_conf is not None else conf
     if effective_conf < MIN_CONF:
         return "low_conf"
-    if edge < MIN_EDGE_PCT:
-        return "low_edge"
-    rr = wp.get("risk_reward")
-    if isinstance(rr, (int, float)) and rr < MIN_RR:
-        return "low_rr"
 
     intent_px = _parse_inr(wp.get("entry"))
-    target_px = _parse_inr(wp.get("target"))
-    stop_px = _parse_inr(wp.get("stop_loss"))
     if not intent_px or intent_px <= 0:
         return "no_intent_px"
-    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
-        return "no_target_stop"
-    if target_px >= intent_px or stop_px <= intent_px:
-        return "degenerate_geometry"
     if book.has_open(ticker):
         return "already_open"
     if book.ticker_frozen(ticker, asof):
         return "ticker_freeze"
 
+    # Geometry not trusted from the LLM; retires the old nominal
+    # risk_reward/MIN_RR gate too.
+    horizon = int(wp.get("horizon_days") or 1)
+    sigma_daily = hist.realized_sigma(ticker, asof.date())
+    if sigma_daily is None:
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "short", sigma_daily, horizon)
     risk_per_share = abs(intent_px - stop_px)
     if risk_per_share <= 0:
         return "bad_risk"
+    tgt_pct = (intent_px - target_px) / intent_px * 100.0
+    stp_pct = (stop_px - intent_px) / intent_px * 100.0
+    win_prob = max(0.0, min(1.0, float(effective_conf) / 100.0))
+    edge = tgt_pct * win_prob - stp_pct * (1.0 - win_prob)
+    if edge < MIN_EDGE_PCT:
+        return "low_edge"
 
     if REGIME_GATE_ON:
         regime = hist.regime(asof.date())
@@ -653,7 +682,6 @@ def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook,
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
     if regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
-    horizon = int(wp.get("horizon_days") or 1)
 
     _open_shadow_trade(book, source_kind="worst_performer", source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
@@ -697,21 +725,29 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
     if not band:
         return "no_intent_px"
     lo, hi = band
-    intent_px, target_px, stop_px = (lo + hi) / 2.0, hi, lo
+    intent_px = (lo + hi) / 2.0
+    if book.has_open(ticker):
+        return "already_open"
+    if book.ticker_frozen(ticker, asof):
+        return "ticker_freeze"
+
+    # Geometry not trusted from the LLM's range band either (same class
+    # of issue - see analyzer/geometry.py). No-lookahead sigma.
+    sigma_daily = hist.realized_sigma(ticker, asof.date())
+    if sigma_daily is None:
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "long", sigma_daily, 1)
+    risk_per_share = abs(intent_px - stop_px)
+    if risk_per_share <= 0:
+        return "bad_risk"
+
     expected_return_pct = (target_px - intent_px) / intent_px * 100.0
     expected_loss_pct = (intent_px - stop_px) / intent_px * 100.0
     win_prob = max(0.0, min(1.0, effective_conf / 100.0))
     edge = expected_return_pct * win_prob - expected_loss_pct * (1.0 - win_prob)
     if edge < OUTLOOK_MIN_EDGE_PCT:
         return "low_edge"
-    if book.has_open(ticker):
-        return "already_open"
-    if book.ticker_frozen(ticker, asof):
-        return "ticker_freeze"
-
-    risk_per_share = abs(intent_px - stop_px)
-    if risk_per_share <= 0:
-        return "bad_risk"
 
     if REGIME_GATE_ON:
         regime = hist.regime(asof.date())

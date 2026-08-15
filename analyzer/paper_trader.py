@@ -43,6 +43,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from analyzer import calibration, metrics
+from analyzer import geometry as vol_geometry
 from analyzer.regime import fetch_regime
 
 load_dotenv()
@@ -66,10 +67,6 @@ MIN_CONF = 55                    # stated-win_prob floor (see _conf_from_winprob
 MIN_EDGE_PCT = 1.5               # round-trip friction safety cushion. Risk-
                                  # adjusted (consensus + bear already applied),
                                  # so this stays the decisive quality gate.
-MIN_RR = 1.3                     # reward:risk floor (target dist / stop dist).
-                                 # Mirrors _RR_FLOOR in llm_router; a long with
-                                 # the target closer than 1.3x the stop has too
-                                 # little room to clear friction even when right.
 SECTOR_CAP = 2                   # max concurrent open trades in same sector
 LIQUIDITY_MIN_CR = 1.0           # avg 20d turnover >= 1 cr
 BROKERAGE_FLAT = 5.0             # INDstocks flat per order
@@ -393,6 +390,32 @@ def _yf_avg_turnover(ticker: str, days: int = 20) -> float | None:
         return None
 
 
+def _yf_realized_sigma(ticker: str, days: int = 20) -> float | None:
+    """Rolling-N-session daily-return std (fraction, e.g. 0.023 for
+    2.3%). Feeds geometry.volatility_scaled_barriers - see that module
+    for why: raw LLM target/stop levels averaged 3.80 daily sigma away
+    (unreachable) on the target side and 1.67 sigma (frequent) on the
+    stop side, live-measured 2026-08-15 across 27 closed trades."""
+    try:
+        h = yf.download(
+            ticker,
+            period=f"{days + 8}d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+        h = _flatten_yf_columns(h)
+        if h is None or h.empty or "Close" not in h:
+            return None
+        ret = h["Close"].pct_change().dropna().tail(days)
+        if ret.empty:
+            return None
+        return float(ret.std())
+    except Exception:
+        return None
+
+
 def _yf_next_open(ticker: str, after: datetime) -> float | None:
     """First open price strictly after `after` (date in IST tz)."""
     try:
@@ -643,9 +666,6 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
     if not isinstance(confidence, (int, float)) or confidence < MIN_CONF:
         _log_signal(sb, ticker, sa_id, "skip", "low_conf", confidence=confidence, edge=edge)
         return "low_conf"
-    if edge < MIN_EDGE_PCT:
-        _log_signal(sb, ticker, sa_id, "skip", "low_edge", confidence=confidence, edge=edge)
-        return "low_edge"
     if _has_open_position(sb, ticker):
         _log_signal(sb, ticker, sa_id, "skip", "already_open", confidence=confidence, edge=edge)
         return "already_open"
@@ -663,17 +683,38 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
         _log_signal(sb, ticker, sa_id, "skip", "no_intent_px", confidence=confidence, edge=edge)
         return "no_intent_px"
 
-    ew = j.get("exit_window") or {}
-    target_px = ew.get("target_price")
-    stop_px = ew.get("stop_loss")
-    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
-        _log_signal(sb, ticker, sa_id, "skip", "no_target_stop", confidence=confidence, edge=edge)
-        return "no_target_stop"
+    # Geometry is NOT trusted from the LLM's exit_window - live-measured
+    # 2026-08-15: raw LLM target/stop averaged 3.80 daily sigma away on
+    # the target side (P(touch in 1d) ~0.6%) vs 1.67 sigma on the stop
+    # side (P(touch) ~16%), naive EV -0.377%/trade before costs, matching
+    # the realized 15-stop/11-horizon/1-target outcome exactly. Barriers
+    # must be a function of realized volatility (De Prado, triple-barrier
+    # method), not freehand price picks. NOTE: this path has no
+    # calibration_log dimension of its own (only top_performer_1d /
+    # worst_performer_1d / outlook dims are Platt-calibrated today), so
+    # raw stated confidence is used as the win-probability proxy here -
+    # ASSUMPTION, tag for follow-up once Stock Analyst rows get their own
+    # graded dimension.
+    sigma_daily = _yf_realized_sigma(ticker)
+    if sigma_daily is None:
+        _log_signal(sb, ticker, sa_id, "skip", "no_liquidity_data",
+                    confidence=confidence, edge=edge)
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "long", sigma_daily, horizon)
 
     risk_per_share = abs(intent_px - stop_px)
     if risk_per_share <= 0:
         _log_signal(sb, ticker, sa_id, "skip", "bad_risk", confidence=confidence, edge=edge)
         return "bad_risk"
+
+    tgt_pct = (target_px - intent_px) / intent_px * 100.0
+    stp_pct = (intent_px - stop_px) / intent_px * 100.0
+    win_prob = max(0.0, min(1.0, float(confidence) / 100.0))
+    edge = tgt_pct * win_prob - stp_pct * (1.0 - win_prob)
+    if edge < MIN_EDGE_PCT:
+        _log_signal(sb, ticker, sa_id, "skip", "low_edge", confidence=confidence, edge=edge)
+        return "low_edge"
 
     # Geometry known from here on - every subsequent skip carries it in
     # meta so skip_attribution.score_skips() can retro-simulate the entry
@@ -991,41 +1032,11 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         L("skip", "low_conf", edge=edge,
           meta={"effective_conf": effective_conf, "conf_method": conf_method})
         return "low_conf"
-    if edge < MIN_EDGE_PCT:
-        L("skip", "low_edge", edge=edge)
-        return "low_edge"
-    # Reward:risk floor. risk_reward is attached upstream by
-    # _enforce_pick_quality (reward distance / stop distance). A long
-    # whose target sits closer than MIN_RR x its stop distance is a poor
-    # entry regardless of a positive headline edge (the model routinely
-    # surfaces names that just rallied into resistance). Gate them out so
-    # the book only holds setups with room to run. Skip the gate when the
-    # ratio is absent (older rows) rather than guess.
-    rr = tp.get("risk_reward")
-    if isinstance(rr, (int, float)) and rr < MIN_RR:
-        L("skip", "low_rr", edge=edge, meta={"risk_reward": rr})
-        return "low_rr"
 
     intent_px = _parse_inr(tp.get("entry"))
-    target_px = _parse_inr(tp.get("target"))
-    stop_px = _parse_inr(tp.get("stop_loss"))
     if not intent_px or intent_px <= 0:
         L("skip", "no_intent_px", edge=edge)
         return "no_intent_px"
-    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
-        L("skip", "no_target_stop", edge=edge)
-        return "no_target_stop"
-    # Degenerate geometry guard. The single-model brain has been emitting
-    # entry == target (zero upside) on every pick; for a long the target
-    # must sit ABOVE entry and the stop BELOW it. A pick that fails this
-    # is malformed, not tradeable: entering it would book a "win" at the
-    # entry price with no move, poisoning the paper P&L. Reject so the
-    # skip-reason histogram surfaces the upstream geometry bug instead of
-    # silently filling the book with no-op trades.
-    if target_px <= intent_px or stop_px >= intent_px:
-        L("skip", "degenerate_geometry", edge=edge,
-          meta={"entry": intent_px, "target": target_px, "stop": stop_px})
-        return "degenerate_geometry"
     if _has_open_position(sb, ticker):
         L("skip", "already_open", edge=edge)
         return "already_open"
@@ -1034,13 +1045,36 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         L("skip", "ticker_freeze", edge=edge, meta=freeze_meta)
         return "ticker_freeze"
 
+    # Geometry is NOT trusted from the LLM's target/stop_loss - see
+    # analyzer/geometry.py and _evaluate_one for the live-measured proof
+    # (3.80 sigma targets vs 1.67 sigma stops, -0.377%/trade naive EV).
+    # This also retires the old nominal risk_reward/MIN_RR gate: geometry
+    # is now a fixed 1.5:1.0 ratio by construction, so what varies
+    # trade-to-trade is the calibrated win probability, not the ratio.
+    horizon = int(tp.get("horizon_days") or 1)
+    sigma_daily = _yf_realized_sigma(ticker)
+    if sigma_daily is None:
+        L("skip", "no_liquidity_data", edge=edge)
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "long", sigma_daily, horizon)
+
     risk_per_share = abs(intent_px - stop_px)
     if risk_per_share <= 0:
         L("skip", "bad_risk", edge=edge)
         return "bad_risk"
 
+    tgt_pct = (target_px - intent_px) / intent_px * 100.0
+    stp_pct = (intent_px - stop_px) / intent_px * 100.0
+    win_prob = max(0.0, min(1.0, float(effective_conf) / 100.0))
+    edge = tgt_pct * win_prob - stp_pct * (1.0 - win_prob)
+    if edge < MIN_EDGE_PCT:
+        L("skip", "low_edge", edge=edge,
+          meta={"effective_conf": effective_conf, "conf_method": conf_method})
+        return "low_edge"
+
     geometry = {"intent": intent_px, "target": target_px, "stop": stop_px,
-                "horizon_days": int(tp.get("horizon_days") or 1)}
+                "horizon_days": horizon}
 
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "off":
         L("skip", "regime_off", edge=edge, meta={"regime": regime, "geometry": geometry})
@@ -1180,29 +1214,11 @@ def _evaluate_worst_performer(sb, analysis_row: dict, wp: dict, now: datetime,
         L("skip", "low_conf", edge=edge,
           meta={"effective_conf": effective_conf, "conf_method": conf_method})
         return "low_conf"
-    if edge < MIN_EDGE_PCT:
-        L("skip", "low_edge", edge=edge)
-        return "low_edge"
-    rr = wp.get("risk_reward")
-    if isinstance(rr, (int, float)) and rr < MIN_RR:
-        L("skip", "low_rr", edge=edge, meta={"risk_reward": rr})
-        return "low_rr"
 
     intent_px = _parse_inr(wp.get("entry"))
-    target_px = _parse_inr(wp.get("target"))
-    stop_px = _parse_inr(wp.get("stop_loss"))
     if not intent_px or intent_px <= 0:
         L("skip", "no_intent_px", edge=edge)
         return "no_intent_px"
-    if not target_px or not stop_px or target_px <= 0 or stop_px <= 0:
-        L("skip", "no_target_stop", edge=edge)
-        return "no_target_stop"
-    # Degenerate geometry guard, inverted from the long side: for a
-    # short the target must sit BELOW entry and the stop ABOVE it.
-    if target_px >= intent_px or stop_px <= intent_px:
-        L("skip", "degenerate_geometry", edge=edge,
-          meta={"entry": intent_px, "target": target_px, "stop": stop_px})
-        return "degenerate_geometry"
     if _has_open_position(sb, ticker):
         L("skip", "already_open", edge=edge)
         return "already_open"
@@ -1211,13 +1227,33 @@ def _evaluate_worst_performer(sb, analysis_row: dict, wp: dict, now: datetime,
         L("skip", "ticker_freeze", edge=edge, meta=freeze_meta)
         return "ticker_freeze"
 
+    # Geometry not trusted from the LLM (see _evaluate_one/geometry.py);
+    # retires the old nominal risk_reward/MIN_RR gate too - fixed 1.5:1.0
+    # ratio by construction now.
+    horizon = int(wp.get("horizon_days") or 1)
+    sigma_daily = _yf_realized_sigma(ticker)
+    if sigma_daily is None:
+        L("skip", "no_liquidity_data", edge=edge)
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "short", sigma_daily, horizon)
+
     risk_per_share = abs(intent_px - stop_px)
     if risk_per_share <= 0:
         L("skip", "bad_risk", edge=edge)
         return "bad_risk"
 
+    tgt_pct = (intent_px - target_px) / intent_px * 100.0
+    stp_pct = (stop_px - intent_px) / intent_px * 100.0
+    win_prob = max(0.0, min(1.0, float(effective_conf) / 100.0))
+    edge = tgt_pct * win_prob - stp_pct * (1.0 - win_prob)
+    if edge < MIN_EDGE_PCT:
+        L("skip", "low_edge", edge=edge,
+          meta={"effective_conf": effective_conf, "conf_method": conf_method})
+        return "low_edge"
+
     geometry = {"intent": intent_px, "target": target_px, "stop": stop_px,
-                "horizon_days": int(wp.get("horizon_days") or 1)}
+                "horizon_days": horizon}
 
     # Inverted regime interaction (blueprint 11): a down/stressed regime
     # is exactly when a short hedges the book, so risk_mode=="off" does
@@ -1466,11 +1502,31 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         return "no_intent_px"
     lo, hi = band
     intent_px = (lo + hi) / 2.0
-    target_px = hi
-    stop_px = lo
-    # Synthetic edge: pure geometry off the band. Compare against the
-    # outlook-specific (tighter) edge floor since 1d horizon has less
-    # friction cushion than a 30d Stock Analyst trade.
+    if _has_open_position(sb, ticker):
+        L("skip", "already_open")
+        return "already_open"
+    frozen, freeze_meta = _ticker_is_frozen(sb, ticker, now)
+    if frozen:
+        L("skip", "ticker_freeze", meta=freeze_meta)
+        return "ticker_freeze"
+
+    # Geometry not trusted from the LLM's range band either (same class
+    # of issue as exit_window/target-stop_loss elsewhere in this file -
+    # see analyzer/geometry.py). The edge formula below already had the
+    # right shape (target_pct*p - stop_pct*(1-p)); it just needed real
+    # volatility-scaled distances instead of the band's hi/lo.
+    sigma_daily = _yf_realized_sigma(ticker)
+    if sigma_daily is None:
+        L("skip", "no_liquidity_data", meta={"effective_conf": effective_conf})
+        return "no_liquidity_data"
+    target_px, stop_px = vol_geometry.volatility_scaled_barriers(
+        intent_px, "long", sigma_daily, 1)
+
+    risk_per_share = abs(intent_px - stop_px)
+    if risk_per_share <= 0:
+        L("skip", "bad_risk")
+        return "bad_risk"
+
     expected_return_pct = (target_px - intent_px) / intent_px * 100.0
     expected_loss_pct = (intent_px - stop_px) / intent_px * 100.0
     win_prob = max(0.0, min(1.0, effective_conf / 100.0))
@@ -1479,19 +1535,6 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
     if edge < OUTLOOK_MIN_EDGE_PCT:
         L("skip", "low_edge", edge=edge, meta={"effective_conf": effective_conf})
         return "low_edge"
-
-    if _has_open_position(sb, ticker):
-        L("skip", "already_open", edge=edge)
-        return "already_open"
-    frozen, freeze_meta = _ticker_is_frozen(sb, ticker, now)
-    if frozen:
-        L("skip", "ticker_freeze", edge=edge, meta=freeze_meta)
-        return "ticker_freeze"
-
-    risk_per_share = abs(intent_px - stop_px)
-    if risk_per_share <= 0:
-        L("skip", "bad_risk", edge=edge)
-        return "bad_risk"
 
     geometry = {"intent": intent_px, "target": target_px, "stop": stop_px,
                 "horizon_days": 1}
