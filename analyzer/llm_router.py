@@ -622,25 +622,47 @@ def _content_ok(data: dict, json_format: bool) -> bool:
         # real market call with every field blank).
         if not isinstance(parsed, dict) or not parsed:
             return False
-        if _outlooks_degenerate(parsed):
+        if _response_degenerate(parsed):
             return False
     return True
 
 
 _DEGENERATE_MIN_NAMES = 5  # below this, "all agree" is plausibly real, not lazy
 
+# (payload field, dict key holding the per-item call). Each field is
+# checked INDEPENDENTLY, not combined - two separately-uniform lists with
+# DIFFERENT values (e.g. top_performers all "A", worst_performers all
+# "B") would cancel out and look diverse if pooled together, hiding the
+# exact failure this exists to catch. A model that stopped
+# differentiating names in ANY one list-shaped field is exhibiting the
+# same failure, not a coincidence isolated to one field. Extended
+# 2026-08-15 after live data showed the same gemini/gemini-3.5-flash
+# uniformity in sector_outlooks.direction (7/7 identical, id=173) and
+# top_performers/worst_performers.conviction (8/8 identical each,
+# id=165) on the same days the holding/wishlist check already caught -
+# confirming this is a model-level behavior, not confined to one field.
+_DEGENERATE_FIELDS = (
+    ("holding_outlooks_1d", "direction"),
+    ("wishlist_outlooks_1d", "direction"),
+    ("sector_outlooks", "direction"),
+    ("top_performers", "conviction"),
+    ("worst_performers", "conviction"),
+)
 
-def _outlooks_degenerate(parsed: dict) -> bool:
-    """True when holding_outlooks_1d + wishlist_outlooks_1d together cover
-    at least _DEGENERATE_MIN_NAMES tickers and every single one carries
-    the identical stated direction - see _content_ok's docstring."""
-    ho = parsed.get("holding_outlooks_1d")
-    wo = parsed.get("wishlist_outlooks_1d")
-    outlooks = (ho if isinstance(ho, list) else []) + (wo if isinstance(wo, list) else [])
-    dirs = [o.get("direction") for o in outlooks if isinstance(o, dict) and o.get("direction")]
-    if len(dirs) < _DEGENERATE_MIN_NAMES:
-        return False
-    return len(set(dirs)) == 1
+
+def _response_degenerate(parsed: dict) -> bool:
+    """True when any single _DEGENERATE_FIELDS field covers at least
+    _DEGENERATE_MIN_NAMES items and every single one carries the
+    identical value for that field's key - see _content_ok's
+    docstring."""
+    for field, key in _DEGENERATE_FIELDS:
+        items = parsed.get(field)
+        if not isinstance(items, list):
+            continue
+        vals = [it.get(key) for it in items if isinstance(it, dict) and it.get(key)]
+        if len(vals) >= _DEGENERATE_MIN_NAMES and len(set(vals)) == 1:
+            return True
+    return False
 
 
 def _post_provider(provider: dict, messages: list[dict], models: list[str],
