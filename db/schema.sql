@@ -519,13 +519,15 @@ alter table prediction_embeddings enable row level security;
 -- stays safe to commit to a public repo - a UUID isn't personally
 -- identifying the way an email address is.
 --
--- Run this in the Supabase SQL editor after replacing the placeholder
--- below with the real value. Find it once the owner account exists via:
---   select id, email from auth.users;
+-- Already applied to the live project (owner_id swapped for the real
+-- auth.users.id, run directly in Supabase's SQL editor - not here, so the
+-- real UUID never has to sit in a public repo). This block documents the
+-- policy shape that's actually live, kept re-runnable for future tables:
+--   select id, email from auth.users;   -- to find the real value again
 do $$
 declare
   t text;
-  owner_id constant uuid := '00000000-0000-0000-0000-000000000000'; -- REPLACE with your auth.users.id
+  owner_id constant uuid := '00000000-0000-0000-0000-000000000000'; -- placeholder - real value lives only in Supabase, not here
 begin
   foreach t in array array[
     'prices','analysis','portfolio','wishlist','transactions',
