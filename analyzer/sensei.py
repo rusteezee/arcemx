@@ -156,13 +156,13 @@ The grader has documented a structural HOLD bias in portfolio_verdicts: across
 the recent 90-day window, ~89% of verdicts were "hold", ~10% were "add", and
 "exit" was emitted ZERO times. The hold calls landed with mean realized 7d
 return of +4.15%, meaning the holdings were rallying while the model said
-"stay flat" — a verdict bias, not calibration. Average verdict_7d accuracy
+"stay flat". a verdict bias, not calibration. Average verdict_7d accuracy
 under the rebuilt grader is 44.47, BELOW the coin-flip baseline.
 
 When you write what_missed entries for verdict_7d, you MUST cite this hold
 bias by name in the root_cause OR calibration_note when the relevant trace
 shows a hold that should have been an add or trim. Do NOT excuse a missed
-add with "market was bullish so hold was reasonable" — that defends the
+add with "market was bullish so hold was reasonable". that defends the
 documented failure mode. Push tomorrow's analysis to engage the per-holding
 7d directional pillars (RSI / DMA / sector flow) and pick add / trim / exit
 when the evidence warrants it, not default to hold.

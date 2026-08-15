@@ -113,7 +113,7 @@ export function MultiLineChart({
   return (
     <div className="h-scroll md:overflow-visible">
       {/* On mobile the card shrinks to viewport width and the chart
-       * compresses to ~340px — date ticks collapse to 2 labels and lines
+       * compresses to ~340px. date ticks collapse to 2 labels and lines
        * stack on top of each other. Wrap in a horizontal scroller with a
        * larger min-width so the user can swipe the chart sideways and
        * still read every tick. Desktop ignores the scroller (min-w-0,

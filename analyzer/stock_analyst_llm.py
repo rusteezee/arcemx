@@ -69,7 +69,7 @@ LEARNING LOOP DOCTRINE (strict, non-negotiable):
   carries your last 8 graded predictions for this exact ticker at this
   exact horizon, with their grade_score (0-100) and grade_notes.
 - A prior LOSS (score < 30) at a similar setup is a hard ceiling on
-  today's confidence — your past self made that exact mistake.
+  today's confidence. your past self made that exact mistake.
 - A prior WIN (score > 70) at a similar setup is a pattern you may
   repeat. Cite the date(s) you are leaning on in `reasoning.prior_calls`.
 - Phase calls must be progressive. Do not flip-flop bullish->bearish->
@@ -569,7 +569,7 @@ def run(run_id: int) -> dict:
                         out["confidence_dampen_applied"] = dampen
                     # If new dampened confidence dropped below 50 with
                     # rating=buy, the existing self-contradiction rule
-                    # in the validator handles the downgrade — re-run it.
+                    # in the validator handles the downgrade. re-run it.
                     if out.get("rating") == "buy" and out["confidence"] < 50:
                         out["rating_raw"] = out.get("rating_raw") or "buy"
                         out["rating"] = "hold"

@@ -9,15 +9,15 @@ net flows and a streak counter, so the LLM sees "FII sold 4 of last 5 sessions,
 -6,400cr cumulative" instead of only yesterday's single number.
 
 CONTEXT THE BUILDER NEEDS
-- Files to read first: `fetchers/fii_dii.py` (83 lines — the whole existing module;
+- Files to read first: `fetchers/fii_dii.py` (83 lines. the whole existing module;
   `fetch_latest` :58 hits `https://fii-diidata.mrchartist.com/api/data`; module
   docstring documents an unused `/api/history` endpoint returning ~60 days; `_shape`
   :30 shows the compact dict convention), `analyzer/aggregator.py` (where flows are
-  added to the payload — grep `fii`), `analyzer/llm_router.py:823` (_PAYLOAD_DROP_ORDER).
+  added to the payload. grep `fii`), `analyzer/llm_router.py:823` (_PAYLOAD_DROP_ORDER).
 - Gotchas: (1) grader.py's `fii_flow_1d` dim discovered the mirror's row keys are SHORT
-  names (`d`, `fn`) — verify actual history keys by fetching once and printing before
+  names (`d`, `fn`). verify actual history keys by fetching once and printing before
   parsing. (2) The GitHub raw history.json backstop pattern in fetch_latest should apply
-  to history too. (3) Signals must be computed from TRADING days present in the data —
+  to history too. (3) Signals must be computed from TRADING days present in the data -
   do not calendar-pad.
 
 CONSTRAINTS
@@ -27,19 +27,19 @@ CONSTRAINTS
 - Non-negotiables: ₹0; failure returns None and the payload omits the key.
 
 STEP-BY-STEP PLAN
-1. `fetchers/fii_dii.py` — add `fetch_history(days: int = 20) -> dict | None`:
+1. `fetchers/fii_dii.py`. add `fetch_history(days: int = 20) -> dict | None`:
    GET `/api/history`, parse rows (verify keys by printing first row on first run),
    compute: `{"fii_net_5d": float, "fii_net_20d": float, "dii_net_5d": float,
    "dii_net_20d": float, "fii_streak": int, "read": str}` where fii_streak is signed
    consecutive-day count of same-sign FII cash net (e.g. -4 = 4 straight selling days),
    and read is one sentence composed from fixed rules (streak >= 3 or |net_5d| > 5000cr
    is "notable", else "mixed").
-2. `analyzer/aggregator.py` — next to the existing flows fetch: add
+2. `analyzer/aggregator.py`. next to the existing flows fetch: add
    `payload["flows_trend"] = fetch_history()` (try/except → None).
-3. `analyzer/llm_router.py` — add "flows_trend" to _PAYLOAD_DROP_ORDER (after
+3. `analyzer/llm_router.py`. add "flows_trend" to _PAYLOAD_DROP_ORDER (after
    "options_signals" if blueprint 05 landed, else after "reddit"). SYSTEM_PROMPT: one
    sentence where flows are described: "flows_trend (when present) gives 5d/20d
-   cumulative FII/DII nets and a same-direction streak — weigh persistent flows more
+   cumulative FII/DII nets and a same-direction streak. weigh persistent flows more
    than any single day."
 4. Verify: run the fetch locally, print the dict; run build_payload confirming the key.
 
@@ -58,4 +58,4 @@ DEFINITION OF DONE
 IF SOMETHING IS UNCLEAR
 Smallest safe assumption, tag "ASSUMPTION:", keep going. If /api/history does not exist
 or returns <10 days, fall back to accumulating fetch_latest daily into a new Supabase
-table — but STOP and flag first, since that needs user-run DDL.
+table. but STOP and flag first, since that needs user-run DDL.

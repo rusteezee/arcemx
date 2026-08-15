@@ -1,5 +1,5 @@
 // Dispatches the "Portfolio Scorecard LLM Enrichment" GitHub Actions
-// workflow directly from Netlify — no Render involved. Inserts the
+// workflow directly from Netlify. no Render involved. Inserts the
 // pending portfolio_score_runs row itself (service-role SUPABASE_KEY,
 // never exposed to the browser), then fires workflow_dispatch via the
 // GitHub REST API using GH_TOKEN. The browser polls portfolio_score_runs

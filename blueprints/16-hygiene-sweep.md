@@ -11,28 +11,28 @@ verified, and stale validation code matches the current schema.
 CONTEXT THE BUILDER NEEDS
 - Findings being fixed (from the 2026-07-13 grounding audit):
   a. Four LIVE tables missing from db/schema.sql: `stock_analyses` (16 rows),
-     `mcp_tokens` (2 rows — holds INDmoney OAuth tokens), `prediction_embeddings`
+     `mcp_tokens` (2 rows. holds INDmoney OAuth tokens), `prediction_embeddings`
      (2,273 rows), `realized_pnl` (11 rows). A rebuild from schema.sql would drop them.
-  b. mcp_tokens RLS posture is UNDOCUMENTED — if anon can read it, the user's INDmoney
+  b. mcp_tokens RLS posture is UNDOCUMENTED. if anon can read it, the user's INDmoney
      OAuth tokens are exposed to the browser key. Must verify and lock.
   c. `trends` table: 0 rows EVER; fetchers/trends.py is called from aggregator but
-     pytrends fails silently. DECISION: kill it — remove the aggregator call + the
+     pytrends fails silently. DECISION: kill it. remove the aggregator call + the
      payload key + fetchers/trends.py + the table (keep pytrends out of requirements
      too). Google Trends added no measured value in 5 weeks of never working.
   d. Dead GH Actions secrets: OPENROUTER_ENSEMBLE, OPENROUTER_ENSEMBLE_MODELS,
      OPENROUTER_API_KEY_1/2/3 (ensemble removed 2026-07-12; Render's copies already
      deleted).
   e. `analyzer/bakeoff.py` REQUIRED_KEYS still validates the RETIRED
-     short_term_picks/long_term_picks schema — update to top_performers/worst_performers.
-  f. `bot/telegram_bot.py` `push_daily()` (~:594) — vestigial fake-update shim for a
+     short_term_picks/long_term_picks schema. update to top_performers/worst_performers.
+  f. `bot/telegram_bot.py` `push_daily()` (~:594). vestigial fake-update shim for a
      /push endpoint that does not exist; bot/daily_push.py superseded it. Delete.
   g. NSE-holiday cron gap: crons fire on Indian market holidays. Fix zero-cost: commit
      `data/nse_holidays_2026.json` (builder fills from the official NSE 2026 trading
-     holiday list — hardcode the dates, cite the list in a comment) + helper
+     holiday list. hardcode the dates, cite the list in a comment) + helper
      `analyzer/market_calendar.py::is_trading_day(d)` (weekday AND not in holiday
      json) + guard at the TOP of aggregator.run_if_stale and grader.__main__:
      print + exit 0 on non-trading days.
-  h. `fetchers/indmoney_probe_transactions.py`, `fetchers/indmoney_debug.py` — move to
+  h. `fetchers/indmoney_probe_transactions.py`, `fetchers/indmoney_debug.py`. move to
      a new `fetchers/dev/` subfolder with a README line ("discovery scripts, not
      pipeline") so the pipeline folder stays clean. Do NOT delete (probe.txt evidence
      is referenced by blueprints).
@@ -47,7 +47,7 @@ CONTEXT THE BUILDER NEEDS
   the RLS-enable block; anon-read policy ONLY for stock_analyses + realized_pnl
   (the web reads them); prediction_embeddings and mcp_tokens get NO anon policy.
 - Verification for (b): with the ANON key (web/.env.local NEXT_PUBLIC_SUPABASE_ANON_KEY),
-  attempt `select * from mcp_tokens limit 1`. Empty/denied = good; rows = CRITICAL —
+  attempt `select * from mcp_tokens limit 1`. Empty/denied = good; rows = CRITICAL -
   print the exact `alter table mcp_tokens enable row level security;` remediation for
   the user to run IMMEDIATELY and flag at the top of the summary.
 

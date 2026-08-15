@@ -1,5 +1,5 @@
 // Dispatches the "Calculator LLM Enrichment" GitHub Actions workflow
-// directly from Netlify — no Render involved. Inserts the pending
+// directly from Netlify. no Render involved. Inserts the pending
 // calculator_runs row itself (service-role SUPABASE_KEY, never exposed
 // to the browser), then fires workflow_dispatch via the GitHub REST API
 // using GH_TOKEN. The browser polls calculator_runs by id directly via

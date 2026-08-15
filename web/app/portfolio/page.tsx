@@ -506,7 +506,7 @@ export default function PortfolioPage() {
             </div>
             <p className="text-xs text-[var(--muted)] mb-4">
               Tax estimate covers listed equity only (Sec 111A STCG at 20%, Sec 112A LTCG at 12.5%
-              above the ₹1,25,000 per-FY exemption) — not a full tax calculator, and not investment
+              above the ₹1,25,000 per-FY exemption). not a full tax calculator, and not investment
               or tax advice. Verify against the actual report before filing.
             </p>
             <div className="card overflow-hidden mb-4">

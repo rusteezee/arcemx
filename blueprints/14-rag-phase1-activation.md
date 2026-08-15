@@ -10,20 +10,20 @@ which the feedback module already knows how to consume behind the RAG_PHASE1_ENA
 flag. Includes a measured A/B verdict, not vibes.
 
 CONTEXT THE BUILDER NEEDS
-- Files to read first: `analyzer/feedback.py` (`_retrieve_exemplars_by_similarity` :70 —
+- Files to read first: `analyzer/feedback.py` (`_retrieve_exemplars_by_similarity` :70 -
   the gated consumer; read its exact expected RPC name/signature and fallback at
-  :87-101), `analyzer/embed.py` (encoder — current model bge-base; feature
+  :87-101), `analyzer/embed.py` (encoder. current model bge-base; feature
   serialization), `analyzer/embed_backfill.py` (backfill runner + pagination),
-  `analyzer/grader.py:1357` (`_embed_new_predictions` — daily producer),
-  `.github/workflows/daily_analysis.yml` (installs requirements-embed.txt + HF cache —
+  `analyzer/grader.py:1357` (`_embed_new_predictions`. daily producer),
+  `.github/workflows/daily_analysis.yml` (installs requirements-embed.txt + HF cache -
   embeddings only run on GH runners, never Render's 512MB).
 - Known blockers (from grounding, all must be fixed here):
   (1) the `match_exemplars` RPC was never created in Supabase;
-  (2) the embedding store is MIXED-MODEL (old MiniLM rows + current bge-base rows) —
+  (2) the embedding store is MIXED-MODEL (old MiniLM rows + current bge-base rows) -
   distances across models are meaningless; a full re-embed under the current model is
   required before the index means anything;
   (3) no ivfflat index exists.
-- DDL (user runs in SQL Editor — Python/JS clients cannot do DDL; builder prints this
+- DDL (user runs in SQL Editor. Python/JS clients cannot do DDL; builder prints this
   block and waits for confirmation):
   ```sql
   create index if not exists idx_pred_emb_ivfflat on prediction_embeddings
@@ -43,7 +43,7 @@ CONTEXT THE BUILDER NEEDS
     limit match_count;
   $$;
   ```
-  (Match the return columns to what _retrieve_exemplars_by_similarity actually expects —
+  (Match the return columns to what _retrieve_exemplars_by_similarity actually expects -
   read the consumer FIRST and adjust the SQL to its contract, not vice versa.)
 - A/B design (decided here): flip RAG_PHASE1_ENABLED=1 in daily_analysis.yml only.
   Measure: 14 days after activation, compare direction_1d + range_1d accuracy
@@ -61,13 +61,13 @@ CONSTRAINTS
 STEP-BY-STEP PLAN
 1. Read `_retrieve_exemplars_by_similarity` fully; finalize the RPC SQL to its exact
    contract; append to db/schema.sql; print for the user to run; STOP until user
-   confirms it ran (the builder asks in its summary — this is the one permitted pause).
-2. `analyzer/embed_backfill.py` — add `--re-embed-all`: wipe embedding column model
+   confirms it ran (the builder asks in its summary. this is the one permitted pause).
+2. `analyzer/embed_backfill.py`. add `--re-embed-all`: wipe embedding column model
    metadata assumptions by re-encoding every row's feature_text under the current model
    (paginate .range(); ~2,300 rows ≈ minutes on GH runner CPU). Add a model-name column
    guard: store the encoder name in each row's metadata if a column exists, else prefix
    feature-hash bookkeeping in the existing columns (smallest change that lets a future
-   audit distinguish models — one ASSUMPTION allowed here).
+   audit distinguish models. one ASSUMPTION allowed here).
 3. Dispatch `daily_grader.yml` with the existing backfill/force input (grounding: it
    supports embed_backfill inputs) or run locally to execute the re-embed once.
 4. Snapshot baseline: current accuracy_summary 30d rows for direction_1d/range_1d +
@@ -79,7 +79,7 @@ STEP-BY-STEP PLAN
 
 EXACT INPUTS TO USE
 - Kick-off prompt: "Implement blueprint 14-rag-phase1-activation.md from
-  C:\Users\rahul\Downloads\stock-ai\blueprints\. Step 1 requires user-run SQL — print it
+  C:\Users\rahul\Downloads\stock-ai\blueprints\. Step 1 requires user-run SQL. print it
   and wait for confirmation before proceeding."
 
 DEFINITION OF DONE
@@ -92,5 +92,5 @@ DEFINITION OF DONE
 [ ] Rollback documented (flag to 0).
 
 IF SOMETHING IS UNCLEAR
-Smallest safe assumption, tag "ASSUMPTION:", keep going — except the user-run SQL pause,
+Smallest safe assumption, tag "ASSUMPTION:", keep going. except the user-run SQL pause,
 which is mandatory.

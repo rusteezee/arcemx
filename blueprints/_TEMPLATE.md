@@ -17,7 +17,7 @@ One or two plain sentences: what exists and works when this is done.
 
 CONTEXT THE BUILDER NEEDS (it has no memory of the planning chat)
 - Files to read first: [real repo paths]
-- Real inputs, in full: [data shapes, env vars, API endpoints — if not written here it does not exist]
+- Real inputs, in full: [data shapes, env vars, API endpoints. if not written here it does not exist]
 - Gotchas: [traps found while grounding]
 
 CONSTRAINTS
@@ -27,14 +27,14 @@ CONSTRAINTS
 - Non-negotiables: [₹0 recurring cost, style, naming, safety rules]
 
 STEP-BY-STEP PLAN (in build order)
-1. [exact file] — [exact change with signatures/shapes]
+1. [exact file]. [exact change with signatures/shapes]
 2. ...
 
 EXACT INPUTS TO USE
 - The one prompt to hand the builder: "[kick-off instruction]"
 - Copy / values / snippets to use verbatim: [...]
 
-DEFINITION OF DONE (checklist — every box pass or fail)
+DEFINITION OF DONE (checklist. every box pass or fail)
 [ ] [observable behavior]
 [ ] [exact command/test that must pass]
 [ ] [edge case handled]
@@ -49,17 +49,17 @@ Make the smallest safe assumption, write it at the top of the output as
 ## Repo-wide facts every builder must know (restated in each blueprint where relevant)
 
 - Repo: `C:\Users\rahul\Downloads\stock-ai`, GitHub `rusteezee/arcemx`, branch `master`.
-- Python 3.11 via `.venv\Scripts\python.exe` (system python is 3.14 — never use bare `python`).
+- Python 3.11 via `.venv\Scripts\python.exe` (system python is 3.14. never use bare `python`).
 - Supabase Postgres; Python/JS clients CANNOT run DDL. Any `CREATE TABLE`/`ALTER` goes in
   `db/schema.sql` AND is given to the user to paste into Supabase's SQL Editor.
-- PostgREST caps every response at 1000 rows regardless of `.limit()` — paginate with `.range()`.
-- yfinance returns MultiIndex columns even for one ticker — flatten before column access
+- PostgREST caps every response at 1000 rows regardless of `.limit()`. paginate with `.range()`.
+- yfinance returns MultiIndex columns even for one ticker. flatten before column access
   (see `paper_trader._flatten_yf_columns`).
 - The LLM payload is capped at 120k chars; new payload fields must be added to
   `llm_router._PAYLOAD_DROP_ORDER` (llm_router.py:823) if droppable.
-- `backtest.py` imports gate constants + friction functions from `paper_trader.py` —
+- `backtest.py` imports gate constants + friction functions from `paper_trader.py` -
   tune knobs ONLY in paper_trader.py; add any new gate in BOTH evaluators.
-- All 1d grading is session-anchored via `grader._session_bounds` — never calendar-day windows.
+- All 1d grading is session-anchored via `grader._session_bounds`. never calendar-day windows.
 - Telegram messages use legacy Markdown: no literal underscores in display text.
 - Verify live after deploy: Netlify needs ~60-90s post-push; `gh run list --workflow=X` can
   falsely show empty right after a new workflow's first dispatch.

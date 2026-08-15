@@ -1,5 +1,5 @@
 // Dispatches the "Stock Analyst" GitHub Actions workflow directly from
-// Netlify — no Render involved. Cache-checks and inserts the pending
+// Netlify. no Render involved. Cache-checks and inserts the pending
 // stock_analyses row itself (using the service-role SUPABASE_KEY, never
 // exposed to the browser), then fires workflow_dispatch via the GitHub
 // REST API using GH_TOKEN (fine-grained PAT, Actions: Read and write on
@@ -9,7 +9,7 @@
 // already expects.
 //
 // Replaces the old proxy-to-Render-bot path. That path put the entire
-// feature behind Render's uptime AND its deploy pipeline — the 26 Jun -
+// feature behind Render's uptime AND its deploy pipeline. the 26 Jun -
 // 11 Jul silent pipeline-minutes blackout would have taken this down with
 // zero warning. GitHub Actions has been the reliable half of this stack
 // all along; this feature belongs there like daily_analysis.yml does.
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
     );
     if (!dispatch.ok) {
       const detail = await dispatch.text().catch(() => "");
-      // The row already exists as 'pending' — mark it failed so the
+      // The row already exists as 'pending'. mark it failed so the
       // frontend's poll resolves to a real error instead of spinning
       // forever on a run nothing will ever fill in.
       await sb.from("stock_analyses").update({

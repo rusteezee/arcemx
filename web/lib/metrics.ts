@@ -1,5 +1,5 @@
 // Phase A edge metrics computed client-side from paper_trades.
-// Mirror of analyzer/metrics.py — keep formulas in sync. Both surfaces
+// Mirror of analyzer/metrics.py. keep formulas in sync. Both surfaces
 // must agree numerically; the dashboard is read-only but the Python
 // module is the source of truth for cron / future tier-gate writes.
 

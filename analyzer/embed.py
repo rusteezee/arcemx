@@ -281,7 +281,7 @@ def _yf_features_on_date(target_date) -> dict:
 def features_for_analysis(raw_json: dict, run_at_iso: str) -> dict:
     """Build a feature dict for a single graded analysis row. Combines:
     (a) the model's own stated view at call time (mood, confidence,
-    nifty direction call) — already in raw_json output — and
+    nifty direction call). already in raw_json output. and
     (b) recomputed tape state on the prediction date via yfinance.
 
     The model's stated view captures what the model SAW; the tape

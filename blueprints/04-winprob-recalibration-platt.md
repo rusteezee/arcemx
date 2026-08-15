@@ -11,13 +11,13 @@ This replaces guesswork with measured calibration, and upgrades the existing cru
 linear bias debit (`_dim_confidence_bias`) which only shifts, never reshapes.
 
 CONTEXT THE BUILDER NEEDS
-- Files to read first: `analyzer/paper_trader.py` (`_dim_confidence_bias` :132-163 — the
+- Files to read first: `analyzer/paper_trader.py` (`_dim_confidence_bias` :132-163. the
   mechanism being upgraded; `_evaluate_outlook` :885 which consumes it; `_conf_from_winprob`
-  :814), `analyzer/backtest.py` (`_calibration_bias` :174 — the as-of mirror).
+  :814), `analyzer/backtest.py` (`_calibration_bias` :174. the as-of mirror).
 - Data: `calibration_log` table (214 rows live, growing daily): columns `dimension`,
   `stated_confidence` (0-100), `realized_score` (0-100), `prediction_date`, `graded_at`.
   Treat realized "hit" as `realized_score >= 60` (scores are graded 0-100 where >=60 is
-  a materially correct call — consistent with grader's gradient scoring).
+  a materially correct call. consistent with grader's gradient scoring).
 - Exact math (implement literally, pure Python, no sklearn):
   Platt scaling fits `p_cal = 1 / (1 + exp(-(a*x + b)))` where x = stated_confidence/100,
   y = hit (0/1), via Newton-Raphson on the 2-parameter logistic log-likelihood:
@@ -29,12 +29,12 @@ CONTEXT THE BUILDER NEEDS
 - Minimum data rule (decided here): fit per-dimension when that dim has >= 80 pairs;
   else fit one GLOBAL model pooling all dims when total >= 80; else return None and the
   caller falls back to the existing `_dim_confidence_bias` debit unchanged. (Live counts
-  today: 214 total — global model fits now; per-dim comes free as data grows.)
+  today: 214 total. global model fits now; per-dim comes free as data grows.)
 - Gotchas: (1) backtest must fit ONLY on rows with `graded_at` strictly before the event
   (extend the existing as-of pattern at backtest.py:174). (2) The recalibrated value
-  feeds the SAME threshold constants (MIN_CONF, OUTLOOK_MIN_CONF) — do not retune
+  feeds the SAME threshold constants (MIN_CONF, OUTLOOK_MIN_CONF). do not retune
   thresholds in this blueprint. (3) calibration_log realized_score and prediction_scores
-  .score are different scales (0-100 vs 0-1) — only use calibration_log here.
+  .score are different scales (0-100 vs 0-1). only use calibration_log here.
 
 CONSTRAINTS
 - Must stay inside: new file `analyzer/calibration.py`, `analyzer/paper_trader.py`,
@@ -45,27 +45,27 @@ CONSTRAINTS
 
 STEP-BY-STEP PLAN
 1. Create `analyzer/calibration.py`:
-   - `fit_platt(pairs: list[tuple[float, int]]) -> tuple[float, float] | None` — the
+   - `fit_platt(pairs: list[tuple[float, int]]) -> tuple[float, float] | None`. the
      Newton-Raphson above; returns (a, b) or None if len(pairs) < 80 or fit diverges
      (any non-finite parameter).
-   - `load_pairs(sb, dimension: str | None, before: datetime | None) -> list` — pulls
+   - `load_pairs(sb, dimension: str | None, before: datetime | None) -> list`. pulls
      calibration_log (paginate with .range()), filters dim and graded_at < before,
      maps to (stated_confidence/100, 1 if realized_score >= 60 else 0).
-   - `recalibrate(sb, stated_conf: float, dimension: str, before=None) -> float | None` —
+   - `recalibrate(sb, stated_conf: float, dimension: str, before=None) -> float | None` -
      per-dim fit if >=80 pairs else global fit if >=80 else None; returns calibrated
      confidence on the 0-100 scale. Module-level cache keyed (dimension, day) so one
      eval pass fits once, not per signal.
-2. `analyzer/paper_trader.py` — in `_evaluate_outlook` (:885) where
+2. `analyzer/paper_trader.py`. in `_evaluate_outlook` (:885) where
    `effective_conf = stated - bias` is computed: first try
    `calibration.recalibrate(...)`; use it when not None, else keep the bias path.
    Record which path was used in the signal meta (`"conf_method": "platt"|"bias"`).
    Same treatment in `_evaluate_top_performer` for the `_conf_from_winprob` output.
-3. `analyzer/backtest.py` — mirror: pre-load all calibration rows once (already done at
+3. `analyzer/backtest.py`. mirror: pre-load all calibration rows once (already done at
    :473), pass `before=asof` so fits are as-of. Same meta tagging.
 4. Validation script (run it, report numbers): fit the global model on all 214 pairs,
    print (a, b) and the calibrated value at stated 40/55/65/80. Sanity: calibrated curve
    must be monotone increasing in stated conf (a > 0). If a <= 0, the track record says
-   stated confidence is anti-signal — still ship (that IS the finding) but flag loudly
+   stated confidence is anti-signal. still ship (that IS the finding) but flag loudly
    in the summary.
 5. Run the full backtest; report trade_count/sharpe delta vs previous run in the summary.
 
@@ -86,5 +86,5 @@ DEFINITION OF DONE
 
 IF SOMETHING IS UNCLEAR
 Smallest safe assumption, tag "ASSUMPTION:", keep going. Do not swap in isotonic
-regression — at 214 pairs Platt's 2 parameters are the right capacity; isotonic waits
+regression. at 214 pairs Platt's 2 parameters are the right capacity; isotonic waits
 until ~1,000+ pairs (noted in ROADMAP.md).

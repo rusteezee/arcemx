@@ -1,6 +1,6 @@
 BLUEPRINT 15: Oracle Cloud migration runbook (bot off Render before Aug 1)
 
-BUILDER: Claude Sonnet, working alone, cold start, cannot ask questions — EXCEPT this
+BUILDER: Claude Sonnet, working alone, cold start, cannot ask questions. EXCEPT this
 blueprint is half runbook: steps marked [USER] are performed by the user by hand; the
 builder does the code steps and prints the runbook steps in order.
 
@@ -17,22 +17,22 @@ CONTEXT THE BUILDER NEEDS (researched facts, July 2026, verified)
   boot volume, ~2 public IPs, reserved IPs persist across instance rebuilds.
 - Signup friction from India is real: needs a real credit card (no virtual/prepaid),
   "Error Processing Transaction" rejections are common; A1 capacity errors persist in
-  many regions — Singapore provisions most reliably; home region is locked at signup.
+  many regions. Singapore provisions most reliably; home region is locked at signup.
 - Idle-reclaim: Always Free instances get reclaimed when 7-day p95 CPU/network/memory
   are ALL under 20%. Converting the tenancy to Pay-As-You-Go (card + temporary ~$100
   hold) exempts reclamation while remaining $0 within free limits. DECISION: convert to
-  PAYG right after signup — the bot idles far below 20%.
+  PAYG right after signup. the bot idles far below 20%.
 - Tail risk documented: Always Free tenancies terminated without warning, data purged.
   MITIGATION (architectural rule): the box holds ZERO unique state. Supabase has all
   data, GitHub has all code + this deploy script, tokens live in Supabase mcp_tokens.
-- INDmoney 512-from-datacenter-IPs does NOT improve on Oracle (also datacenter IPs) —
+- INDmoney 512-from-datacenter-IPs does NOT improve on Oracle (also datacenter IPs) -
   keep the GH Actions sync redundancy exactly as is.
 - Current Render deployment (from repo grounding): `python -m bot.telegram_bot`,
   long-poll + HTTP health/trigger server on PORT, env vars: SUPABASE_URL, SUPABASE_KEY,
   OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TRIGGER_SECRET, GH_TOKEN,
   GH_REPO (list verified live 2026-07-12). Netlify API routes call
-  ${ARCEMX_BOT_URL}/trigger/* — ARCEMX_BOT_URL must repoint at cutover.
-- Leftover to fix during migration: `bot/telegram_bot.py:1202` — scheduled_analysis
+  ${ARCEMX_BOT_URL}/trigger/*. ARCEMX_BOT_URL must repoint at cutover.
+- Leftover to fix during migration: `bot/telegram_bot.py:1202`. scheduled_analysis
   refuses the in-process fallback "when ensemble env absent"; the ensemble was REMOVED
   2026-07-12, so this guard's comment/logic references a dead concept. Re-read the
   block; keep the behavior (GH-dispatch-first, no heavy in-process analysis on a small
@@ -48,23 +48,23 @@ CONSTRAINTS
   Render stays alive as fallback until the Definition of Done's cutover checks pass.
 
 STEP-BY-STEP PLAN
-[USER] 1. Sign up at oracle.com/cloud/free — real credit card, home region Singapore
+[USER] 1. Sign up at oracle.com/cloud/free. real credit card, home region Singapore
   (ap-singapore-1). If "Error Processing Transaction": retry with a different card/day.
 [USER] 2. Convert tenancy to Pay-As-You-Go (Billing → Upgrade). Stay within Always
   Free shapes = still ₹0. This kills idle-reclaim.
 [USER] 3. Create instance: VM.Standard.A1.Flex, 2 OCPU / 12 GB, Ubuntu 24.04 ARM,
   47GB boot. Reserve a public IP and attach it. Open ingress 80/443/22 in the VCN
   security list. Save the SSH key.
-4. Builder: create `deploy/oracle/setup.sh` — idempotent: apt update; install python3.11
+4. Builder: create `deploy/oracle/setup.sh`. idempotent: apt update; install python3.11
    + venv + git + caddy; clone/pull rusteezee/arcemx to /opt/arcemx; venv install
    requirements.txt; write /etc/arcemx.env from a template (chmod 600, placeholders the
    user fills once); install + enable systemd units; `systemctl restart arcemx-bot caddy`.
-5. Builder: `deploy/oracle/arcemx-bot.service` — systemd unit: ExecStart the venv python
+5. Builder: `deploy/oracle/arcemx-bot.service`. systemd unit: ExecStart the venv python
    -m bot.telegram_bot, EnvironmentFile=/etc/arcemx.env, Restart=always, RestartSec=10,
    MemoryMax=2G.
-6. Builder: `deploy/oracle/Caddyfile` — reverse proxy :80/:443 → localhost:$PORT with
+6. Builder: `deploy/oracle/Caddyfile`. reverse proxy :80/:443 → localhost:$PORT with
    automatic self-signed/internal TLS on the bare IP (no domain yet; Netlify calls can
-   use http://<reserved-ip> — decision: keep ARCEMX_BOT_URL as http://<ip> initially;
+   use http://<reserved-ip>. decision: keep ARCEMX_BOT_URL as http://<ip> initially;
    optional later: point a free DuckDNS name at it for TLS).
 7. Builder: `bot/telegram_bot.py:1202` cleanup per CONTEXT (config-driven refusal,
    stale ensemble comment removed).
@@ -76,7 +76,7 @@ STEP-BY-STEP PLAN
    /trigger/sync with TRIGGER_SECRET returns ok:true JSON; Telegram /today answers;
    APScheduler jobs visible in journalctl logs.
 [USER] 11. Cutover: update Netlify env ARCEMX_BOT_URL to the Oracle URL (both deploy
-   contexts — remember the greyed-out "same value" UI quirk), redeploy web; verify a
+   contexts. remember the greyed-out "same value" UI quirk), redeploy web; verify a
    dashboard-triggered sync; THEN suspend the Render service (do not delete for 2 weeks).
 12. Builder: add the bot's /health to UptimeRobot (free, [USER] creates monitor) and a
    healthchecks.io check for scheduled_analysis dispatch confirmation if blueprint 02
@@ -89,13 +89,13 @@ EXACT INPUTS TO USE
 
 DEFINITION OF DONE
 [ ] deploy/oracle/{setup.sh, arcemx-bot.service, Caddyfile} committed; setup.sh rerun-safe
-    (second run changes nothing — prove with a dry-run echo mode or shellcheck review).
+    (second run changes nothing. prove with a dry-run echo mode or shellcheck review).
 [ ] telegram_bot.py:1202 block no longer references ensemble; refusal is env-driven.
-[ ] Live checks: /health OK, /trigger/sync ok:true, /today answers — all on Oracle.
+[ ] Live checks: /health OK, /trigger/sync ok:true, /today answers. all on Oracle.
 [ ] Netlify ARCEMX_BOT_URL repointed; dashboard sync works end-to-end.
 [ ] Render suspended (not deleted); README documents recovery-by-redeploy.
 [ ] Zero unique state on the box (audit: no files outside /opt/arcemx + /etc/arcemx.env).
 
 IF SOMETHING IS UNCLEAR
-Smallest safe assumption, tag "ASSUMPTION:", keep going — except [USER] steps, which
+Smallest safe assumption, tag "ASSUMPTION:", keep going. except [USER] steps, which
 are always the user's.

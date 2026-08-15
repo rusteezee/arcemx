@@ -27,3 +27,13 @@ data/finetune/
 
 # Local scratch
 probe.txt
+
+# Claude Code local machine/session settings - never tracked (confirmed:
+# zero git history), formalizing that here. settings.local.json in
+# particular carries local tool permissions, not project config.
+.claude/
+
+# Session/chat-context handoff notes - local planning artifacts, never
+# tracked (confirmed: zero git history since project start). Repo is
+# public; these are working notes, not project documentation.
+context/
