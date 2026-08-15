@@ -5,6 +5,11 @@ Planned 2026-07-13 by the planning model (Fable 5), grounded in a full repo audi
 sourced), and the project's standing doctrines. Execution is designed for cheaper
 builder models via the blueprints in `blueprints/`. each is cold-start buildable.
 
+**Refreshed 2026-08-16** (Claude, this session): verified every Wave 0-3 blueprint's
+actual implementation status against the live code (not assumption) - almost
+everything below was still marked as future work but is in fact already built and
+wired in. The one real gate left is Wave 4's paper-trade sample size; see below.
+
 ## North star (unchanged)
 
 Personal research-grade system. Peak tier. **Sharpe > 2.0, max DD < 8%, PSR > 0.995 -
@@ -12,97 +17,132 @@ lives in Phase B and is not rushed.** Tier 1 (Sharpe > 1.0, DD < 15%, PSR > 0.95
 live paper trades) unlocks Phase B. ₹0 recurring cost is a hard rule; one-time spends
 are flagged decisions, never assumptions. Not SEBI-registered advice; educational.
 
-## Where the system stands (2026-07-13)
+## Where the system stands (2026-08-16)
 
-- Single-model LLM chain (nemotron-3-super → gpt-oss-120b/20b, one provider: OpenRouter).
-- Paper trader was silently broken since launch (yfinance MultiIndex bug, fixed
-  2026-07-12). **0 trades ever; sample accumulation starts now.** 747 signals evaluated,
-  all skipped (low_conf 300 / not_buy 274 / low_edge 116 / no_liquidity_data 44).
-- Backtest v2 live: 47 replayed trades, Sharpe -13.3, win rate 21%. small, hostile
-  sample; the honest read is "the gates and the geometry need the Wave-1/2 work below."
-- Fine-tune dataset: 2,274 / 3,000 graded rows (≈42/day → gate clears ~30 Jul 2026).
-- Alerts, Realized P&L, backtest page all shipped. Render's free tier degrades Aug 1.
+- Multi-provider LLM chain live: OpenRouter (nemotron-3-super) → Gemini → Groq
+  failover (blueprint 01). A 4th failure mode (semantically-degenerate-but-
+  syntactically-valid output, e.g. every ticker given the same uniform call) was
+  found and fixed 2026-08-15 (`llm_router._response_degenerate`), unverified
+  against a real live failover event yet.
+- Paper trader is live and accumulating: **27 closed trades** (was 0 at the last
+  roadmap pass). Kelly-sizing gate (blueprint 09, 60 trades) is **not built yet** -
+  correctly deferred, the gate hasn't cleared anyway. Rate of accumulation going
+  forward is uncertain: `top_performer_1d` alone drove ~96% of historical volume and
+  was just correctly gated off by the calibration system (Pearson r=0.0254 vs
+  realized outcome - no measurable skill).
+- **The paper trader's entry geometry had a fundamental negative-EV bug**, found and
+  fixed 2026-08-15: target/stop came straight from the LLM's freehand price picks
+  with zero volatility validation (mean target 3.80σ, stop 1.67σ - stops ~28x more
+  likely to hit than targets). Replaced with De Prado's triple-barrier method
+  (`analyzer/geometry.py`, volatility-scaled). Official post-fix backtest
+  (`backtest_runs` id=5): 64 trades, win rate 20.31%, **Sharpe -14.1, PSR 0, DSR 0**.
+  Geometry is fixed; the LLM's directional accuracy (needs ~40% win rate at this
+  ratio) is the one blocker left before Tier-1 can even be attempted honestly.
+- LoRA specialist model: **v1 shipped, found unusable** (degenerate output -
+  schema-placeholder echo, ~139 training examples/dim was too few for a 3B model
+  regardless of hyperparameters). **v2 trained and shipped 2026-08-16** as GitHub
+  Release `specialist-v2` - merged live+historical data (~1,330 examples/dim, ~12x
+  v1), dropped `top_performer_1d` entirely (no measurable skill, see above). Passed
+  a real local inference sanity check (no degenerate output, unlike v1). Advisory
+  only until it beats the live chain on ≥2 dimensions over 14+ days.
+- **Full security lockdown shipped 2026-08-15/16** (not in the original roadmap - an
+  audit found the dashboard fully public with no auth, and RLS granting the public
+  anon key unrestricted read on ~19 tables regardless of any login screen):
+  owner-only auth wall (`web/proxy.ts`, Google + password via Supabase Auth), RLS
+  rewritten to `authenticated` + `auth.uid()`-scoped, real CSP/security headers,
+  `next` bumped 16.2.7→16.3.1 (0 vulnerabilities, was 4 high). Separately, the
+  Telegram bot had a critical unrelated gap - **zero caller-identity check on any
+  command**, including `/halt` `/resume` `/real_open` `/close_order` which act on
+  global exec state - fixed with a single owner-only guard (commit `2911377`).
+- PWA shipped (manifest, icons, service worker) - installable today. A native app
+  (widgets, biometric unlock, push notifications, full Telegram elimination) is
+  planned but research-stage only - see `blueprints/20-native-app-migration.md`,
+  0% built, real architecture decisions not yet made.
+- One open loose end: **blueprint 14's RAG Phase 1 A/B review is overdue.** Activated
+  2026-07-16, review date was 2026-08-06 (10 days ago as of this refresh) - see
+  `blueprints/_pending_ab_rag.md` for the exact comparison to run. Not done yet.
 
 ## The critical path
 
 Everything routes through one number: **closed paper trades.** Sharpe/PSR/tier gates,
 Kelly activation (60 trades), calibration quality, and the LoRA dataset all scale with
-it. Wave 1-2 features exist to make the trades that now start flowing *measured,
-protected, and honest*. not to add surface area.
+it. Wave 1-2 features exist to make the trades that now flow *measured, protected, and
+honest* - that infrastructure is now built (see Waves below); what's left is the
+sample itself accumulating, and closing the directional-accuracy gap geometry alone
+couldn't fix.
 
 ## Waves
 
-### Wave 0. Stop the bleeding (this week, ~Jul 14-20)
-| # | Blueprint | Why now |
+### Wave 0. Stop the bleeding — ✅ DONE
+| # | Blueprint | Status |
 |---|---|---|
-| 16 | hygiene-sweep | mcp_tokens RLS security probe FIRST; schema parity; dead code/secrets; NSE-holiday guard |
-| 02 | deadman-switch-observability | closes the "silent 2-week outage" class forever; 20 free checks |
-| 01 | multi-provider-llm-failover | one-provider fragility is the top pipeline risk; Gemini (1,500 req/day) + Groq free |
-|. | **Decision: $10 OpenRouter one-time** | unlocks 50 → 1,000 req/day permanently (verified live 2026-07-13). **APPROVED by user 2026-07-13**; user tops up at openrouter.ai/settings/credits himself. |
-|. | **[USER] Start Oracle signup** | lead time for card friction + A1 capacity; Singapore region; convert to PAYG immediately |
+| 16 | hygiene-sweep | ✅ Done - RLS probe, schema parity, dead code, NSE-holiday guard all verified live in code |
+| 02 | deadman-switch-observability | ✅ Done - dead-man pings wired into workflows (e.g. `specialist_eval.yml`) |
+| 01 | multi-provider-llm-failover | ✅ Done - OpenRouter → Gemini → Groq chain live, extended 2026-08-15 with degenerate-output detection |
 
-### Wave 1. Protect + measure the new trade flow (Jul 20 – Aug 1, hard deadline)
-| # | Blueprint | Why |
+### Wave 1. Protect + measure the new trade flow — ✅ DONE (Oracle migration excepted)
+| # | Blueprint | Status |
 |---|---|---|
-| 15 | oracle-migration-runbook | **Render forced migration Aug 1** (5GB bandwidth cap). Deploy-script-first, zero state on box |
-| 03 | regime-filter-gate | trend + VIX + vol-percentile gate (small-N-robust; HMM rejected). protects the young book |
-| 07 | earnings-blackout-gate | July earnings season is NOW; gap risk stops can't protect against |
-| 12 | skipped-winner-attribution | starts capturing geometry on every skip immediately. the longer it runs, the smarter gate tuning gets |
-| 17 | news-relevance-engine | added 13 Jul (session 2): ticker linking + portfolio-aware intraday Telegram news alerts; user wants "inform me asap"; independent of the critical path |
-| 18 | free-data-source-expansion | added 13 Jul (session 2): dead-feed fix (Reuters, Business Standard) + NDTV Profit, BusinessLine, Google News query feed, all probe-verified; builds AFTER 17 |
+| 15 | oracle-migration-runbook | **Deliberately NOT done** - investigated, real bandwidth usage is ~1.6% of the cap the roadmap assumed would force this; user chose to deprioritize. Not urgent, not scheduled |
+| 03 | regime-filter-gate | ✅ Done - trend+VIX+vol-percentile gate active in both `paper_trader.py` and `backtest.py` |
+| 07 | earnings-blackout-gate | ✅ Done - active in both live and backtest paths |
+| 12 | skipped-winner-attribution | ✅ Done - `analyzer/skip_attribution.py`, geometry captured on every skip, rendered on the trader page |
+| 17 | news-relevance-engine | ✅ Done - ticker linking + portfolio-aware alerts, `hourly_news.yml` live |
+| 18 | free-data-source-expansion | ✅ Done - dead feeds replaced, new sources added |
 
-### Wave 2. Honesty layer (early-mid Aug)
-| # | Blueprint | Why |
+### Wave 2. Honesty layer — ✅ DONE
+| # | Blueprint | Status |
 |---|---|---|
-| 04 | winprob-recalibration-platt | replace the crude bias debit with a fitted calibration curve (214 pairs suffice for global fit) |
-| 08 | drawdown-circuit-breaker | armed automatically at 10 closed trades |
-| 10 | dsr-pbo-honesty-layer | Deflated Sharpe + PBO on every backtest; Tier-1 claims must survive DSR ≥ 0.90 |
-| 06 | fii-dii-history-trend | cheap payload upgrade; persistent-flow context |
+| 04 | winprob-recalibration-platt | ✅ Done - Platt calibration live on multiple dims |
+| 08 | drawdown-circuit-breaker | ✅ Done - breaker logic in both live and backtest paths |
+| 10 | dsr-pbo-honesty-layer | ✅ Done - DSR + PBO computed on every backtest run (confirmed live in `backtest_runs` output) |
+| 06 | fii-dii-history-trend | ✅ Done |
 
-### Wave 3. Signal expansion (mid Aug – Sep)
-| # | Blueprint | Why |
+### Wave 3. Signal expansion — ✅ DONE
+| # | Blueprint | Status |
 |---|---|---|
-| 05 | options-signals-indmoney | PCR/OI-walls/max-pain via INDmoney MCP (datacenter-IP-proof; nsepython path is blocked from runners) |
-| 11 | short-side-paper-trading | doubles sample rate; hedges book; reactivates dormant pick_tp_sl dim; honesty-tagged idealized shorts |
-| 14 | rag-phase1-activation | similarity exemplars (consumer already built, gated); requires re-embed + user-run RPC; 14-day A/B verdict |
-| 19 | indstocks-execution-layer | added 13 Jul (session 2): INDstocks Trading API verified (free, ₹5/order, manual 24h token). Builds read-only + manual-confirm stages ONLY; full auto stays locked behind the Phase B Tier-1 + DSR gate |
+| 05 | options-signals-indmoney | ✅ Done - PCR/OI-walls/max-pain wired into the payload |
+| 11 | short-side-paper-trading | ✅ Done - short paper trades live, graded separately (`short_pick_tp_sl`) |
+| 14 | rag-phase1-activation | ✅ Built and active, **⚠️ 14-day A/B review overdue** (see loose end above) |
+| 19 | indstocks-execution-layer | ✅ Done, at its designed ceiling - read-only stage (funds/LTP) and manual-confirm stage (Execute/Skip) both live; Stage 3 auto-execution explicitly rejected in code, correctly stays locked behind Phase B |
 
-### Wave 4. Gated Phase B core (fires when its gate clears, not by date)
-| # | Blueprint | Gate |
+### Wave 4. Gated Phase B core — blocked on the gate, not by date
+| # | Blueprint | Gate | Status |
 |---|---|---|
-| 09 | half-kelly-sizing | **60 closed paper trades** (est. late Aug – Sep) |
-| 13 | lora-finetune-pipeline | **3,000 prediction_scores** (est. ~30 Jul for export build; train after). Free Kaggle T4 + Unsloth; specialist stays ADVISORY (own model_slug, graded 14+ days) until it beats the live chain on ≥2 dims. promotion is the user's call |
+| 09 | half-kelly-sizing | 60 closed paper trades | **Not built** - correctly deferred, currently 27/60 |
+| 13 | lora-finetune-pipeline | 3,000 prediction_scores | ✅ Gate cleared 2026-07-26. v1 shipped (unusable), **v2 shipped 2026-08-16**, advisory-only pending 14+ day live comparison |
+
+### Wave 5. Native app migration (new, not in the original plan)
+| # | Blueprint | Status |
+|---|---|---|
+| 20 | native-app-migration | **Research-stage only, 0% built.** Push notifications w/ actions, biometric unlock, and sensors all confirmed feasible inside the existing PWA (no native wrapper needed); home-screen interactive widgets confirmed to require a native TWA wrapper - the one piece forcing this wave. See `blueprints/20-native-app-migration.md` for the full research + open questions |
 
 ### Dependency notes
-03 before 11 (shorts reference regime interaction). 16's security probe precedes
-everything. 10's DSR check becomes binding on any Tier-1 claim. 13's exporter can build
-any time; the training run waits for the row gate. 18 after 17 (both edit
-fetchers/news.py; 18's blueprint says what to do if built first). All others are
-independent.
+03 before 11 (shorts reference regime interaction) - satisfied, both done. 16's
+security probe preceded everything - satisfied. 10's DSR check is binding on any
+Tier-1 claim - live, and currently failing (DSR 0). 18 after 17 - satisfied, both
+done. Wave 5 depends on nothing above being incomplete; it's independent, just not
+started.
 
 ## Cost ledger
 
-**Recurring: ₹0.** Optional one-times, all flagged, all user decisions:
-| Item | Cost | Buys |
+**Recurring: ₹0.** Spend so far, all one-time:
+| Item | Cost | Status |
 |---|---|---|
-| OpenRouter lifetime credit | $10 (~₹850) | 50 → 1,000 req/day forever; strongly recommended |
-| Oracle PAYG verification hold | $0 (temporary ~$100 card hold, released) | kills idle-reclaim risk |
-| LoRA paid fallback (RunPod/Fireworks) | ~$1-5 one-time | only if free Kaggle path fails |
-| Hetzner CAX11 fallback | ~₹500/mo **recurring. decision point, not default** | only if Oracle signup fails outright |
-| INDstocks brokerage | ₹5 flat per real order (transaction cost, not infra) | applies only when blueprint 19's confirm mode places orders; API access itself free |
+| OpenRouter lifetime credit | $10 (~₹850) | Approved 2026-07-13 by user |
+| LoRA training | ₹0 | Free Kaggle T4 GPU-hours used for both v1 and v2, no paid fallback needed |
+| INDstocks brokerage | ₹5 flat per real order | Not yet incurred - Stage 3 auto-execution doesn't exist, and no real orders have been manually confirmed either as of this refresh |
+| Oracle Cloud | $0 | Not pursued - deliberately deprioritized, see Wave 1 |
 
 ## Measurable exit gates per wave
 
-- **W0:** every scheduled cron deadman-monitored; ≥3 independent LLM providers callable;
-  mcp_tokens verified anon-blocked.
-- **W1:** bot answering from Oracle, Render suspended; regime + earnings gates active in
-  BOTH paper_trader and backtest; skip geometry accumulating.
-- **W2:** every backtest run reports DSR + PBO; breaker armed; calibration method =
-  "platt" appearing in signal meta.
-- **W3:** options_signals + flows_trend in ≥90% of morning payloads; first short trade
-  graded; RAG A/B baseline + activation snapshot recorded.
-- **W4:** Kelly meta on live trades; specialist-v1 accuracy tracked ≥14 days.
-- **Phase B unlock (unchanged + hardened):** Tier-1 on live paper trades **plus DSR ≥ 0.90**.
+- **W0-W3:** all satisfied and verified live as of this refresh (2026-08-16).
+- **W4:** Kelly meta on live trades - not yet, blocked on trade count. Specialist
+  accuracy tracking - v2 just started its 14+ day clock 2026-08-16.
+- **Phase B unlock (unchanged + hardened):** Tier-1 on live paper trades **plus
+  DSR ≥ 0.90**. Current real numbers: Sharpe -14.1, PSR 0, DSR 0. Not close - the
+  geometry bug is fixed, directional accuracy is the remaining blocker.
+- **W5 (new):** no exit gate defined yet - blueprint 20 isn't build-ready.
 
 ## Parked. with reasons (do not resurrect casually)
 
@@ -117,6 +157,9 @@ independent.
 - **Vibe-Trading**. parked per 2026-07-12 evaluation; needs explicit re-confirmation.
 - **Ensemble revival**. if ever reconsidered, fix the vote-fraction dilution
   (`eff_wp = stated_wp * votes/n`) first; see memory `project-12jul-ensemble-removal`.
+- **Oracle Cloud migration off Render**. investigated 2026-08-15, real bandwidth usage
+  is ~1.6% of the cap that made this look urgent. Revisit only if actual usage grows
+  or Render's own terms change.
 
 ## Operating rules for executing this roadmap
 
@@ -125,3 +168,5 @@ independent.
 3. New spend of any kind: ask first (`feedback-ask-before-spending-new-quota`).
 4. Blueprints are exact but not sacred: if the repo has drifted when a builder picks one
    up, the builder re-grounds against the named files and tags ASSUMPTION on deviations.
+5. This file drifts too - it went a full month stale before this refresh. Re-verify
+   against real code before trusting it, the same way blueprint 4 above says to.
