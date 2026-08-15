@@ -1,11 +1,13 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export const sb = createClient(url, key, {
-  auth: { persistSession: false },
-});
+// Session-aware browser client. Reads/writes the auth cookie so queries
+// carry the signed-in user's JWT instead of the bare anon key - RLS is
+// scoped to the authenticated owner (see db/schema.sql), so an anon-only
+// client would get empty results back from every gated table.
+export const sb = createBrowserClient(url, key);
 
 export const DEFAULT_UID = process.env.NEXT_PUBLIC_DEFAULT_USER_ID || "default";
 

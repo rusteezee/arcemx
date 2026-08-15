@@ -511,8 +511,21 @@ alter table realized_pnl         enable row level security;
 alter table mcp_tokens           enable row level security;
 alter table prediction_embeddings enable row level security;
 
+-- Owner-only read access. Replaces the old blanket `to anon using (true)`
+-- policy (anyone with the public anon key - visible in the browser bundle -
+-- could read every row of every table below, directly via Supabase's REST
+-- API, regardless of any login screen on the website). Scoped to the
+-- authenticated owner's fixed auth.uid(), not their email, so this file
+-- stays safe to commit to a public repo - a UUID isn't personally
+-- identifying the way an email address is.
+--
+-- Run this in the Supabase SQL editor after replacing the placeholder
+-- below with the real value. Find it once the owner account exists via:
+--   select id, email from auth.users;
 do $$
-declare t text;
+declare
+  t text;
+  owner_id constant uuid := '00000000-0000-0000-0000-000000000000'; -- REPLACE with your auth.users.id
 begin
   foreach t in array array[
     'prices','analysis','portfolio','wishlist','transactions',
@@ -522,12 +535,17 @@ begin
     'backtest_runs','stock_analyses','realized_pnl'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
-    execute format('create policy "anon read" on %I for select to anon using (true)', t);
+    execute format('drop policy if exists "owner read" on %I', t);
+    execute format(
+      'create policy "owner read" on %I for select to authenticated using (auth.uid() = %L)',
+      t, owner_id
+    );
   end loop;
 end$$;
--- No anon policy on: news, trends, ticker_enrichment, mcp_tokens (OAuth
--- tokens - must never be anon-readable), prediction_embeddings (internal
--- training data). All fully blocked to anon.
+-- No read policy on: news, trends, ticker_enrichment, mcp_tokens (OAuth
+-- tokens - must never be readable), prediction_embeddings (internal
+-- training data). All fully blocked, even to the owner's session, same as
+-- before.
 
 -- Blueprint 19: symbol root -> INDstocks security_id, filled lazily from the
 -- instrument master CSV so we never bulk-load ~100k rows into Supabase.

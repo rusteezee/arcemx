@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useRef, useState, useLayoutEffect } from "react";
-import { Menu, X } from "lucide-react";
+import { Menu, X, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getMarketState, marketStateLabel, isMarketOpen, type MarketState } from "@/lib/marketState";
+import { sb } from "@/lib/supabase";
 
 const items = [
   { href: "/", label: "Today" },
@@ -169,10 +170,13 @@ export function Nav() {
     } catch {}
   };
   useEffect(() => {
+    // Nav doesn't render on /login (unauthenticated), so this would just
+    // be an unauthenticated fetch against a now-gated route - skip it.
+    if (path === "/login") return;
     fetchLastSync();
     const t = setInterval(fetchLastSync, 60_000);
     return () => clearInterval(t);
-  }, []);
+  }, [path]);
 
   // Resolve which sync mode the nav button runs based on the current route.
   // /sensei  -> trigger Sensei retrospective       (icon: sensei figure, soft blink)
@@ -269,6 +273,10 @@ export function Nav() {
 
   const syncText = syncing ? "Syncing" : syncMsg ?? cfg.idleLabel(lastSync);
   const open = isMarketOpen(mkt);
+
+  // No nav bar (and no "Sign out" button) on the login page itself -
+  // you aren't signed in yet, showing sign-out there is just confusing.
+  if (path === "/login") return null;
 
   return (
     <div className="sticky top-0 z-40 pointer-events-none">
@@ -424,6 +432,20 @@ export function Nav() {
                   </motion.span>
                 </AnimatePresence>
               </div>
+            </button>
+
+            {/* Logout */}
+            <button
+              onClick={() => {
+                sb.auth.signOut().then(() => {
+                  window.location.href = "/login";
+                });
+              }}
+              aria-label="Sign out"
+              title="Sign out"
+              className="flex items-center justify-center size-9 rounded-full border border-border text-foreground hover:bg-[var(--muted-bg)] transition-colors"
+            >
+              <LogOut className="size-4" />
             </button>
 
             {/* Mobile hamburger */}
