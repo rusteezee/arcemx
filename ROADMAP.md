@@ -83,7 +83,7 @@ couldn't fix.
 ### Wave 1. Protect + measure the new trade flow — ✅ DONE (Oracle migration excepted)
 | # | Blueprint | Status |
 |---|---|---|
-| 15 | oracle-migration-runbook | **Deliberately NOT done** - investigated, real bandwidth usage is ~1.6% of the cap the roadmap assumed would force this; user chose to deprioritize. Not urgent, not scheduled |
+| 15 | oracle-migration-runbook | **In progress (started 2026-08-19)** - user now holds a live Oracle Always Free account, signup friction (the prior blocker) is gone. Runbook (`deploy/oracle/setup.sh`) verified ready. Reason to move now: bot responsiveness for INDstocks confirm-mode buttons (real money) matters more than the original bandwidth-cap trigger, which was found not urgent (~1.6% of cap) |
 | 03 | regime-filter-gate | ✅ Done - trend+VIX+vol-percentile gate active in both `paper_trader.py` and `backtest.py` |
 | 07 | earnings-blackout-gate | ✅ Done - active in both live and backtest paths |
 | 12 | skipped-winner-attribution | ✅ Done - `analyzer/skip_attribution.py`, geometry captured on every skip, rendered on the trader page |
@@ -132,7 +132,7 @@ started.
 | OpenRouter lifetime credit | $10 (~₹850) | Approved 2026-07-13 by user |
 | LoRA training | ₹0 | Free Kaggle T4 GPU-hours used for both v1 and v2, no paid fallback needed |
 | INDstocks brokerage | ₹5 flat per real order | Not yet incurred - Stage 3 auto-execution doesn't exist, and no real orders have been manually confirmed either as of this refresh |
-| Oracle Cloud | $0 | Not pursued - deliberately deprioritized, see Wave 1 |
+| Oracle Cloud | $0 | In progress - Always Free account live, migration started 2026-08-19, see Wave 1 |
 
 ## Measurable exit gates per wave
 
@@ -157,9 +157,6 @@ started.
 - **Vibe-Trading**. parked per 2026-07-12 evaluation; needs explicit re-confirmation.
 - **Ensemble revival**. if ever reconsidered, fix the vote-fraction dilution
   (`eff_wp = stated_wp * votes/n`) first; see memory `project-12jul-ensemble-removal`.
-- **Oracle Cloud migration off Render**. investigated 2026-08-15, real bandwidth usage
-  is ~1.6% of the cap that made this look urgent. Revisit only if actual usage grows
-  or Render's own terms change.
 
 ## Operating rules for executing this roadmap
 

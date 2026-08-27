@@ -1,5 +1,11 @@
 # Project rules (binding)
 
+## Start here
+
+Read `KNOWLEDGE_BASE.md` first, every session. Full architecture, current
+status, gates, doctrines, gotchas. Update it same-session whenever you ship a
+change, fix a bug, flip a gate, or learn something non-obvious.
+
 ## Brand typography
 
 - **No em dashes (U+2014) anywhere.** Not in user-facing text, not in
