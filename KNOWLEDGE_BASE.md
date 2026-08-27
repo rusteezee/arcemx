@@ -36,11 +36,11 @@ all scale with it. As of 2026-08-16: **27/60 closed paper trades.**
 
 - **Data:** yfinance, RSS feeds, GNews, PRAW (Reddit), INDmoney MCP (OAuth,
   real portfolio/watchlist), INDstocks API (real-order execution)
-- **Brain:** OpenRouter free tier only - `nvidia/nemotron-3-super-120b-a12b:free`
-  primary, `minimax/minimax-m3:free` sole fallback (changed 2026-08-27; see
-  §5 and §21 - Gemini/Groq escalation and the gpt-oss-120b/20b fallback pair
-  were removed, so there is now nothing to escalate to if both fail in the
-  same call)
+- **Brain:** OpenRouter free tier only - `minimax/minimax-m3:free` primary,
+  `nvidia/nemotron-3-super-120b-a12b:free` sole fallback (swapped 2026-08-27
+  after a real bake-off; see §5 and §21 - Gemini/Groq escalation and the
+  gpt-oss-120b/20b fallback pair were removed the same day, so there is
+  now nothing to escalate to if both fail in the same call)
 - **Storage:** Supabase Postgres (free tier, RLS-locked)
 - **Bot:** python-telegram-bot, deployed on Render free tier (Oracle Cloud
   migration investigated and deliberately deprioritized - see §8)
@@ -100,13 +100,17 @@ are `workflow_dispatch`-only, fired by web dashboard actions.
    JSON-fence stripping, retry/backoff, and (added 2026-08-15)
    `_response_degenerate()` detection - catches a 4th failure mode where
    output is syntactically valid JSON but semantically degenerate (e.g. every
-   ticker given the identical call). Chain as of 2026-08-27: nemotron-3-super
-   primary -> minimax/minimax-m3:free sole fallback, OpenRouter only (Gemini/
-   Groq escalation and the gpt-oss-120b/20b pair were removed - see §21).
-   `_content_reject_reason()` (added 2026-08-27, commit `78ff458`) logs the
-   specific cause of a rejected response (error_field / no_choices /
-   empty_content:finish=X / json_parse_failed / empty_dict /
-   degenerate_output) instead of a generic "unusable" bucket.
+   ticker given the identical call). Chain as of 2026-08-27 (later same day):
+   minimax/minimax-m3:free primary -> nemotron-3-super sole fallback,
+   OpenRouter only (Gemini/Groq escalation and the gpt-oss-120b/20b pair
+   were removed - see §21). Primary/fallback order was swapped from the
+   original nemotron-primary setup after a real bake-off (§21) showed
+   minimax winning on speed, reliability, and output quality on this
+   project's actual payload. `_content_reject_reason()` (commit `78ff458`)
+   logs the specific cause of a rejected response (error_field / no_choices
+   / empty_content:finish=X / json_parse_failed / empty_dict /
+   degenerate_output) instead of a generic "unusable" bucket - this is what
+   caught nemotron's own degenerate_output failure live during the bake-off.
 4. **Save -> push** - Supabase `analysis` row + Telegram message
    (`bot/daily_push.py`, which strips Markdown special chars from LLM free
    text after a real prod outage from unescaped `_*\``).
@@ -573,6 +577,12 @@ code reading). Findings:
   instead of degrading further - watch for this given nemotron alone was
   already failing over ~67% of the time before this change. If daily runs
   start going missing, check `_content_reject_reason` in the logs first.
+- **Primary/fallback swapped same day (commit `a382b29`):** a real
+  bake-off (`analyzer/bakeoff.py`) on the live payload showed nemotron's
+  first attempt rejected as `degenerate_output` (15.3 min total after
+  retry) vs minimax succeeding clean on attempt 1 (4.6 min, tighter
+  range, more complete picks). Chain is now minimax primary, nemotron
+  sole fallback - see §5.
 - **Dashboard live check** - not done, no domain found in repo config (set
   directly in Netlify, not committed anywhere). Provide the URL to check it
   live in a browser.
@@ -602,6 +612,14 @@ trade count), `paper_trades?select=*&exit_at=not.is.null&order=exit_at.desc&limi
   `GROQ_API_KEY` everywhere (workflows, templates, `.env`, GH repo
   secrets - both now unused). Accepted tradeoff: no more provider
   escalation if both nemotron and minimax fail in one call. See §5, §21.
+- **2026-08-27 (even later)** - Ran a real bake-off (`analyzer/bakeoff.py`)
+  on the live payload comparing nemotron-3-super vs minimax-m3 head to
+  head (commit `a382b29`). nemotron's own first attempt was rejected as
+  `degenerate_output` and needed a retry (15.3 min total); minimax
+  succeeded clean on attempt 1 in 4.6 min, with a tighter NIFTY range and
+  more complete picks. **Swapped primary/fallback order: minimax is now
+  primary, nemotron demoted to sole fallback.** See §5, §21 for full
+  numbers.
 - **2026-08-27 (later same day)** - Root-caused both watch items from the
   morning's audit. Paper trader stall confirmed NOT a bug (live
   `eval_signals` logs show `not_buy`/`low_conf` skips + a `trend: down`
