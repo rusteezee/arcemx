@@ -37,8 +37,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_SENSEI_PRIMARY: ${{ secrets.OPENROUTER_SENSEI_PRIMARY }}
         run: |
           if [ -n "${{ inputs.analysis_id }}" ]; then

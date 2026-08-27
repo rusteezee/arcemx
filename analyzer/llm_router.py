@@ -76,19 +76,21 @@ PRIMARY_MODEL = os.getenv(
 
 # OpenRouter routes through this list left-to-right. If the primary
 # is rate-limited or fails, the next model serves the same request.
-# Replaced 25/06: the old chain was nemotron-3-ultra-550b + nex-agi/
-# nex-n2-pro, BOTH since proven dead (Ultra = 31min wall clock + prose
-# instead of JSON, dropped from the ensemble 20/06; nex-n2-pro =
-# persistent empty_content, dropped even earlier). A two-corpse fallback
-# meant any primary rate-limit cascaded straight to total failure for
-# every single-model caller (sensei, stock_analyst, portfolio_score,
-# calculator, the bot's in-process path). The new chain is the proven-
-# alive OpenAI pair from the ensemble validation (gpt-oss-120b/20b, 3/3
-# usable on every recent run): a different lab from the Nvidia Super
-# primary, so a Nvidia-side outage cannot kill the chain.
+# Replaced 27/08: user chose to drop the gpt-oss-120b/20b pair (both
+# still alive, but redundant now that Gemini/Groq escalation is gone
+# too - see _PROVIDERS below) in favor of a single fallback,
+# minimax/minimax-m3:free (1M ctx, confirmed live on OpenRouter's free
+# catalog 2026-08-27). NOTE: with no other provider left to escalate
+# to (see _PROVIDERS), nemotron + this one model are now the ENTIRE
+# chain - if both are rejected by _content_ok in the same call, the
+# whole analysis run fails outright (no Telegram push, no dashboard
+# row) instead of degrading to Gemini/Groq. Measured live 2026-08-27:
+# nemotron alone failed over on ~67% of recent daily runs, so this
+# model now carries real weight - watch _content_reject_reason logs
+# if daily runs start going missing.
 _FALLBACK_RAW = os.getenv(
     "OPENROUTER_FALLBACKS",
-    "openai/gpt-oss-120b:free,openai/gpt-oss-20b:free",
+    "minimax/minimax-m3:free",
 )
 FALLBACK_CHAIN = [m.strip() for m in _FALLBACK_RAW.split(",") if m.strip()]
 
@@ -103,44 +105,24 @@ MODEL = PRIMARY_MODEL
 _HTTP_REFERER = os.getenv("OPENROUTER_REFERER", "https://arcemx.arcarmor.co.in")
 _X_TITLE = os.getenv("OPENROUTER_TITLE", "Arc'emX!")
 
-# Provider escalation chain. OpenRouter first (its free 120B models beat
-# Groq's 70B), then Gemini, then Groq - two providers on completely
-# independent infra so an OpenRouter-wide outage/rate-limit doesn't kill
-# the daily pipeline. A provider is skipped entirely when its key env var
-# is unset, so the chain degrades gracefully with zero recurring cost
-# until the user creates free Gemini/Groq keys. order matters.
+# Provider list. Was OpenRouter -> Gemini -> Groq (two independent-infra
+# providers behind OpenRouter so an OpenRouter-wide outage/rate-limit
+# couldn't kill the daily pipeline). User removed Gemini + Groq escalation
+# 2026-08-27 - OpenRouter (nemotron primary + minimax fallback, see
+# FALLBACK_CHAIN above) is now the only provider, used by every caller in
+# this module (analyze, analyze_portfolio) via _post()/_PROVIDERS below.
+# GEMINI_API_KEY/GROQ_API_KEY in .env are now unused dead weight - nothing
+# in the codebase reads them anymore. Safe to remove from .env/GH secrets
+# whenever convenient; left alone here since deleting secrets is the
+# user's call, not a side effect of a model-chain change.
 _PROVIDERS = [
     {
         "name": "openrouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "key_env": "OPENROUTER_API_KEY",
         "chain_env": "OPENROUTER_FALLBACKS",
-        "default_models": "openai/gpt-oss-120b:free,openai/gpt-oss-20b:free",
+        "default_models": "minimax/minimax-m3:free",
         "supports_reasoning_optout": True,
-    },
-    {
-        "name": "gemini",
-        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        "key_env": "GEMINI_API_KEY",
-        "chain_env": "GEMINI_MODELS",
-        # "gemini-3-flash" (blueprint 01's original researched default)
-        # does not exist in the live catalog as of 2026-07-14 - verified
-        # via a real models.list call against the user's key, only
-        # "gemini-3-flash-preview" does. gemini-3.5-flash and
-        # gemini-3.1-flash-lite both confirmed live; strongest first.
-        "default_models": "gemini-3.5-flash,gemini-3.1-flash-lite",
-        "supports_reasoning_optout": False,
-    },
-    {
-        "name": "groq",
-        "url": "https://api.groq.com/openai/v1/chat/completions",
-        "key_env": "GROQ_API_KEY",
-        "chain_env": "GROQ_MODELS",
-        # openai/gpt-oss-120b confirmed live in the user's Groq catalog
-        # 2026-07-14; gpt-oss-20b as a same-family fallback (matches the
-        # 120b/20b pairing pattern already used for the OpenRouter chain).
-        "default_models": "openai/gpt-oss-120b,openai/gpt-oss-20b",
-        "supports_reasoning_optout": False,
     },
 ]
 
@@ -928,9 +910,8 @@ def _post(messages: list[dict], models: list[str], reasoning: bool = True,
     if last_data is not None:
         return last_data
     if not tried_any:
-        raise RuntimeError(
-            "No LLM provider configured (checked OPENROUTER_API_KEY, "
-            "GEMINI_API_KEY, GROQ_API_KEY)")
+        checked = ", ".join(p["key_env"] for p in _PROVIDERS)
+        raise RuntimeError(f"No LLM provider configured (checked {checked})")
     raise RuntimeError(f"All LLM providers exhausted: {last_err}")
 
 
