@@ -36,8 +36,11 @@ all scale with it. As of 2026-08-16: **27/60 closed paper trades.**
 
 - **Data:** yfinance, RSS feeds, GNews, PRAW (Reddit), INDmoney MCP (OAuth,
   real portfolio/watchlist), INDstocks API (real-order execution)
-- **Brain:** OpenRouter free tier - `nvidia/nemotron-3-super-120b-a12b:free`
-  primary, Gemini then Groq as failover chain
+- **Brain:** OpenRouter free tier only - `nvidia/nemotron-3-super-120b-a12b:free`
+  primary, `minimax/minimax-m3:free` sole fallback (changed 2026-08-27; see
+  §5 and §21 - Gemini/Groq escalation and the gpt-oss-120b/20b fallback pair
+  were removed, so there is now nothing to escalate to if both fail in the
+  same call)
 - **Storage:** Supabase Postgres (free tier, RLS-locked)
 - **Bot:** python-telegram-bot, deployed on Render free tier (Oracle Cloud
   migration investigated and deliberately deprioritized - see §8)
@@ -97,8 +100,13 @@ are `workflow_dispatch`-only, fired by web dashboard actions.
    JSON-fence stripping, retry/backoff, and (added 2026-08-15)
    `_response_degenerate()` detection - catches a 4th failure mode where
    output is syntactically valid JSON but semantically degenerate (e.g. every
-   ticker given the identical call). Not yet verified against a real live
-   failover event.
+   ticker given the identical call). Chain as of 2026-08-27: nemotron-3-super
+   primary -> minimax/minimax-m3:free sole fallback, OpenRouter only (Gemini/
+   Groq escalation and the gpt-oss-120b/20b pair were removed - see §21).
+   `_content_reject_reason()` (added 2026-08-27, commit `78ff458`) logs the
+   specific cause of a rejected response (error_field / no_choices /
+   empty_content:finish=X / json_parse_failed / empty_dict /
+   degenerate_output) instead of a generic "unusable" bucket.
 4. **Save -> push** - Supabase `analysis` row + Telegram message
    (`bot/daily_push.py`, which strips Markdown special chars from LLM free
    text after a real prod outage from unescaped `_*\``).
@@ -553,6 +561,18 @@ code reading). Findings:
   `no_choices`, `empty_content:finish=X`, `json_parse_failed`,
   `empty_dict`, `degenerate_output`) so the next nemotron fallback event
   logs the real reason instead of a black box. No behavior change.
+- **Fallback chain simplified (2026-08-27, user decision, commit `dc47bb8`):**
+  removed Gemini + Groq provider escalation and the gpt-oss-120b/20b
+  OpenRouter fallback pair entirely. Replaced with a single OpenRouter
+  fallback, `minimax/minimax-m3:free` (free, 1M ctx, confirmed live).
+  `GEMINI_API_KEY`/`GROQ_API_KEY` removed from every GH Actions workflow
+  that passed them, the Oracle env template, `.env.example`, local `.env`,
+  and deleted as GitHub repo secrets. **Real risk accepted knowingly:**
+  with only one provider left, a call that exhausts both nemotron and
+  minimax now fails the run outright (no Telegram push, no dashboard row)
+  instead of degrading further - watch for this given nemotron alone was
+  already failing over ~67% of the time before this change. If daily runs
+  start going missing, check `_content_reject_reason` in the logs first.
 - **Dashboard live check** - not done, no domain found in repo config (set
   directly in Netlify, not committed anywhere). Provide the URL to check it
   live in a browser.
@@ -576,6 +596,12 @@ trade count), `paper_trades?select=*&exit_at=not.is.null&order=exit_at.desc&limi
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-27 (later still)** - User decision: replaced the Gemini/Groq/
+  gpt-oss fallback chain with a single OpenRouter fallback,
+  `minimax/minimax-m3:free` (commit `dc47bb8`). Deleted `GEMINI_API_KEY`/
+  `GROQ_API_KEY` everywhere (workflows, templates, `.env`, GH repo
+  secrets - both now unused). Accepted tradeoff: no more provider
+  escalation if both nemotron and minimax fail in one call. See §5, §21.
 - **2026-08-27 (later same day)** - Root-caused both watch items from the
   morning's audit. Paper trader stall confirmed NOT a bug (live
   `eval_signals` logs show `not_buy`/`low_conf` skips + a `trend: down`
