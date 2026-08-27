@@ -599,19 +599,39 @@ def _content_ok(data: dict, json_format: bool) -> bool:
     single one of 5+ names is not doing per-ticker analysis, just filling
     the schema - as useless as the literal "{}" case above, just harder
     to spot at a glance because every field is populated."""
-    if not isinstance(data, dict) or data.get("error"):
-        return False
+    return _content_reject_reason(data, json_format) is None
+
+
+def _content_reject_reason(data: dict, json_format: bool) -> str | None:
+    """Same checks as _content_ok, but returns WHICH one failed instead of
+    a bare bool. _content_ok previously discarded this - every rejection
+    surfaced as the same generic "response unusable (empty/malformed
+    content)" log line whether the cause was an error object, no content,
+    a parse failure, an empty dict, or the degenerate-output detector.
+    That made a ~67% nemotron-to-Gemini fallback rate (measured live
+    2026-08-27 via analysis.model_used) impossible to root-cause from logs
+    alone. Callers that only need the bool keep using _content_ok; this is
+    for the diagnostic print in _post_provider."""
+    if not isinstance(data, dict):
+        return "not_a_dict"
+    if data.get("error"):
+        return f"error_field:{str(data.get('error'))[:80]}"
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        return False
+        return "no_choices"
     if content is None or not str(content).strip():
-        return False
+        finish = None
+        try:
+            finish = data["choices"][0].get("finish_reason")
+        except (KeyError, IndexError, TypeError, AttributeError):
+            pass
+        return f"empty_content:finish={finish}"
     if json_format:
         try:
             parsed = json.loads(_strip_fences(str(content)))
         except json.JSONDecodeError:
-            return False
+            return "json_parse_failed"
         # A syntactically valid but empty/non-dict body (e.g. "{}") is
         # exactly as useless as no content at all, but passed every check
         # above - it previously burned the one "successful" attempt here,
@@ -621,10 +641,10 @@ def _content_ok(data: dict, json_format: bool) -> bool:
         # morning analysis call; it was saved and pushed to Telegram as a
         # real market call with every field blank).
         if not isinstance(parsed, dict) or not parsed:
-            return False
+            return "empty_dict"
         if _response_degenerate(parsed):
-            return False
-    return True
+            return "degenerate_output"
+    return None
 
 
 _DEGENERATE_MIN_NAMES = 5  # below this, "all agree" is plausibly real, not lazy
@@ -837,7 +857,8 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
         # response immediately and every remaining fallback model in
         # `models` never gets a chance.
         next_model = models[min(attempt + 1, len(models) - 1)]
-        print(f"{provider['name']} response unusable (empty/malformed content) "
+        reason = _content_reject_reason(data, json_format)
+        print(f"{provider['name']} response unusable ({reason}) "
               f"from {body['model'].split('/')[-1]}, attempt {attempt+1}; "
               f"rotating to {next_model.split('/')[-1]}")
         time.sleep(min(delay, 10))
