@@ -148,6 +148,12 @@ started.
 
 - **IPO tracker**. no verified free data path from cloud runners (NSE blocks datacenter
   IPs; INDmoney MCP has no IPO tool). Revisit only with a working data probe.
+- **Twitter/X sentiment**. official API $5K-$42K/month; free scraping libraries
+  (twscrape, Twikit) confirmed live broken (biometric login checks, 429s, unpatched
+  KeyErrors since March 2026) plus a real $15,000/1M-post ToS liability; Apify-hosted
+  scraping inherits the same legal risk and prices free-tier Twitter access at
+  $40/1,000 specifically to block this use case. Revisit only if a genuinely free,
+  legal, reliable path appears - none exists as of 2026-08-28.
 - **US stocks / MF+US realized-P&L imports**. zero real holdings data to validate
   against (get-the-real-sample doctrine). Auto-unparks when holdings exist.
 - **Multi-user / public product**. explicitly out of scope (user decision 2026-07-13).

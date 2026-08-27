@@ -346,7 +346,8 @@ GNews, ticker-linking alias map from `data/universe.csv`, blocklisted against
 common English words to avoid false positives like "IDEA"/"POWER"),
 `indmoney_auth.py` / `indmoney_mcp.py` (see §11), `indstocks_api.py` (real
 order execution, blueprint 19), `options_chain.py` (NIFTY PCR/max-pain),
-`fii_dii.py`, `reddit.py` (PRAW hot posts), `backfill_prices.py`,
+`fii_dii.py`, `reddit.py` (Apify-backed hot posts, PRAW as dormant
+fallback - see §25), `backfill_prices.py`,
 `import_indmoney_transactions.py`, `import_realized_pnl.py` (one-off
 imports). `fetchers/dev/` - debug/probe scripts, not production path.
 
@@ -602,10 +603,99 @@ useful checks: `analysis?select=id,run_at,model_used&order=run_at.desc&limit=15`
 trade count), `paper_trades?select=*&exit_at=not.is.null&order=exit_at.desc&limit=3`
 (most recent closed trade - staleness check).
 
+## 25. Reddit sentiment: from broken to Apify-backed (2026-08-27/28)
+
+**Discovery:** the 2026-08-27 audit's bake-off run logged `"Reddit not
+configured"` - `fetchers/reddit.py` (PRAW/official OAuth) has never
+actually worked in production, `REDDIT_CLIENT_ID`/`SECRET` were always
+empty. Initial assumption (wrong): "5-minute fix, just create a script app
+at reddit.com/prefs/apps."
+
+**Real finding:** Reddit closed self-serve app registration in **November
+2025** under its Responsible Builder Policy. Confirmed live 2026-08-28 -
+the "create app" form no longer creates anything, it redirects to the
+policy page. Every new OAuth app now needs manual approval via a separate
+contact form, and "small and personal projects are the most-rejected
+category." The old `.json`-without-auth fallback is also dead (403 since
+2026-05-30). This is now nearly the same risk class as X/Twitter, just
+gated by manual review instead of a paywall.
+
+**Decision:** replace with a third-party reseller, same pattern as
+twitterapi.io for X. Landed on **Apify** (established platform, not a
+self-reviewing SEO shop like a couple of other candidates that turned up
+in research). Picked `trudax/reddit-scraper-lite` (39,715 users, by far
+the most-used Reddit actor on Apify) over `comchat/reddit-api-scraper`
+(no "hot" sort support - it's a keyword-search actor, not a subreddit-
+listing one - and requires a paid residential proxy on top) and over
+`trudax/reddit-scraper` ($45/month flat rental, rejected outright).
+
+**Real cost, verified via Apify's own API, not blog estimates:**
+PAY_PER_EVENT, $0.004/result. At `limit=10` (posts per subreddit): 4 subs
+x 10 x ~30 days/month = ~1200 results/month x $0.004 = **~$4.80/month**,
+inside Apify's $5/month free platform credit (no card ever charged at
+this volume). The original `limit=15` used by `aggregator.py` would NOT
+have stayed free (~$7.20/month) - dropped to `limit=10` for this reason.
+Raising the limit raises real recurring cost; check this section before
+changing it.
+
+**Real reliability findings from live testing (not assumptions):**
+- This actor does a genuine headless-browser scrape (scrolling to load
+  more than a handful of posts) - single-subreddit run duration measured
+  live across several attempts: **184s to 534s+**, highly variable, not
+  something fixable via input parameters.
+- **Root-caused a false-timeout bug**: running all 4 subreddits
+  concurrently via `urllib` holding 4 long-lived synchronous HTTP
+  connections open at once caused every single one to report a client-
+  side read timeout - but Apify's own run records showed **3 of 4 had
+  actually SUCCEEDED server-side** well inside the timeout window (255s/
+  319s/341s vs a 630s client timeout). The problem was the client's
+  connection handling under concurrency, not Apify or the actor.
+- **Fix**: switched to Apify's async start-run -> poll-every-5s -> fetch-
+  dataset pattern (using `requests`, not raw `urllib`), which uses many
+  short-lived requests instead of one long-held connection per subreddit.
+  Confirmed live 2026-08-28: **40/40 posts, all 4 subreddits, zero
+  failures.**
+- Even a run that ends `FAILED`/`TIMED-OUT`/`ABORTED` may have partial
+  results in its dataset - the code fetches the dataset regardless of
+  final status (except when no terminal state was ever reached), treating
+  a short result as valid best-effort output rather than a hard failure.
+
+**Spend from this whole debugging session: ~$2.11 of the $5 free credit**
+(higher than steady-state because several test runs pulled 25 items
+instead of 10). This first month may run slightly over the free credit
+because of setup/debugging; ongoing months at `limit=10` should land
+around $4.80, inside the free tier. Cycle resets 2026-09-26.
+
+**PRAW fallback**: kept in `fetchers/reddit.py` as `_fetch_hot_praw()`,
+activates automatically (no code change) if `REDDIT_CLIENT_ID`/`SECRET`
+ever get filled in - i.e. if Reddit's manual approval is ever granted, or
+the policy loosens. `REDDIT_CLIENT_ID`/`SECRET` stay wired in
+`daily_analysis.yml`'s env as a dormant path for exactly this reason.
+
+**Also researched and rejected the same day: Apify for Twitter/X.**
+Unlike Reddit, hosting a Twitter scraper on Apify does NOT reduce the
+legal exposure (X's ToS liquidated-damages clause, $15,000/1M posts, still
+applies - Apify's own actor terms explicitly disclaim responsibility for
+ToS compliance) and Apify's own Twitter actors charge **$40/1,000 tweets
+on free-tier accounts specifically to discourage this use case** (vs paid
+rates of $0.15-0.40/1,000, which need a $49+/month Apify subscription to
+unlock). Reddit-via-Apify made sense because Reddit's legal and pricing
+profile are both mild; Twitter-via-Apify inherits Twitter's actual
+problems unchanged. Twitter/X sentiment stays parked - see §19-adjacent
+reasoning, add a Parked-ideas entry in ROADMAP.md if not already there.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-28** - Reddit sentiment fully rebuilt on Apify after
+  discovering Reddit's own OAuth app approval is gated shut (Responsible
+  Builder Policy, Nov 2025). Root-caused and fixed a false-timeout bug
+  from concurrent `urllib` connections (switched to async poll pattern).
+  Verified live: 40/40 posts, all 4 subreddits, ~$4.80/month real cost,
+  inside Apify's free credit. Also researched and rejected Apify-hosted
+  Twitter scraping the same day (doesn't reduce X's legal risk, priced
+  punitively on free tier). Commit `905d417`. See §25 for full detail.
 - **2026-08-27 (later still)** - User decision: replaced the Gemini/Groq/
   gpt-oss fallback chain with a single OpenRouter fallback,
   `minimax/minimax-m3:free` (commit `dc47bb8`). Deleted `GEMINI_API_KEY`/
