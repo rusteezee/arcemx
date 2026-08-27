@@ -538,6 +538,21 @@ code reading). Findings:
   rate-limit or model-availability issues on the nemotron model specifically
   - GH Actions logs don't surface the underlying HTTP error, so root cause
   is still unknown as of this audit.
+- **Confirmed the paper trader stall is not a bug (2026-08-27):** checked 6
+  days of live `paper_trader.eval_signals` log output directly. Every day it
+  runs fine, evaluates 25-55 signals, enters 0 - skip reasons are `not_buy`
+  and `low_conf` (LLM's own rating/stated confidence, not a gate
+  malfunction), and NIFTY regime read `trend: down` every day that week.
+  This is Wave 2's honesty layer (calibration + the `top_performer_1d`
+  degating) working as designed in a down market with genuinely weak
+  signals - not something to "fix" by loosening thresholds.
+- **Diagnostic logging fix (commit `78ff458`):** `llm_router._content_ok`
+  collapsed 5 distinct rejection causes into one generic "response
+  unusable (empty/malformed content)" log line. Split into
+  `_content_reject_reason` (returns the specific cause: `error_field`,
+  `no_choices`, `empty_content:finish=X`, `json_parse_failed`,
+  `empty_dict`, `degenerate_output`) so the next nemotron fallback event
+  logs the real reason instead of a black box. No behavior change.
 - **Dashboard live check** - not done, no domain found in repo config (set
   directly in Netlify, not committed anywhere). Provide the URL to check it
   live in a browser.
@@ -561,6 +576,13 @@ trade count), `paper_trades?select=*&exit_at=not.is.null&order=exit_at.desc&limi
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-27 (later same day)** - Root-caused both watch items from the
+  morning's audit. Paper trader stall confirmed NOT a bug (live
+  `eval_signals` logs show `not_buy`/`low_conf` skips + a `trend: down`
+  regime all week - the honesty layer correctly refusing weak signals).
+  Added diagnostic logging (commit `78ff458`) so nemotron's ~67% Gemini
+  fallback rate logs its specific cause next time instead of a generic
+  "unusable" bucket. See §24 and §21.
 - **2026-08-27** - Full live health audit run (GH Actions history, Render
   API, direct Supabase queries) - see §24 for the complete findings. Found
   and fixed a real bug: `specialist_eval.yml`'s llama.cpp download was
