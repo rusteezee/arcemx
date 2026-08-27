@@ -57,6 +57,11 @@ jobs:
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+          # Reddit's own OAuth app approval is gated shut (Responsible
+          # Builder Policy, confirmed live 2026-08-28) - REDDIT_CLIENT_ID/
+          # SECRET above stay wired as a dormant fallback, but Apify is the
+          # real path now. See fetchers/reddit.py.
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
           # RAG Phase 1 (blueprint 14): activated 2026-07-16 after the full
           # re-embed under one model (bge-base-en-v1.5) confirmed clean via
           # a live match_exemplars probe. Rollback = flip this to "0".

@@ -396,7 +396,10 @@ def build_payload() -> dict:
           f"{news_digest.get('n_raw')} raw; net_sentiment {news_digest.get('net_sentiment')}")
 
     print("Fetching reddit...")
-    reddit_posts = fetch_hot(limit=15)
+    # limit=10: 4 subs x 10 x ~30 days/month = ~1200 Apify results/month x
+    # $0.004 = ~$4.80, inside Apify's $5/month free credit. Raising this
+    # raises real recurring cost - see fetchers/reddit.py + KNOWLEDGE_BASE.md.
+    reddit_posts = fetch_hot(limit=10)
 
     print("Index snapshot...")
     idx_snap = latest_snapshot(["^NSEI", "^BSESN", "^NSEBANK", "^DJI", "^IXIC", "^GSPC"])
