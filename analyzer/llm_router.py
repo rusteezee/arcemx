@@ -65,32 +65,36 @@ def _pick_key(keys: list[str], attempt: int) -> str | None:
     pool = usable or keys
     return pool[attempt % len(pool)]
 
-# Primary: Nemotron 3 Super 120B (free). 120B/12B-active MoE, 1M ctx.
-# Selected over Ultra after bake-off on a real payload: Super produced
-# a tighter NIFTY range (1.21% vs Ultra 2.16%, 44% narrower) with the
-# same full schema compliance and the same honest confidence, faster
-# too (7m vs 11m on free tier). Smaller-model-better-instruction-
-# follower applies. Ultra stays as backup for harder reasoning cases.
+# Primary: MiniMax M3 (free, 1M ctx). Promoted 2026-08-27 after a real
+# head-to-head bake-off against nemotron-3-super on this project's actual
+# live payload (analyzer/bakeoff.py), run because nemotron was measured
+# failing over to Gemini on ~67% of recent production days. Result:
+# nemotron's OWN first attempt in that bake-off was rejected as
+# degenerate_output (caught live by _content_reject_reason) and needed a
+# retry; minimax succeeded clean on attempt 1. Minimax also won latency
+# (277.9s vs nemotron's 919.9s - 15+ min, over 2x the "7m" nemotron was
+# originally benchmarked at when IT won the primary slot back in June),
+# NIFTY range tightness (0.54% vs 0.64%, tighter = better per the schema's
+# own ATR-anchoring intent), and pick completeness (10/10 short picks with
+# target+stop_loss vs nemotron's 5/5) - both hit 0 missing schema fields
+# and fully filled reasoning_breakdown. One run each, not a large sample,
+# but it converges with the independent production fallback-rate data.
 PRIMARY_MODEL = os.getenv(
-    "OPENROUTER_PRIMARY", "nvidia/nemotron-3-super-120b-a12b:free")
+    "OPENROUTER_PRIMARY", "minimax/minimax-m3:free")
 
 # OpenRouter routes through this list left-to-right. If the primary
 # is rate-limited or fails, the next model serves the same request.
-# Replaced 27/08: user chose to drop the gpt-oss-120b/20b pair (both
-# still alive, but redundant now that Gemini/Groq escalation is gone
-# too - see _PROVIDERS below) in favor of a single fallback,
-# minimax/minimax-m3:free (1M ctx, confirmed live on OpenRouter's free
-# catalog 2026-08-27). NOTE: with no other provider left to escalate
-# to (see _PROVIDERS), nemotron + this one model are now the ENTIRE
-# chain - if both are rejected by _content_ok in the same call, the
-# whole analysis run fails outright (no Telegram push, no dashboard
-# row) instead of degrading to Gemini/Groq. Measured live 2026-08-27:
-# nemotron alone failed over on ~67% of recent daily runs, so this
-# model now carries real weight - watch _content_reject_reason logs
-# if daily runs start going missing.
+# nemotron-3-super demoted to sole fallback 2026-08-27 (see PRIMARY_MODEL
+# above for why) - still a live, usable model, just not the one to lead
+# with anymore. NOTE: with no other provider left to escalate to (see
+# _PROVIDERS - Gemini/Groq escalation was removed the same day), minimax
+# + nemotron are now the ENTIRE chain - if both are rejected by
+# _content_ok in the same call, the whole analysis run fails outright (no
+# Telegram push, no dashboard row). Watch _content_reject_reason logs if
+# daily runs start going missing.
 _FALLBACK_RAW = os.getenv(
     "OPENROUTER_FALLBACKS",
-    "minimax/minimax-m3:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
 )
 FALLBACK_CHAIN = [m.strip() for m in _FALLBACK_RAW.split(",") if m.strip()]
 
@@ -108,20 +112,25 @@ _X_TITLE = os.getenv("OPENROUTER_TITLE", "Arc'emX!")
 # Provider list. Was OpenRouter -> Gemini -> Groq (two independent-infra
 # providers behind OpenRouter so an OpenRouter-wide outage/rate-limit
 # couldn't kill the daily pipeline). User removed Gemini + Groq escalation
-# 2026-08-27 - OpenRouter (nemotron primary + minimax fallback, see
-# FALLBACK_CHAIN above) is now the only provider, used by every caller in
-# this module (analyze, analyze_portfolio) via _post()/_PROVIDERS below.
-# GEMINI_API_KEY/GROQ_API_KEY in .env are now unused dead weight - nothing
-# in the codebase reads them anymore. Safe to remove from .env/GH secrets
-# whenever convenient; left alone here since deleting secrets is the
-# user's call, not a side effect of a model-chain change.
+# 2026-08-27 - OpenRouter (minimax primary + nemotron fallback, see
+# PRIMARY_MODEL/FALLBACK_CHAIN above) is now the only provider, used by
+# every caller in this module (analyze, analyze_portfolio) via
+# _post()/_PROVIDERS below. GEMINI_API_KEY/GROQ_API_KEY in .env are now
+# unused dead weight - nothing in the codebase reads them anymore. Safe
+# to remove from .env/GH secrets whenever convenient; left alone here
+# since deleting secrets is the user's call, not a side effect of a
+# model-chain change.
 _PROVIDERS = [
     {
         "name": "openrouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "key_env": "OPENROUTER_API_KEY",
         "chain_env": "OPENROUTER_FALLBACKS",
-        "default_models": "minimax/minimax-m3:free",
+        # Vestigial for this entry: _post() only reads default_models on
+        # the `else` (non-openrouter) branch. Kept in sync with
+        # FALLBACK_CHAIN's default anyway in case a future provider re-add
+        # copies this dict as a template.
+        "default_models": "nvidia/nemotron-3-super-120b-a12b:free",
         "supports_reasoning_optout": True,
     },
 ]
