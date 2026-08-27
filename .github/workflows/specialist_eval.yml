@@ -47,8 +47,17 @@ jobs:
           # openvino), and the real asset is .tar.gz, not .zip - both
           # confirmed live 2026-07-26 against ggml-org/llama.cpp's actual
           # release assets (a real gh release view showed the true names).
+          #
+          # No --tag: `gh release download` defaults to the repo's "latest"
+          # release, which broke 2026-08-22 - llama.cpp stopped marking any
+          # build as Latest (all recent tags are Pre-release only, e.g.
+          # b10655), so it silently resolved to a stale old tag with no
+          # ubuntu-x64 asset at all ("no assets match the file pattern").
+          # Resolve the real newest tag explicitly instead.
           mkdir -p /tmp/llamacpp
-          gh release download --repo ggml-org/llama.cpp --pattern "*ubuntu-x64*" --dir /tmp/llamacpp --clobber
+          TAG=$(gh release list --repo ggml-org/llama.cpp --limit 1 --json tagName -q '.[0].tagName')
+          echo "resolved llama.cpp tag: $TAG"
+          gh release download "$TAG" --repo ggml-org/llama.cpp --pattern "*ubuntu-x64*" --dir /tmp/llamacpp --clobber
           cd /tmp/llamacpp
           for f in *.tar.gz; do [ -f "$f" ] && tar xzf "$f"; done
           find /tmp/llamacpp -name "llama-cli" -exec chmod +x {} \;
