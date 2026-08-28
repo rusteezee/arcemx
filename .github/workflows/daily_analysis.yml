@@ -14,6 +14,24 @@ on:
     # run_if_stale-guarded so it no-ops when the primary already wrote.
     - cron: "13 3 * * 1-5"
   workflow_dispatch:
+    inputs:
+      force:
+        description: >-
+          Force a fresh analysis even if a recent one already exists.
+          Leave unchecked for automated dispatches (Cloudflare Worker,
+          bot's own scheduler) so they respect the same staleness check
+          as the scheduled triggers above - root-caused 2026-08-28: with
+          no force flag, EVERY workflow_dispatch unconditionally force-ran
+          and pushed, and when the Cloudflare Worker, the bot, and a
+          manual recovery dispatch all fired within the same hour (plus
+          both native schedule crons finally landing ~12h late), 5
+          separate runs pushed 5 separate Telegram messages the same day.
+          Check this box (or pass -f force=true via gh CLI) only when you
+          specifically want a guaranteed-fresh run regardless of
+          staleness, e.g. recovering a confirmed missed morning.
+        required: false
+        default: false
+        type: boolean
 
 # Opt every JavaScript action onto Node 24 ahead of the 16 June 2026
 # forced-migration deadline. actions/checkout@v4 and actions/setup-python@v5
@@ -66,9 +84,14 @@ jobs:
           # re-embed under one model (bge-base-en-v1.5) confirmed clean via
           # a live match_exemplars probe. Rollback = flip this to "0".
           RAG_PHASE1_ENABLED: "1"
-          # Manual dispatches always run; only the scheduled fallback
-          # defers to a fresh row from the bot's 08:30 IST primary run.
-          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+          # Only an EXPLICIT force=true input runs unconditionally now
+          # (see the workflow_dispatch.inputs.force description above for
+          # why - this used to be "any workflow_dispatch", which caused a
+          # real 5-messages-in-one-day incident 2026-08-28). Everything
+          # else, including a plain workflow_dispatch with no inputs (the
+          # default from the Cloudflare Worker and the bot's own
+          # scheduler), defers to run_if_stale like the schedule triggers.
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true }}
         run: |
           python - <<'EOF'
           import os
