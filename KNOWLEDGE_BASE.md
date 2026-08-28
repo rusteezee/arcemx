@@ -832,10 +832,50 @@ URL on every attempt, success or failure) so a silent miss like today's
 surfaces on its own instead of requiring the user to notice a missing
 Telegram message.
 
+**Resolution, same day:** Cloudflare Worker Logs were confirmed Disabled
+(now Enabled) and the 3 cron triggers were confirmed to match the code's
+`CRON_TO_WORKFLOW` table exactly - ruling out a cron-string mismatch. Cause
+of the original morning miss stays unconfirmed (logs were off at the time),
+but a second, worse problem was found and fixed instead: **5 separate
+workflow runs fired between the morning miss and the evening, and all 5
+pushed a Telegram message**, because `daily_analysis.yml`'s `FORCE_RUN` was
+`true` for ANY `workflow_dispatch` event with no dedup at all. My manual
+recovery dispatch (09:32 UTC), two more automated `workflow_dispatch`
+events ~20 min later (09:51/09:52 UTC, not from me - most likely the
+Cloudflare Worker and/or the bot's own scheduler both catching up), and
+both native `schedule` crons finally landing ~12 hours late (14:36/15:17
+UTC) each independently force-ran and pushed. Confirmed via `gh api` that
+`bot/daily_push.py` has zero internal dedup - it unconditionally sends
+whatever the latest `analysis` row is, every time it's invoked. Fixed in
+commit `af53825`: `workflow_dispatch` now has an explicit `force` input,
+default `false` - a bare dispatch (what the Worker and bot always send)
+now respects `run_if_stale` like the scheduled triggers; a genuine forced
+recovery needs `gh workflow run "Daily Market Analysis" -f force=true`.
+
+**Oracle migration reframe:** this whole incident is a live demonstration
+of exactly why blueprint 15 (Oracle migration) matters beyond just bot
+hosting - the user's stated plan (confirmed again 2026-08-28) is to
+eventually move cron scheduling itself onto the always-on Oracle VM
+(systemd timers / cron on the box), retiring GH Actions' native `schedule:`
+trigger and the Cloudflare Worker workaround entirely for time-sensitive
+triggers. That's why 4 OCPU/24 GB was chosen over the originally-planned
+2/12 - headroom for eventually running heavy analysis in-process on the
+box instead of dispatching to GH Actions. See §8 for the actual migration
+status - **still mid-flight**, paused after VM creation, not yet at the
+reserved-IP/bootstrap steps.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-28 (night)** - Root-caused and fixed a 5-Telegram-messages-in-
+  one-day incident: `daily_analysis.yml`'s `workflow_dispatch` had no
+  dedup, so every dispatch (manual, Worker, bot) force-ran and pushed
+  regardless of staleness. Added an explicit `force` input, default false
+  (commit `af53825`). Confirmed live: Cloudflare Worker cron triggers match
+  the code exactly (ruled out), Worker Logs were Disabled (now Enabled).
+  Reconfirmed the Oracle migration plan includes eventually moving cron
+  scheduling itself onto the VM - see §8, §28.
 - **2026-08-28 (evening)** - Shipped blueprint 21 Phase 0+1 (disabled
   top_performer/worst_performer as trade sources, added stocks_to_avoid +
   wishlist-skip negative filters) after catching and correcting a real
