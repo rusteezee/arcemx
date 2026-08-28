@@ -1,7 +1,33 @@
 # Blueprint 21. Horizon Pivot: trade where the model actually has skill
 
-**Status:** proposed 2026-08-28, not built. Supersedes nothing; changes what
-the paper trader consumes, not how it manages risk.
+**Status:** Phase 0 + revised Phase 1 built 2026-08-28. Supersedes nothing;
+changes what the paper trader consumes, not how it manages risk.
+
+**CORRECTION 2026-08-28, same day, before Phase 1 was implemented:** the
+original version of this blueprint recommended trading `wishlist_signals`
+`buy_now` calls at a 60-session horizon, justified by `long_pick_tp_sl`
+(t=+5.71). That justification was wrong on two independent counts, both
+caught before any trading code shipped:
+
+1. `long_pick_tp_sl` grades `raw.get("long_term_picks")`. That field was
+   real in the schema used up to ~analysis_id 77 (June 2026) - confirmed
+   by reading `analysis.raw_json` directly for id=24, which has a genuine
+   `long_term_picks` array with real theses. **The current SYSTEM_PROMPT
+   does not generate this field at all.** It is dead - no longer connected
+   to anything the live pipeline produces. It has nothing to do with
+   `wishlist_signals`.
+2. Even setting that aside, isolating `wishlist_signals` `buy_now` calls
+   specifically (not the blended `wishlist_7d` score, which mixes
+   buy_now/wait/skip) shows **no edge**: n=338, mean 7-day return -0.13%,
+   t=-0.44. The strong `wishlist_7d` aggregate score is driven almost
+   entirely by `skip` calls correctly predicting declines (n=176, mean
+   -2.11%, t=-6.97), not by `buy_now` predicting gains.
+
+Net effect: there is currently **no validated positive-edge "what to buy"
+signal** anywhere in the live schema. Every source with real, live,
+current skill is a NEGATIVE filter (`avoid_7d`, wishlist `skip`). Phase 1
+below was rewritten accordingly - it adds negative filters, not a new buy
+source. Reviving a buy source is deferred to Phase 5.
 
 **Origin:** a full skill audit of all 4,310 graded `prediction_scores` rows,
 run 2026-08-28 to answer "why is the paper trader's win rate only 20%?".
@@ -85,8 +111,9 @@ The trader's `eval_signals()` consumes exactly four sources:
 `stock_analyst`, `top_performer`, `worst_performer`,
 `holding_outlook_1d`/`wishlist_outlook_1d`.
 
-- `wishlist_signals` (graded as `wishlist_7d` t=+8.31 and
-  `long_pick_tp_sl` t=+5.71): **never traded.**
+- `wishlist_signals` `skip` calls (the real, validated half of
+  `wishlist_7d` - see CORRECTION above; `buy_now` itself has no edge):
+  **never used**, not even as a negative filter.
 - `stocks_to_avoid` (graded as `avoid_7d` t=+7.68): **never traded**, not
   even as a negative filter.
 - `portfolio_verdicts` (graded as `verdict_tp_sl` t=+3.13): **never traded.**
@@ -172,31 +199,58 @@ stop it opening positions.
   It does NOT by itself create a profitable system. It stops paying to be
   wrong.
 
-### Phase 1. Trade the long-horizon signals that already score well
+### Phase 1 (REVISED). Negative filters only - no new buy source
 
-Add a `wishlist_signal` evaluator consuming `raw_json.wishlist_signals`
-(fields: `ticker`, `signal` = buy_now|wait|skip, `entry_zone`, `reason`).
+No positive-edge buy signal exists in the live schema (see CORRECTION
+above). Phase 1 is therefore risk reduction, not signal addition:
 
-- Trade only `signal == "buy_now"`.
-- Horizon: 60 sessions, matching how `long_pick_tp_sl` is graded (that is
-  the horizon the +5.71 t-stat was measured at; a shorter hold is a
-  different, unmeasured bet).
-- Geometry: unchanged. `geometry.volatility_scaled_barriers(...)` with
-  `horizon=60`. Its sqrt-time scaling already widens barriers correctly.
-  Do not hand-tune barriers to make the numbers look better.
-- Entry price: parse `entry_zone` with the existing `_parse_inr` /
-  `_parse_range_band` helpers.
+1. **Disable `worst_performer` too, alongside `top_performer`.**
+   `short_pick_tp_sl` (its 10-session target/stop grade) is significantly
+   negative: t=-2.60. Same treatment as Phase 0, same reasoning. It is
+   only 5 of 64 backtest trades and already flagged `idealized_short`
+   (retail cannot short delivery), so this is not where the money was
+   being lost - it is disabled for consistency with the evidence, not
+   because it was a large loss source.
+2. **`stocks_to_avoid` as a negative filter.** If a ticker appears in
+   today's `stocks_to_avoid`, block any entry on it from any remaining
+   source. `avoid_7d` scores t=+7.68 on this - real, current, live.
+3. **Wishlist `skip` as a second negative filter**, separate from
+   `stocks_to_avoid`. When `wishlist_signals` names a ticker with
+   `signal == "skip"`, block entries on it too. This is the actual
+   validated half of `wishlist_7d` (t=-6.97 on realized returns after a
+   skip call - the model is right that the stock will underperform).
+   `wait` and `buy_now` carry no filtering signal (t=+1.13 and -0.44,
+   both statistically flat) and should NOT be used to block or allow
+   anything.
 
-Then add `stocks_to_avoid` as a **negative filter**, not a trade source: if
-a ticker appears in today's `stocks_to_avoid`, skip any entry on it from
-any source. `avoid_7d` scores t=+7.68 - the model is genuinely good at
-naming what to stay away from, and that is free to act on.
+What this leaves live to actually open a NEW long position: `stock_analyst`
+(currently near-dormant - see Phase 5) and the 1-day outlook evaluators
+(`holding_outlook_1d` / `wishlist_outlook_1d`, ungraded in this audit -
+should be measured before trusting them, see Phase 3 note). Realistic
+expectation: **trade count may drop to near zero** until Phase 5 gives the
+trader something with a genuine buy-side edge to act on. That is the
+honest, intended outcome of this phase, not a bug.
 
-Leave `worst_performer` shorts as they are for now. `short_pick_tp_sl` is
-significantly negative (t=-2.60) at its 10-session horizon, so they are a
-candidate for Phase 0 treatment too - but they are only 5 of 64 trades and
-already flagged `idealized_short` (retail cannot short delivery anyway), so
-they are not what is costing money.
+### Phase 5 (new, not built, needs its own design pass). Revive a buy signal
+
+Two candidates, both bigger than a same-day fix:
+
+- **Reintroduce a `long_term_picks`-style field** to `SYSTEM_PROMPT`: a
+  small number (3-5) of high-conviction long-thesis picks with explicit
+  numeric target/stop_loss and a real thesis, graded the same way the old
+  field was (`grade_pick_tp_sl(..., sessions=60)`). This is the one place
+  genuine buy-side skill was ever measured (t=+5.71) - it is worth trying
+  to recreate, not just mourn.
+- **Systematize `stock_analyst`.** It currently only fires on-demand from
+  the dashboard - `stock_analyses` rows are not created on a schedule, so
+  it contributed zero trades to any backtest despite being the trader's
+  documented highest-priority source. Consider a small daily batch (e.g.
+  request `stock_analyst` calls for the top N technical-screen names) so
+  it actually has data to evaluate.
+
+Either path needs its own accumulation period before it can be trusted -
+do not fast-track a new signal into live trading without the same kind of
+audit this blueprint just went through.
 
 ### Phase 2. Re-tune the cost gate for the new horizon
 
@@ -259,14 +313,20 @@ base rate, it was regime luck and the flag should be removed.
 
 - [ ] `top_performer` no longer opens trades in either `paper_trader.py` or
       `backtest.py`, and is still graded.
-- [ ] `wishlist_signals` with `signal == "buy_now"` opens trades at a
-      60-session horizon, in both files.
-- [ ] `stocks_to_avoid` blocks entries on named tickers, in both files.
+- [ ] `worst_performer` no longer opens trades in either file, and is
+      still graded.
+- [ ] `stocks_to_avoid` blocks entries (from any remaining source) on
+      named tickers, in both files.
+- [ ] `wishlist_signals` with `signal == "skip"` blocks entries on named
+      tickers, in both files. `buy_now`/`wait` do nothing (no edge either
+      direction).
 - [ ] A fresh `backtest_runs` row exists, with its id and full
       before/after delta quoted in the PR body (standing doctrine: any
       change to gates must show the backtest delta).
 - [ ] `KNOWLEDGE_BASE.md` updated with the outcome, including the case
       where it did NOT work.
+- [ ] Phase 5 (reviving a real buy signal) opened as its own follow-up,
+      not silently skipped.
 
 ---
 

@@ -57,6 +57,8 @@ from analyzer.paper_trader import (
     LIQUIDITY_MIN_CR,
     RISK_PER_TRADE,
     MAX_NOTIONAL_PCT,
+    TRADE_TOP_PERFORMERS,
+    TRADE_WORST_PERFORMERS,
     TICKER_FREEZE_LOSSES,
     TICKER_FREEZE_LOOKBACK_DAYS,
     TICKER_FREEZE_DURATION_DAYS,
@@ -79,6 +81,7 @@ from analyzer.paper_trader import (
     _parse_range_band,
     _resolve_portfolio_base,
     _ticker_sector_and_cap,
+    _normalize_ticker,
 )
 from analyzer.regime import regime_from_history
 
@@ -451,7 +454,8 @@ def _open_shadow_trade(book: ShadowBook, *, source_kind, source_run_id, ticker, 
 
 
 def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfolio_base: float,
-                        breaker_tripped: bool = False) -> str | None:
+                        breaker_tripped: bool = False,
+                        avoid_set: set[str] | None = None) -> str | None:
     sa_id = row["id"]
     ticker = row["ticker"]
     j = row.get("llm_json") or {}
@@ -463,6 +467,8 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
 
     if breaker_tripped:
         return "circuit_breaker"
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        return "avoid_or_skip_listed"
     if rating != "buy":
         return "not_buy"
     if not isinstance(edge, (int, float)):
@@ -537,7 +543,8 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
 
 def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, hist: HistCache,
                         sb, portfolio_base: float, calib_by_dim: dict,
-                        breaker_tripped: bool = False) -> str | None:
+                        breaker_tripped: bool = False,
+                        avoid_set: set[str] | None = None) -> str | None:
     raw_ticker = (tp.get("ticker") or "").strip().upper()
     if not raw_ticker:
         return None
@@ -545,6 +552,8 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
 
     if breaker_tripped:
         return "circuit_breaker"
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        return "avoid_or_skip_listed"
 
     conf = _conf_from_winprob(tp)
     edge = tp.get("expected_edge_pct")
@@ -625,7 +634,8 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
 
 def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook, hist: HistCache,
                           sb, portfolio_base: float, calib_by_dim: dict,
-                          breaker_tripped: bool = False) -> str | None:
+                          breaker_tripped: bool = False,
+                          avoid_set: set[str] | None = None) -> str | None:
     """Backtest mirror of paper_trader._evaluate_worst_performer (blueprint
     11): worst_performers traded as SHORTS, inverted geometry + inverted
     regime interaction (shorts allowed in risk_mode=off, blocked only on
@@ -637,6 +647,8 @@ def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook,
 
     if breaker_tripped:
         return "circuit_breaker"
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        return "avoid_or_skip_listed"
 
     conf = _conf_from_winprob(wp)
     edge = wp.get("expected_edge_pct")
@@ -714,7 +726,8 @@ def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook,
 
 def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, book: ShadowBook,
                   hist: HistCache, sb, portfolio_base: float, calib_by_dim: dict,
-                  breaker_tripped: bool = False) -> str | None:
+                  breaker_tripped: bool = False,
+                  avoid_set: set[str] | None = None) -> str | None:
     raw_ticker = (outlook.get("ticker") or "").strip().upper()
     if not raw_ticker:
         return None
@@ -722,6 +735,8 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
 
     if breaker_tripped:
         return "circuit_breaker"
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        return "avoid_or_skip_listed"
 
     direction = (outlook.get("direction") or "").lower()
     if direction != "up":
@@ -854,11 +869,24 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
             continue
         r["_asof"] = asof
         events.append((asof, "stock_analyst", r))
+    # blueprint 21 Phase 1: as-of avoid_set checkpoints, one per analysis
+    # row, from stocks_to_avoid + wishlist skip calls. No-lookahead: the
+    # replay loop below only ever uses the checkpoint dated on/before the
+    # event it is currently evaluating.
+    avoid_checkpoints: list[tuple[datetime, set[str]]] = []
     for a in a_rows:
         asof = _parse_dt(a.get("run_at"))
         if asof is None:
             continue
         raw = a.get("raw_json") or {}
+        day_avoid = set()
+        for av in (raw.get("stocks_to_avoid") or []):
+            if isinstance(av, dict) and av.get("ticker"):
+                day_avoid.add(_normalize_ticker(av["ticker"]))
+        for w in (raw.get("wishlist_signals") or []):
+            if isinstance(w, dict) and w.get("ticker") and (w.get("signal") or "").lower() == "skip":
+                day_avoid.add(_normalize_ticker(w["ticker"]))
+        avoid_checkpoints.append((asof, day_avoid))
         for source_kind, key in (("holding_outlook_1d", "holding_outlooks_1d"),
                                  ("wishlist_outlook_1d", "wishlist_outlooks_1d")):
             for outlook in (raw.get(key) or []):
@@ -867,17 +895,22 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
                 if not isinstance(outlook, dict):
                     continue
                 events.append((asof, source_kind, {"a_id": a["id"], "outlook": outlook}))
-        for tp in (raw.get("top_performers") or []):
-            # Same legacy-schema guard as outlooks above.
-            if not isinstance(tp, dict):
-                continue
-            events.append((asof, "top_performer", {"a_id": a["id"], "tp": tp}))
-        for wp in (raw.get("worst_performers") or []):
-            # Same legacy-schema guard as outlooks above.
-            if not isinstance(wp, dict):
-                continue
-            events.append((asof, "worst_performer", {"a_id": a["id"], "wp": wp}))
+        # top_performer/worst_performer: DISABLED (blueprint 21) - see
+        # TRADE_TOP_PERFORMERS/TRADE_WORST_PERFORMERS in paper_trader.py
+        # for the measured negative-alpha evidence. Not added as events at
+        # all here, mirroring eval_signals() not iterating them live.
+        if TRADE_TOP_PERFORMERS:
+            for tp in (raw.get("top_performers") or []):
+                if not isinstance(tp, dict):
+                    continue
+                events.append((asof, "top_performer", {"a_id": a["id"], "tp": tp}))
+        if TRADE_WORST_PERFORMERS:
+            for wp in (raw.get("worst_performers") or []):
+                if not isinstance(wp, dict):
+                    continue
+                events.append((asof, "worst_performer", {"a_id": a["id"], "wp": wp}))
     events.sort(key=lambda e: e[0])
+    avoid_checkpoints.sort(key=lambda c: c[0])
 
     if not events:
         return {"trade_count": 0, "note": "no analysis history to replay", "trades": []}
@@ -890,11 +923,18 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
     counts = {"evaluated": 0, "entered": 0}
     skips: dict[str, int] = {}
     breaker_tripped = False
+    avoid_set: set[str] = set()
+    avoid_idx = 0
 
     for asof, kind, payload in events:
         _mark_shadow_book(book, hist, asof)
         counts["evaluated"] += 1
         breaker_tripped = _update_breaker(book, portfolio_base, breaker_tripped)
+        # Advance to the latest avoid checkpoint dated on/before this event -
+        # never peek at a checkpoint from a future analysis row.
+        while avoid_idx < len(avoid_checkpoints) and avoid_checkpoints[avoid_idx][0] <= asof:
+            avoid_set = avoid_checkpoints[avoid_idx][1]
+            avoid_idx += 1
         # Compounding sizing (blueprint 10): when on, each evaluator's
         # qty math reads the CURRENT equity (portfolio_base + cumulative
         # closed net_pnl) instead of the fixed cost basis for the whole
@@ -909,16 +949,16 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
         )
         if kind == "stock_analyst":
             outcome = _eval_stock_analyst(payload, book, hist, sb, sizing_base,
-                                          breaker_tripped=breaker_tripped)
+                                          breaker_tripped=breaker_tripped, avoid_set=avoid_set)
         elif kind == "top_performer":
             outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, sizing_base,
-                                          calib_by_dim, breaker_tripped=breaker_tripped)
+                                          calib_by_dim, breaker_tripped=breaker_tripped, avoid_set=avoid_set)
         elif kind == "worst_performer":
             outcome = _eval_worst_performer(payload["a_id"], payload["wp"], asof, book, hist, sb, sizing_base,
-                                            calib_by_dim, breaker_tripped=breaker_tripped)
+                                            calib_by_dim, breaker_tripped=breaker_tripped, avoid_set=avoid_set)
         else:
             outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, sizing_base,
-                                    calib_by_dim, breaker_tripped=breaker_tripped)
+                                    calib_by_dim, breaker_tripped=breaker_tripped, avoid_set=avoid_set)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome:

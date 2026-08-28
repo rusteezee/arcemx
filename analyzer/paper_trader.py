@@ -80,6 +80,19 @@ MIN_CONF = 55                    # stated-win_prob floor (see _conf_from_winprob
 MIN_EDGE_PCT = 1.5               # round-trip friction safety cushion. Risk-
                                  # adjusted (consensus + bear already applied),
                                  # so this stays the decisive quality gate.
+TRADE_TOP_PERFORMERS = False     # blueprint 21: top_performer_1d measured
+                                 # mean alpha -0.181% vs NIFTY over 792
+                                 # individually-graded picks (t=-2.56),
+                                 # negative in all 4 quarters of the sample
+                                 # - persistent, not a fluke. Disabled
+                                 # 2026-08-28. Grading stays on (grader.py
+                                 # is untouched) so the finding stays
+                                 # falsifiable - re-enable only if a future
+                                 # audit shows it turned positive.
+TRADE_WORST_PERFORMERS = False   # blueprint 21: short_pick_tp_sl (its
+                                 # 10-session target/stop grade) measured
+                                 # t=-2.60. Same treatment as top_performer
+                                 # for the same reason. Disabled 2026-08-28.
 SECTOR_CAP = 2                   # max concurrent open trades in same sector
 LIQUIDITY_MIN_CR = 1.0           # avg 20d turnover >= 1 cr
 BROKERAGE_FLAT = 5.0             # INDstocks flat per order
@@ -126,6 +139,38 @@ COST_TO_PROFIT_MAX = 0.40        # skip if estimated round-trip cost (brokerage+
 
 def _sb():
     return create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+
+
+def _normalize_ticker(tk) -> str:
+    """Upper-case, strip .NS. The schema is inconsistent about whether a
+    ticker carries the suffix (top/worst_performers: "with or without .NS";
+    wishlist_signals: "without .NS" per SYSTEM_PROMPT) so any set-membership
+    check across sources needs a normalized key or it silently never matches."""
+    return (str(tk or "")).strip().upper().removesuffix(".NS")
+
+
+def _avoid_set(sb, now: datetime) -> set[str]:
+    """blueprint 21 Phase 1: tickers to refuse entry on regardless of
+    source, from the two dimensions with real, current, live-measured
+    negative-direction skill: stocks_to_avoid (avoid_7d t=+7.68) and
+    wishlist_signals skip calls (isolated per-ticker return t=-6.97,
+    n=176 - the actual validated half of wishlist_7d; buy_now itself
+    measured t=-0.44, no edge, and is NOT used here). Built from the
+    single most recent analysis row so it reflects today's call, not a
+    stale multi-day union."""
+    row = sb.table("analysis").select("run_at,raw_json").order(
+        "run_at", desc=True).limit(1).execute().data
+    if not row:
+        return set()
+    raw = row[0].get("raw_json") or {}
+    out = set()
+    for a in (raw.get("stocks_to_avoid") or []):
+        if isinstance(a, dict) and a.get("ticker"):
+            out.add(_normalize_ticker(a["ticker"]))
+    for w in (raw.get("wishlist_signals") or []):
+        if isinstance(w, dict) and w.get("ticker") and (w.get("signal") or "").lower() == "skip":
+            out.add(_normalize_ticker(w["ticker"]))
+    return out
 
 
 def _resolve_portfolio_base(sb) -> float:
@@ -679,7 +724,8 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
                   portfolio_base: float | None = None,
                   regime: dict | None = None,
                   earnings_cache: dict | None = None,
-                  breaker_tripped: bool = False) -> str:
+                  breaker_tripped: bool = False,
+                  avoid_set: set[str] | None = None) -> str:
     """Apply gate stack to one stock_analyses row. Returns action or
     skip_reason string for logging. ALWAYS writes a paper_signals row
     so the skipped-winner attribution is computable later."""
@@ -706,6 +752,10 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
     if breaker_tripped:
         _log_signal(sb, ticker, sa_id, "skip", "circuit_breaker", confidence=confidence, edge=edge)
         return "circuit_breaker"
+
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        _log_signal(sb, ticker, sa_id, "skip", "avoid_or_skip_listed", confidence=confidence, edge=edge)
+        return "avoid_or_skip_listed"
 
     # Pre-schema attribution: Stock Analyst runs that predate the edge
     # decomposition commit (f406518) have edge=None. Distinguish that
@@ -949,6 +999,14 @@ def eval_signals(now: datetime | None = None) -> dict:
     # top_performer picks the same day).
     earnings_cache: dict = {}
 
+    # blueprint 21 Phase 1: negative filter from stocks_to_avoid + wishlist
+    # skip calls, both real live-measured skill (avoid_7d t=+7.68, skip
+    # calls t=-6.97). Computed once per pass, checked by every evaluator
+    # that still opens trades.
+    avoid_set = _avoid_set(sb, now)
+    if avoid_set:
+        print(f"paper_trader: avoid_set ({len(avoid_set)}) = {sorted(avoid_set)}")
+
     counts = {"evaluated": 0, "entered": 0}
     skips: dict[str, int] = {}
 
@@ -961,7 +1019,7 @@ def eval_signals(now: datetime | None = None) -> dict:
         counts["evaluated"] += 1
         outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base,
                                regime=regime, earnings_cache=earnings_cache,
-                               breaker_tripped=breaker_tripped)
+                               breaker_tripped=breaker_tripped, avoid_set=avoid_set)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome == "already_evaluated":
@@ -999,47 +1057,50 @@ def eval_signals(now: datetime | None = None) -> dict:
                 outcome = _evaluate_outlook(sb, a, outlook, source_kind, now,
                                            portfolio_base=portfolio_base, regime=regime,
                                            earnings_cache=earnings_cache,
-                                           breaker_tripped=breaker_tripped)
+                                           breaker_tripped=breaker_tripped, avoid_set=avoid_set)
                 if outcome == "enter":
                     counts["entered"] += 1
                 elif outcome == "already_evaluated":
                     pass
                 else:
                     skips[outcome] = skips.get(outcome, 0) + 1
-        # top_performers: the model's INDEPENDENT market-wide long picks.
-        # This is the source that breaks the portfolio/wishlist tunnel
-        # vision. names here are chosen from the whole NSE universe, not
-        # the user's existing exposure.
-        for tp in (raw.get("top_performers") or []):
-            if not isinstance(tp, dict):
-                continue
-            counts["evaluated"] += 1
-            outcome = _evaluate_top_performer(sb, a, tp, now,
-                                              portfolio_base=portfolio_base, regime=regime,
-                                              earnings_cache=earnings_cache,
-                                              breaker_tripped=breaker_tripped)
-            if outcome == "enter":
-                counts["entered"] += 1
-            elif outcome == "already_evaluated":
-                pass
-            else:
-                skips[outcome] = skips.get(outcome, 0) + 1
-        # worst_performers: the model's INDEPENDENT bearish calls, traded
-        # as SHORTS (blueprint 11) - the mirror of top_performers above.
-        for wp in (raw.get("worst_performers") or []):
-            if not isinstance(wp, dict):
-                continue
-            counts["evaluated"] += 1
-            outcome = _evaluate_worst_performer(sb, a, wp, now,
-                                                portfolio_base=portfolio_base, regime=regime,
-                                                earnings_cache=earnings_cache,
-                                                breaker_tripped=breaker_tripped)
-            if outcome == "enter":
-                counts["entered"] += 1
-            elif outcome == "already_evaluated":
-                pass
-            else:
-                skips[outcome] = skips.get(outcome, 0) + 1
+        # top_performers: DISABLED (blueprint 21) - measured mean alpha
+        # -0.181% vs NIFTY over 792 picks, t=-2.56, negative in all 4
+        # quarters of the sample. Still counted/graded below via grader.py,
+        # just no longer opens trades. See TRADE_TOP_PERFORMERS docstring.
+        if TRADE_TOP_PERFORMERS:
+            for tp in (raw.get("top_performers") or []):
+                if not isinstance(tp, dict):
+                    continue
+                counts["evaluated"] += 1
+                outcome = _evaluate_top_performer(sb, a, tp, now,
+                                                  portfolio_base=portfolio_base, regime=regime,
+                                                  earnings_cache=earnings_cache,
+                                                  breaker_tripped=breaker_tripped, avoid_set=avoid_set)
+                if outcome == "enter":
+                    counts["entered"] += 1
+                elif outcome == "already_evaluated":
+                    pass
+                else:
+                    skips[outcome] = skips.get(outcome, 0) + 1
+        # worst_performers: DISABLED (blueprint 21) - short_pick_tp_sl
+        # (10-session target/stop) measured t=-2.60. See
+        # TRADE_WORST_PERFORMERS docstring.
+        if TRADE_WORST_PERFORMERS:
+            for wp in (raw.get("worst_performers") or []):
+                if not isinstance(wp, dict):
+                    continue
+                counts["evaluated"] += 1
+                outcome = _evaluate_worst_performer(sb, a, wp, now,
+                                                    portfolio_base=portfolio_base, regime=regime,
+                                                    earnings_cache=earnings_cache,
+                                                    breaker_tripped=breaker_tripped, avoid_set=avoid_set)
+                if outcome == "enter":
+                    counts["entered"] += 1
+                elif outcome == "already_evaluated":
+                    pass
+                else:
+                    skips[outcome] = skips.get(outcome, 0) + 1
 
     counts["skips"] = skips
     print(f"paper_trader.eval_signals: {counts}")
@@ -1049,7 +1110,8 @@ def eval_signals(now: datetime | None = None) -> dict:
 def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
                             portfolio_base: float, regime: dict | None = None,
                             earnings_cache: dict | None = None,
-                            breaker_tripped: bool = False) -> str:
+                            breaker_tripped: bool = False,
+                            avoid_set: set[str] | None = None) -> str:
     """Gate-stack a single top_performers entry. Unlike outlook signals
     (which synthesize geometry from a range band), top_performers carry
     the model's explicit entry / target / stop_loss + a pre-computed
@@ -1066,6 +1128,8 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
         ticker = raw_ticker + ".NS"
     else:
         ticker = raw_ticker
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        return "avoid_or_skip_listed"
 
     def L(action, skip_reason=None, paper_trade_id=None, edge=None, meta=None):
         _log_signal(sb, ticker, a_id, action, skip_reason=skip_reason,
@@ -1233,7 +1297,8 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
 def _evaluate_worst_performer(sb, analysis_row: dict, wp: dict, now: datetime,
                               portfolio_base: float, regime: dict | None = None,
                               earnings_cache: dict | None = None,
-                              breaker_tripped: bool = False) -> str:
+                              breaker_tripped: bool = False,
+                              avoid_set: set[str] | None = None) -> str:
     """Gate-stack a single worst_performers entry as a SHORT (blueprint 11).
     Structural mirror of _evaluate_top_performer with inverted geometry:
     for a short, target sits BELOW entry (profit on a fall) and stop
@@ -1256,6 +1321,8 @@ def _evaluate_worst_performer(sb, analysis_row: dict, wp: dict, now: datetime,
         ticker = raw_ticker + ".NS"
     else:
         ticker = raw_ticker
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        return "avoid_or_skip_listed"
 
     def L(action, skip_reason=None, paper_trade_id=None, edge=None, meta=None):
         _log_signal(sb, ticker, a_id, action, skip_reason=skip_reason,
@@ -1501,7 +1568,8 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                       source_kind: str, now: datetime,
                       portfolio_base: float, regime: dict | None = None,
                       earnings_cache: dict | None = None,
-                      breaker_tripped: bool = False) -> str:
+                      breaker_tripped: bool = False,
+                      avoid_set: set[str] | None = None) -> str:
     """Gate-stack a single outlook entry. outlook carries direction +
     range + confidence + key_driver. Target/stop synthesized from the
     range band: long entry at mid, target = upper of range, stop = lower.
@@ -1537,6 +1605,10 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
     if breaker_tripped:
         L("skip", "circuit_breaker")
         return "circuit_breaker"
+
+    if avoid_set and _normalize_ticker(ticker) in avoid_set:
+        L("skip", "avoid_or_skip_listed")
+        return "avoid_or_skip_listed"
 
     direction = (outlook.get("direction") or "").lower()
     stated_conf = outlook.get("confidence")
