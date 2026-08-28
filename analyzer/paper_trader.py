@@ -56,7 +56,20 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 PORTFOLIO_BASE_FALLBACK = 65_000  # used only when portfolio table lookup fails
 RISK_PER_TRADE = 0.02            # 2% portfolio risk per single trade
-MAX_NOTIONAL_PCT = 0.05          # 5% portfolio cap on any single trade's notional
+MAX_NOTIONAL_PCT = 0.08          # portfolio cap on any single trade's notional.
+                                 # Raised 5%->8% on 28/08: at a ~52k portfolio_base
+                                 # the 5% cap (2,621 INR) forced qty=1 on any stock
+                                 # above that price, then the qty=max(1,...) floor
+                                 # quietly re-exceeded the cap it was meant to
+                                 # enforce. Root-caused live via backtest_runs id=5:
+                                 # 43% of correctly-directioned trades still lost
+                                 # money net because the forced qty=1 position
+                                 # couldn't absorb ~20-25 INR flat/proportional
+                                 # round-trip costs. 8% (4,194 INR at this base)
+                                 # still caps concentration risk, just less
+                                 # aggressively than the level that was silently
+                                 # being violated anyway. See COST_TO_PROFIT_MAX
+                                 # below for the complementary, size-agnostic fix.
 MIN_CONF = 55                    # stated-win_prob floor (see _conf_from_winprob).
                                  # Lowered 60->55 on 25/06: the model's B-tier
                                  # stated win_prob band is 0.50-0.65, so a 60
@@ -93,6 +106,22 @@ EARNINGS_BLACKOUT_SESSIONS = 3   # no new entries when next earnings is within t
 BREAKER_DD_PCT = 8.0             # circuit breaker trips above this current drawdown-from-peak
 BREAKER_REARM_PCT = 4.0          # re-arms once drawdown recovers below this (half the trip level)
 BREAKER_MIN_TRADES = 10          # below this closed-trade count the curve is too noisy; pass through
+COST_TO_PROFIT_MAX = 0.40        # skip if estimated round-trip cost (brokerage+
+                                 # STT+exchange+SEBI+GST+slippage, both legs)
+                                 # would exceed this fraction of the profit AT
+                                 # TARGET, given the qty sizing actually landed
+                                 # on. Added 28/08 after backtest_runs id=5 showed
+                                 # trades like CEMPRO (gross +13.32, costs 16.35 -
+                                 # a 123% ratio) and DATAPATTNS (gross +12.32,
+                                 # costs ~22 - also >100%) losing money net
+                                 # despite a correct directional call. This is
+                                 # orthogonal to MAX_EDGE_PCT (that gates the
+                                 # NOTIONAL % edge; this gates whether the ACTUAL
+                                 # sized position can economically clear costs) -
+                                 # raising MAX_NOTIONAL_PCT alone doesn't catch
+                                 # every case (regime-half sizing, small
+                                 # portfolio_base, expensive stocks can still
+                                 # combine to force a too-small qty).
 
 
 def _sb():
@@ -348,6 +377,36 @@ def _broker_friction(notional_inr: float, action: str, side: str = "long") -> tu
     gst = (brokerage + exch) * GST_RATE
     total = brokerage + exch + sebi + stt + gst
     return float(total), float(stt)
+
+
+def _cost_dominated(qty: int, intent_px: float, target_px: float, edge_pct: float,
+                     cap_tier: str, avg_turnover_inr: float, side: str) -> bool:
+    """True when round-trip transaction costs would eat too much of the
+    PROBABILITY-WEIGHTED EXPECTED profit for the qty actually sized - see
+    COST_TO_PROFIT_MAX.
+
+    Deliberately NOT checked against profit-at-target: 56% of trades in
+    backtest_runs id=5/6 exit via "horizon" (price never reaches target OR
+    stop before the session ends), so the optimistic best-case target
+    profit is a much bigger number than what most trades ever realize -
+    a first version of this gate compared against target-case profit and
+    fired ZERO times across 3,296 evaluations in a real backtest, verified
+    live 2026-08-28 to never even flag CEMPRO/DATAPATTNS, the exact known-
+    bad historical trades this gate exists to catch. `edge_pct` (already
+    win_prob-weighted: tgt_pct*win_prob - stp_pct*(1-win_prob)) is the
+    right reference point - it's the actual expected rupee outcome before
+    costs, not the optimistic one."""
+    entry_action = "buy" if side == "long" else "sell"
+    exit_action = "sell" if side == "long" else "buy"
+    _, entry_slip = _apply_slippage(intent_px, qty, entry_action, cap_tier, avg_turnover_inr)
+    _, exit_slip = _apply_slippage(target_px, qty, exit_action, cap_tier, avg_turnover_inr)
+    entry_fric, _ = _broker_friction(qty * intent_px, entry_action, side)
+    exit_fric, _ = _broker_friction(qty * target_px, exit_action, side)
+    total_cost = entry_slip + exit_slip + entry_fric + exit_fric
+    expected_profit = (edge_pct / 100.0) * intent_px * qty
+    if expected_profit <= 0:
+        return True
+    return (total_cost / expected_profit) > COST_TO_PROFIT_MAX
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +832,12 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
 
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "long"):
+        _log_signal(sb, ticker, sa_id, "skip", "cost_dominated",
+                    confidence=confidence, edge=edge,
+                    meta={"qty": qty, "geometry": geometry})
+        return "cost_dominated"
+
     # Fill simulation: anchor on next-session open, add buy-side slippage.
     requested_at = analysis_row.get("requested_at") or now.isoformat()
     try:
@@ -1107,6 +1172,11 @@ def _evaluate_top_performer(sb, analysis_row: dict, tp: dict, now: datetime,
                      int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
+
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "long"):
+        L("skip", "cost_dominated", edge=edge, meta={"qty": qty, "geometry": geometry})
+        return "cost_dominated"
+
     horizon = int(tp.get("horizon_days") or 1)
 
     run_at = analysis_row.get("run_at") or now.isoformat()
@@ -1290,6 +1360,11 @@ def _evaluate_worst_performer(sb, analysis_row: dict, wp: dict, now: datetime,
                      int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
+
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "short"):
+        L("skip", "cost_dominated", edge=edge, meta={"qty": qty, "geometry": geometry})
+        return "cost_dominated"
+
     horizon = int(wp.get("horizon_days") or 1)
 
     run_at = analysis_row.get("run_at") or now.isoformat()
@@ -1571,6 +1646,10 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
     qty = max(1, min(qty_by_risk, qty_by_notional_cap))
     if REGIME_GATE_ON and regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
+
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "long"):
+        L("skip", "cost_dominated", edge=edge, meta={"qty": qty, "geometry": geometry})
+        return "cost_dominated"
 
     run_at = analysis_row.get("run_at") or now.isoformat()
     try:

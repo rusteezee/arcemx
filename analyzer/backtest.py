@@ -3,7 +3,18 @@ trader's gate stack, as if it had been running since day 1.
 
 Reuses paper_trader.py's exact thresholds and cost-model functions
 (imported, not copied) so a future tune of MIN_CONF/MIN_EDGE_PCT/etc.
-automatically reflects here. Does NOT touch paper_trader.py or write to
+automatically reflects here. IMPORTANT CAVEAT, learned the hard way
+2026-08-28: this only covers threshold/function VALUE changes. The gate
+STACK ITSELF (the sequence of checks in _eval_stock_analyst/_eval_top_
+performer/_eval_worst_performer/_eval_outlook below) is a hand-written
+mirror of paper_trader.py's evaluators, not a call into them - a brand
+new gate added to paper_trader.py's evaluators does NOT automatically
+appear here. The cost_dominated gate (see paper_trader._cost_dominated)
+was added to both files' evaluators by hand for exactly this reason;
+any future new gate needs the same double-edit, and should be re-
+verified with a fresh run_backtest() the way this one was (fired 0
+times when only added to paper_trader.py, confirmed working once
+mirrored here too). Does NOT touch paper_trader.py or write to
 the live paper_trades/paper_signals tables. every simulated position
 lives in an in-memory "shadow" book for the duration of one replay, and
 only the final aggregate result (equity curve + trade list) is persisted,
@@ -62,6 +73,7 @@ from analyzer.paper_trader import (
     _weekday_sessions_between,
     _apply_slippage,
     _broker_friction,
+    _cost_dominated,
     _conf_from_winprob,
     _parse_inr,
     _parse_range_band,
@@ -513,6 +525,9 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
     if regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
 
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "long"):
+        return "cost_dominated"
+
     _open_shadow_trade(book, source_kind="stock_analyst", source_run_id=sa_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
                        horizon_days=horizon, qty=qty, confidence=confidence, edge=edge,
@@ -596,6 +611,9 @@ def _eval_top_performer(a_id: int, tp: dict, asof: datetime, book: ShadowBook, h
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
     if regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
+
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "long"):
+        return "cost_dominated"
 
     _open_shadow_trade(book, source_kind="top_performer", source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
@@ -682,6 +700,9 @@ def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook,
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
     if regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
+
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "short"):
+        return "cost_dominated"
 
     _open_shadow_trade(book, source_kind="worst_performer", source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,
@@ -776,6 +797,9 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
     qty = max(1, min(int(risk_budget / risk_per_share), int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)))
     if regime and regime.get("risk_mode") == "half":
         qty = max(1, int(qty * REGIME_HALF_MULT))
+
+    if _cost_dominated(qty, intent_px, target_px, edge, cap_tier, avg_turnover, "long"):
+        return "cost_dominated"
 
     _open_shadow_trade(book, source_kind=source_kind, source_run_id=a_id, ticker=ticker,
                        entered_at=asof, intent_px=intent_px, target_px=target_px, stop_px=stop_px,

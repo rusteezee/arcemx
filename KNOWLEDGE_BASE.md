@@ -684,10 +684,98 @@ profile are both mild; Twitter-via-Apify inherits Twitter's actual
 problems unchanged. Twitter/X sentiment stays parked - see §19-adjacent
 reasoning, add a Parked-ideas entry in ROADMAP.md if not already there.
 
+## 26. Why the win rate is 20%: the skill audit (2026-08-28)
+
+Full audit of all 4,310 graded `prediction_scores` rows, run to answer
+"why is the paper trader losing?". **Full detail, method, and the fix plan
+are in `blueprints/21-horizon-pivot.md`.** Headline findings:
+
+- **The traded signal has negative alpha.** `top_performer_1d`, 792
+  individually-graded picks: mean alpha -0.181% vs NIFTY, win rate 41.7%,
+  t=-2.56, and **negative in all four quarters** of the sample. This source
+  drove 47 of 64 backtest trades.
+- **Conviction tiers are not informative.** A-tier n=43 t=+0.05, B-tier
+  n=622 t=-2.80, C-tier n=125 win rate 50.4%. The "speculative" C picks beat
+  the "solid" B picks. Never gate or size on conviction.
+- **Skill rises monotonically with horizon.** Target-before-stop scores:
+  10-session picks 42.16 (t=-1.96) and shorts 38.28 (t=-2.60), 20-session
+  verdicts 56.40 (t=+3.13), **60-session long picks 73.96 (t=+5.71, 52.1%
+  target-first vs 4.2% stop-first)**. Also strong: `wishlist_7d` t=+8.31,
+  `avoid_7d` t=+7.68.
+- **None of the skilled signals are traded.** `wishlist_signals`,
+  `stocks_to_avoid`, and `portfolio_verdicts` are never consumed by
+  `eval_signals()`; the deep `stock_analyst` path produced zero backtest
+  trades (its table is only filled on-demand from the dashboard). All 64
+  backtest trades ran at `horizon_days=1`, 59 of 64 long.
+- **1-day trading is arithmetically impossible at this account size.**
+  Measured 1-day alpha ~0.2% vs a round-trip cost hurdle of 0.5% (large
+  positions) to 0.86% (the qty=1 cohort). Cost is 2.5-4.5x the signal. Even
+  a correct call cannot pay for its own execution. This is not a tuning
+  problem.
+- **A real but unstable bearish signal exists.** Model "down" calls on
+  NIFTY hit 66.7% (14/21) vs a 29.9% base rate, p=0.00054; `market_mood`
+  bear calls 73.7% (14/19) vs 31.0%, p=0.00016. **But it is not time-stable**
+  - down-calls went 10/10 in the first half of the sample and 4/11 in the
+  second. Track forward, do not trade yet. By contrast the model's bullish
+  claims are near-worthless: `direction_5d` up-calls 5.9% correct,
+  `direction_20d` down-calls 0/21, `fii_flow_1d` inflow-calls **0/30**.
+  There is a systematic optimism bias in its forward-looking bullish output.
+
+**Do not** invert the long-pick signal (overfit trap, and the alpha is below
+the cost hurdle in either direction), and **do not** loosen `MIN_CONF` /
+`MIN_EDGE_PCT` to recover trade volume.
+
+### Honest read on the "₹100-200/day" goal
+
+At the current ~₹52k `portfolio_base`, ₹150/day is ~72%/year. That is not a
+realistic sustainable target for a systematic retail strategy; a good one
+targets roughly 15-25%/year, which on ₹52k is ₹30-50 per trading day.
+₹150/day at a realistic 20%/year needs roughly ₹1.9 lakh deployed; ₹1,000/day
+needs roughly ₹12.5 lakh. So once any genuinely positive edge exists, the
+rupee target becomes mostly a capital question, not a signal question - but
+the edge has to come first, and it does not exist yet (every backtest to
+date: Sharpe negative, PSR 0, DSR 0).
+
+## 27. Cost-structure fixes to the paper trader (2026-08-28)
+
+Two changes made while diagnosing the above, both shipped:
+
+- **`MAX_NOTIONAL_PCT` 5% -> 8%.** At a ~₹52k base the 5% cap (₹2,621) forced
+  `qty=1` on any stock priced above that, and the `max(1, ...)` floor then
+  quietly re-exceeded the cap it was meant to enforce. 43% of
+  correctly-directioned trades were still losing money because a 1-share
+  position cannot absorb ~₹20-25 of round-trip cost.
+- **New `cost_dominated` gate** (`paper_trader._cost_dominated`): skips a
+  trade when estimated round-trip cost exceeds `COST_TO_PROFIT_MAX` (0.40) of
+  the probability-weighted expected profit. Deliberately measured against
+  `edge_pct`, NOT profit-at-target: 56% of trades exit via `horizon` (neither
+  barrier hit), so a first version that used the optimistic target-case
+  profit fired **zero times across 3,296 evaluations**.
+- **Trap worth knowing:** `backtest.py`'s gate stack is a hand-written mirror
+  of `paper_trader.py`'s evaluators, not a call into them. Adding a gate to
+  only one file silently does nothing in replay. Both files must be edited
+  together; `backtest.py`'s module docstring now says so.
+- **Result was mixed and is recorded honestly.** Run id=8 vs id=6: absolute
+  losses improved (-₹3,446 to -₹2,061) and max drawdown improved (6.19% to
+  3.80%), but Sharpe got *worse* (-13.245 to -16.199) because trade count
+  fell 65 -> 20 and the win rate did not improve. The gate mostly shrank the
+  book rather than improving per-trade quality. `COST_TO_PROFIT_MAX` is
+  therefore still considered un-tuned - see blueprint 21 Phase 2.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-28 (later)** - Ran a full skill audit over all 4,310 graded
+  `prediction_scores` rows to root-cause the 20% win rate. Found the traded
+  signal (`top_performer_1d`) has persistently negative alpha, conviction
+  tiers carry no information, model skill rises monotonically with horizon
+  (60-session picks t=+5.71 vs 10-session t=-1.96), none of the skilled
+  long-horizon signals are traded at all, and 1-day trading is
+  arithmetically unprofitable at this account size (cost hurdle 2.5-4.5x
+  the signal). Wrote `blueprints/21-horizon-pivot.md` with the fix plan.
+  See §26. Also shipped two cost-structure fixes with a mixed, honestly
+  recorded result - see §27.
 - **2026-08-28** - Reddit sentiment fully rebuilt on Apify after
   discovering Reddit's own OAuth app approval is gated shut (Responsible
   Builder Policy, Nov 2025). Root-caused and fixed a false-timeout bug
