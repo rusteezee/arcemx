@@ -725,6 +725,38 @@ are in `blueprints/21-horizon-pivot.md`.** Headline findings:
 the cost hurdle in either direction), and **do not** loosen `MIN_CONF` /
 `MIN_EDGE_PCT` to recover trade volume.
 
+**Correction found same day, before Phase 1 shipped:** the original plan was
+to trade `wishlist_signals` `buy_now` calls at a 60-session horizon,
+justified by `long_pick_tp_sl`. Both premises were wrong: `long_pick_tp_sl`
+grades `raw.get("long_term_picks")`, a field the CURRENT prompt does not
+generate at all (verified real in `analysis.raw_json` for id=24, June 2026 -
+the schema has since moved on and left this dimension orphaned, still
+scoring old data). And isolating `buy_now` specifically (not the blended
+`wishlist_7d` score) shows **no edge**: n=338, mean 7-day return -0.13%,
+t=-0.44. The strong `wishlist_7d` number was actually driven by `skip`
+calls correctly predicting declines (n=176, mean -2.11%, t=-6.97). See
+`blueprints/21-horizon-pivot.md`'s CORRECTION section for the full trail -
+caught before any trading code shipped, Phase 1 was rewritten to use
+`stocks_to_avoid` + wishlist `skip` as negative filters instead of a new
+buy source, since **no positive-edge buy signal currently exists anywhere
+in the live schema**.
+
+**Phase 0+1 shipped 2026-08-28** (commit `fe93525`): `top_performer` and
+`worst_performer` disabled as trade sources (`TRADE_TOP_PERFORMERS` /
+`TRADE_WORST_PERFORMERS = False` in `paper_trader.py`, mirrored in
+`backtest.py`), `stocks_to_avoid` + wishlist `skip` wired as hard negative
+filters on all remaining sources. Grading stays on for both disabled
+sources so the findings stay falsifiable. Fresh backtest (`backtest_runs`
+id=9) vs the prior best (id=6): Sharpe -13.245 -> -10.663, win rate
+23.1% -> 40.0%, max DD 6.19% -> 0.29%, net P&L -₹3,446 -> -₹133. Real
+improvement on every axis, but **not a clean pass** - DSR is still 0.0
+(n=5 trades, structurally can't resolve otherwise) and only 6 of 1,798
+evaluated signals entered a trade. Removing negative-EV sources worked
+exactly as measured; it also means there is now almost nothing left to
+trade. **Phase 5 (reviving a real buy-side signal) is the actual
+bottleneck going forward**, not a nice-to-have - without it the trade
+count will not grow toward the 60-trade Kelly gate at any real pace.
+
 ### Honest read on the "₹100-200/day" goal
 
 At the current ~₹52k `portfolio_base`, ₹150/day is ~72%/year. That is not a
@@ -762,10 +794,56 @@ Two changes made while diagnosing the above, both shipped:
   book rather than improving per-trade quality. `COST_TO_PROFIT_MAX` is
   therefore still considered un-tuned - see blueprint 21 Phase 2.
 
+## 28. Missed daily Telegram push (2026-08-28)
+
+No `Daily Market Analysis` GH Actions run fired at all today (a trading
+Friday) - not a failed run, zero run records for the entire scheduled
+window (08:20/08:43 IST) even ~6.5 hours after it should have fired.
+Confirmed the workflow itself is `active`, its YAML is valid, and the repo
+has no Actions-level pause. Manually dispatched it
+(`gh workflow run "Daily Market Analysis"`, run id `33159821672`) to
+deliver the day's update; that run took 16+ minutes on "Run aggregator"
+alone (normal - includes the new Apify Reddit fetch, see §25).
+
+**Root cause not fully confirmed - no Cloudflare access in this session
+to check the Worker's actual execution log.** Best-evidence hypothesis:
+`cloudflare/cron-dispatcher/src/index.js` (the reliable clock built
+specifically because GH's own `schedule:` trigger is documented-flaky) maps
+its own Cloudflare Cron Trigger to a workflow via an **exact string match**
+against a hardcoded table:
+```js
+const CRON_TO_WORKFLOW = { "50 2 * * 1-5": "daily_analysis.yml", ... };
+```
+If the Worker's cron trigger fires with any string mismatch, or its
+`GH_TOKEN` secret is stale/expired, the dispatch either gets silently
+skipped (`console.error` only, no user-visible signal) or fails outright.
+**Neither failure mode is currently monitored** - the existing dead-man
+ping (`HC_PING_URLS`) only fires when the GH Actions *workflow itself*
+completes; if nothing ever triggers the workflow, no ping fires either way.
+This is a real observability gap, not yet closed.
+
+**Next step, not yet done:** check the Cloudflare dashboard directly (Workers
+& Pages -> cron-dispatcher -> Logs / Triggers) to see whether the Worker's
+cron fired today and what `dispatch()` returned. If it's a GH_TOKEN
+expiry, rotate it (`gh secret set GH_TOKEN` on the repo AND update the
+Worker's own env). Worth adding an independent dead-man check specifically
+for "did the dispatcher fire" (e.g. Worker pings a distinct Healthchecks.io
+URL on every attempt, success or failure) so a silent miss like today's
+surfaces on its own instead of requiring the user to notice a missing
+Telegram message.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-28 (evening)** - Shipped blueprint 21 Phase 0+1 (disabled
+  top_performer/worst_performer as trade sources, added stocks_to_avoid +
+  wishlist-skip negative filters) after catching and correcting a real
+  error in the same day's earlier audit - see §26. Also investigated a
+  missed daily Telegram push: no GH Actions run fired at all today,
+  manually dispatched to recover it, root cause narrowed to the
+  Cloudflare cron-dispatcher but not confirmed (no Cloudflare access this
+  session) - see §28.
 - **2026-08-28 (later)** - Ran a full skill audit over all 4,310 graded
   `prediction_scores` rows to root-cause the 20% win rate. Found the traded
   signal (`top_performer_1d`) has persistently negative alpha, conviction
