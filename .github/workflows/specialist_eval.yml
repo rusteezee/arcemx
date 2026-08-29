@@ -39,7 +39,13 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install Python deps
-        run: pip install supabase python-dotenv requests
+        # yfinance (+ pandas, its own transitive dep) added 2026-08-29:
+        # score_prediction()'s range_1d path imports analyzer.grader for
+        # grade_range, and grader.py imports yfinance at module level -
+        # missing here caused every eval run to crash with
+        # ModuleNotFoundError partway through the target dim loop, after
+        # the -cnv fix got real scores flowing for the first time.
+        run: pip install supabase python-dotenv requests yfinance pandas
       - name: Install llama.cpp CLI (prebuilt binary)
         run: |
           # "*ubuntu-x64*" (not "*ubuntu*x64*") - the loose pattern also

@@ -207,7 +207,18 @@ def run_eval(model_slug: str, binary: str, model_path: str, days: int = 10) -> i
         if parsed is None:
             print(f"  {t['dimension']} analysis_id={t['analysis_id']}: no parseable JSON, skipped")
             continue
-        result = score_prediction(t["dimension"], parsed.get("call"), t["actual"])
+        try:
+            result = score_prediction(t["dimension"], parsed.get("call"), t["actual"])
+        except Exception as e:
+            # A single dim's scorer crashing (e.g. a missing dependency
+            # only that path needs - root-caused live 2026-08-29:
+            # range_1d's grade_range pulls in analyzer.grader, which
+            # imports yfinance at module level) used to take down the
+            # ENTIRE remaining target loop, silently losing every
+            # not-yet-processed analysis_id/dimension in this run rather
+            # than just the one that failed.
+            print(f"  {t['dimension']} analysis_id={t['analysis_id']}: scorer crashed ({e}), skipped")
+            continue
         if result is None:
             print(f"  {t['dimension']} analysis_id={t['analysis_id']}: unscoreable, skipped")
             continue
