@@ -281,7 +281,7 @@ before this was written. **Watch, not yet a problem:** those 5 came back
 guarantee trades follow. Needs a real run of days to know either way -
 same no-shortcut discipline as the rest of this blueprint.
 
-### Phase 2. Re-tune the cost gate for the new horizon
+### Phase 2. Re-tune the cost gate for the new horizon - DONE 2026-08-29
 
 `COST_TO_PROFIT_MAX = 0.40` was set on 2026-08-28 against 1-day trades and
 proved too aggressive there (cut 69% of volume, Sharpe went -13.2 to -16.2
@@ -293,12 +293,20 @@ Do not re-tune it by guessing. Re-run the replay after Phase 1 and read the
 actual `skips.cost_dominated` count. If it is near zero, leave the constant
 alone - it is correctly acting as a floor, not a filter.
 
-### Phase 3. Validate honestly before believing any of this
+**Result:** backtest id=10 (2026-08-29, post Phase 5) shows
+`skips.cost_dominated = 18` out of 1,869 evaluated (~1%). Near zero.
+**Constant left alone.** The gate is correctly acting as a floor, not a
+filter - nothing to re-tune.
+
+### Phase 3. Validate honestly before believing any of this - RUN 2026-08-29, NOT A CLEAN PASS
 
 Run `python -m analyzer.backtest` and compare against the current baseline
-run **id=8**: 20 trades, win rate 20.0%, Sharpe -16.199, max DD 3.80%, net
--₹2,061. (Earlier runs for reference: id=5 = 64 trades / 20.31% / -14.101;
-id=6 = 65 trades / 23.08% / -13.245.)
+run **id=9** (Phase 0+1, superseded id=8 which used the since-fixed
+optimistic-profit cost-gate reference - see §27 of `KNOWLEDGE_BASE.md`):
+5 trades, win rate 40.0%, Sharpe -10.663, max DD 0.29%, net -₹133.
+(Earlier runs for reference: id=5 = 64 trades / 20.31% / -14.101;
+id=6 = 65 trades / 23.08% / -13.245; id=8 = 20 trades / 20.0% / -16.199,
+superseded.)
 
 Bar for calling this an improvement, all three required:
 1. Sharpe strictly better than -13.245 (the best of any run so far).
@@ -312,6 +320,30 @@ the PBO metric exists to catch.
 Sample-size caution to state in the PR: `long_pick_tp_sl` is n=48. It is
 the strongest signal in the dataset and it is still a small sample. Expect
 the replay to produce FEW trades. Few good trades is the intended outcome.
+
+**Result (run id=10, saved 2026-08-29):** identical to id=9 in every
+number - 5 trades, 40.0% win rate, Sharpe -10.663, max DD 0.29%, net
+-₹133.18, DSR 0.0. Real reason confirmed via a direct Supabase query
+before running: **all 19 `stock_analyst` rows ever written (13 pre-Phase-5
++ 6 from Phase 5's first live dispatch on 2026-08-29) are rated hold or
+sell - zero rated "buy," ever.** `_evaluate_one`/`_eval_stock_analyst`
+require `rating == "buy"` to open a position, so Phase 5's new candidates
+mechanically could not have entered a trade yet, regardless of whether the
+pipeline is working (it is - see §26a).
+
+Bar check: (1) Sharpe -10.663 beats -13.245 - **pass**, but this was
+already true at id=9, not a Phase-5 contribution. (2) DSR 0.0 - **fail**.
+(3) Net P&L negative - **fail on the number, but with the clean documented
+reason above**, not silence or a shrug.
+
+**Verdict: not reverting.** Nothing regressed - Phase 5 added zero trades,
+net neutral, not net negative. This is not "the pivot is wrong," it's "the
+new source hasn't been given a chance yet." The real Phase 3 test is still
+pending on `stock_analyst_dispatch` producing its first "buy" rating.
+Re-run the backtest again once that happens, or after ~2 weeks of daily
+dispatch accumulate with no buy at all (which would itself be a finding
+worth investigating - either the scan's technical-bullish screen or the
+LLM's rating logic may be too conservative at this horizon).
 
 ### Phase 4. Track the bearish-index signal forward, do not trade it
 

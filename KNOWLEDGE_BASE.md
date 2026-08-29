@@ -908,6 +908,40 @@ candidate generation doesn't guarantee the model will actually call
 run of days to answer, same as everything else in this blueprint. No
 shortcut available.
 
+## 26b. Blueprint 21 Phases 2+3: real backtest, not a clean pass (2026-08-29)
+
+Ran the fresh Phase 3 backtest same day as Phase 5 shipped, per the
+handoff's own next-step priority. **Real finding, checked before running
+anything:** all 19 `stock_analyst` rows that have ever existed (13 old +
+the 6 seeded by Phase 5's first live dispatch, same day) are rated hold
+or sell - **zero ever rated "buy."** Both `paper_trader._evaluate_one`
+and `backtest._eval_stock_analyst` require `rating == "buy"` to open a
+position, so this source mechanically cannot contribute a trade yet,
+independent of whether the pipeline works (it does - see §26a).
+
+Ran it anyway (user call) to get a formal record. **`backtest_runs`
+id=10**: 5 trades, win rate 40.0%, Sharpe -10.663, max DD 0.29%, net
+P&L -₹133.18, DSR 0.0 - identical in every number to id=9. Confirms the
+prediction: Phase 5 has not yet moved any metric.
+
+**Phase 2 (cost gate re-tune) answered by the same run:**
+`skips.cost_dominated = 18` of 1,869 evaluated (~1%), near zero.
+Per the blueprint's own rule, **`COST_TO_PROFIT_MAX` left unchanged** -
+it's acting as a floor, not a filter.
+
+**Phase 3 bar check** (need all three): Sharpe -10.663 beats -13.245
+(pass, but inherited from id=9, not new); DSR 0.0 (fail); net P&L
+negative (fail, but with a clean documented reason - see above). **Not
+reverting** - nothing regressed, Phase 5 added zero trades net, not a
+worse pivot, just an untested one so far. Real Phase 3 test is still
+pending on `stock_analyst_dispatch` producing an actual "buy" rating.
+Full detail and the re-test plan in `blueprints/21-horizon-pivot.md`
+Phase 2/Phase 3 sections (both now marked done/run with results inline).
+
+Blueprint 21 is now functionally complete except Phase 4
+(`regime_bearish_block`, still unconfirmed as built - see open questions)
+and the still-pending real-world wait on Phase 5's first buy signal.
+
 ## 27. Cost-structure fixes to the paper trader (2026-08-28)
 
 Two changes made while diagnosing the above, both shipped:
@@ -1008,6 +1042,17 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-29 (even later)** - Blueprint 21 Phases 2+3: ran the fresh
+  Phase 3 backtest same day as Phase 5. Confirmed via direct Supabase
+  query first that all 19 `stock_analyst` rows ever written are rated
+  hold/sell (zero buy), so the result was predictable before running -
+  ran it anyway for the formal record. `backtest_runs` id=10: identical
+  to id=9 in every number (5 trades, 40.0% win, Sharpe -10.663, DD 0.29%,
+  net -₹133.18, DSR 0.0). Phase 2 answered by the same run:
+  `cost_dominated` is 18/1,869 (~1%), near zero - `COST_TO_PROFIT_MAX`
+  left unchanged. Not a clean Phase 3 pass (DSR still 0, net still
+  negative) but with a clean documented reason, and nothing regressed -
+  not reverting. See §26b.
 - **2026-08-29 (later)** - Blueprint 21 Phase 5: ruled out `portfolio_
   verdicts` "add" as a buy signal (t=+0.78, noise - the aggregate score
   was driven by "hold" instead) and confirmed `long_term_picks` is a
