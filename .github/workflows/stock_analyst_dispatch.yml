@@ -1,0 +1,60 @@
+name: Stock Analyst Daily Dispatch
+
+# Blueprint 21 Phase 5: seeds real stock_analyst coverage systematically
+# instead of only from manual dashboard clicks (13 rows total, ever, last
+# one 2026-07-12 - see KNOWLEDGE_BASE.md). This workflow does NOT run the
+# analysis itself - it screens for candidates and fires the existing
+# "Stock Analyst" workflow per ticker, exactly like a dashboard click
+# would (analyzer/stock_analyst_dispatch.py).
+on:
+  schedule:
+    # 03:30 UTC = 09:00 IST weekdays - after the primary daily_analysis
+    # window (08:20/08:43 IST) so the day's context exists, before market
+    # open (09:15 IST) so the technical screen reads the prior session's
+    # complete bars, not a half-formed live one.
+    - cron: "30 3 * * 1-5"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  actions: write   # required to dispatch stock_analyst.yml via the REST API
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Screen candidates and dispatch Stock Analyst
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # Built-in token + context, NOT a custom secret: GH_TOKEN/GH_REPO
+          # as user-set secrets only exist on Netlify (for
+          # web/app/api/stock-analyst/route.ts, which runs outside GH
+          # Actions and needs its own PAT) - confirmed live 2026-08-29 via
+          # `gh secret list`, neither exists on this repo. A workflow
+          # already running inside GH Actions has both for free.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: python -m analyzer.stock_analyst_dispatch
+      - name: Dead-man ping
+        if: always()
+        env:
+          HC_PING_URLS: ${{ secrets.HC_PING_URLS }}
+        run: |
+          url=$(python3 -c "import json,os;print(json.loads(os.environ.get('HC_PING_URLS') or '{}').get('stock_analyst_dispatch',''))" 2>/dev/null || true)
+          if [ -n "$url" ]; then
+            if [ "${{ job.status }}" = "success" ]; then
+              curl -fsS -m 10 --retry 3 "$url" || true
+            else
+              curl -fsS -m 10 --retry 3 "$url/fail" || true
+            fi
+          fi
