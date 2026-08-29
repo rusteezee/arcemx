@@ -551,6 +551,53 @@ db/, .env(.example), requirements*.txt, README.md, AGENTS.md, ROADMAP.md,
 KNOWLEDGE_BASE.md (this file)
 ```
 
+## 23a. Specialist eval was fully broken since day one, now fixed (2026-08-29)
+
+The weekly `specialist_eval.yml` job (§7, §22) has shown green in CI since
+2026-08-15, but **scored 0 real predictions on every single run** -
+verified by reproducing the exact `llama-cli` invocation live on the
+Oracle box against the real `specialist-v2` GGUF. Two independent bugs,
+both now fixed (commits `3c5913f`, `a83ea08`):
+
+1. **`run_llama()` passed `-cnv`, a flag llama.cpp's CLI no longer has.**
+   Every call failed immediately with `error: invalid argument: -cnv` and
+   empty stdout - which `extract_json()` correctly treated as "no
+   parseable JSON," exactly indistinguishable from the model just writing
+   prose. `run_llama()` never checked `subprocess.run()`'s returncode or
+   looked at stderr, so a hard CLI failure and a genuine model output
+   miss looked identical from the caller's side - this is why it went
+   undetected for two weeks straight. Fix: drop `-cnv` (conversation mode
+   is implied by `--single-turn` on current llama.cpp), and raise with
+   the real stderr on a nonzero exit instead of returning garbage for the
+   parser to silently fail on.
+2. **The workflow's "Install Python deps" step never installed
+   `yfinance`/`pandas`.** Once fix #1 got real scores flowing,
+   `score_prediction()`'s `range_1d` path (which imports
+   `analyzer.grader` for `grade_range`, which imports `yfinance` at
+   module level) immediately crashed the entire run with
+   `ModuleNotFoundError` - and because `score_prediction()` wasn't
+   wrapped in a try/except, that one missing dependency killed every
+   remaining not-yet-scored target in the batch, not just `range_1d`'s.
+   Fixed both: added the missing deps to the workflow, and wrapped
+   `score_prediction()` so one dim's scorer crashing only skips that
+   target going forward.
+
+**Verified live, fully working end to end:** `Specialist eval
+(specialist-v2): scored 33/33`. Real predictions are now landing in
+`prediction_scores` for the first time since the pipeline was built -
+the "14+ day live comparison" clock the project's own docs have treated
+as running since 2026-08-16 has, in reality, just started for real.
+
+**New observation, not yet investigated - not a script bug, the script
+completed successfully:** `direction_1d`/`market_mood_1d` show a healthy
+mixed score distribution (0/50/100), but `range_1d` and `top_performer_1d`
+scored **0.0 on every single target** (8/8 and 9/9) in this first real
+run. Could be genuine model weakness on those two dims (plausible for
+`top_performer_1d` specifically, given it's independently proven to have
+zero edge in the live chain too - blueprint 21), or a scoring-logic
+mismatch unique to those two dims. Worth checking once a few more weekly
+runs accumulate real sample size - one run isn't enough to tell which.
+
 ## 24. Live health audit (2026-08-27)
 
 Full system audit run against live infra (GH Actions run history, Render
@@ -898,6 +945,16 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-29** - Discovered and fixed the specialist eval pipeline has
+  been fully broken since it was built (2026-08-15) - scored 0 real
+  predictions on every run despite showing green in CI. Two bugs: a dead
+  `-cnv` CLI flag (llama.cpp removed it upstream) that `run_llama()` never
+  detected because it didn't check returncode/stderr, and a missing
+  `yfinance` dependency in the workflow that then crashed the whole batch
+  once the first bug was fixed (score_prediction() wasn't exception-safe
+  per-target). Reproduced live on the newly-migrated Oracle box against
+  the real specialist-v2 GGUF to find both. Verified fully fixed:
+  `scored 33/33` on a real run. Commits `3c5913f`, `a83ea08`. See §23a.
 - **2026-08-28 (night)** - Root-caused and fixed a 5-Telegram-messages-in-
   one-day incident: `daily_analysis.yml`'s `workflow_dispatch` had no
   dedup, so every dispatch (manual, Worker, bot) force-ran and pushed
