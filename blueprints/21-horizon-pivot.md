@@ -1,7 +1,9 @@
 # Blueprint 21. Horizon Pivot: trade where the model actually has skill
 
-**Status:** Phase 0 + revised Phase 1 built 2026-08-28. Supersedes nothing;
-changes what the paper trader consumes, not how it manages risk.
+**Status:** Phase 0 + revised Phase 1 built 2026-08-28. Phase 5 built
+2026-08-29 (see PHASE 5 REVISED below - `portfolio_verdicts` "add" ruled
+out, `stock_analyst` seeding built instead). Supersedes nothing; changes
+what the paper trader consumes, not how it manages risk.
 
 **CORRECTION 2026-08-28, same day, before Phase 1 was implemented:** the
 original version of this blueprint recommended trading `wishlist_signals`
@@ -231,26 +233,53 @@ expectation: **trade count may drop to near zero** until Phase 5 gives the
 trader something with a genuine buy-side edge to act on. That is the
 honest, intended outcome of this phase, not a bug.
 
-### Phase 5 (new, not built, needs its own design pass). Revive a buy signal
+### Phase 5. Revive a buy signal - DONE 2026-08-29, systematize stock_analyst
 
-Two candidates, both bigger than a same-day fix:
+Investigated both candidates from the original plan before building
+either, to avoid trusting an aggregate score the way the original Phase 1
+plan wrongly trusted `wishlist_7d` (see CORRECTION at the top):
 
-- **Reintroduce a `long_term_picks`-style field** to `SYSTEM_PROMPT`: a
-  small number (3-5) of high-conviction long-thesis picks with explicit
-  numeric target/stop_loss and a real thesis, graded the same way the old
-  field was (`grade_pick_tp_sl(..., sessions=60)`). This is the one place
-  genuine buy-side skill was ever measured (t=+5.71) - it is worth trying
-  to recreate, not just mourn.
-- **Systematize `stock_analyst`.** It currently only fires on-demand from
-  the dashboard - `stock_analyses` rows are not created on a schedule, so
-  it contributed zero trades to any backtest despite being the trader's
-  documented highest-priority source. Consider a small daily batch (e.g.
-  request `stock_analyst` calls for the top N technical-screen names) so
-  it actually has data to evaluate.
+- **`portfolio_verdicts` "add"** - ruled out. Decomposed `verdict_tp_sl`
+  by verdict type: the aggregate t=+3.13 is entirely driven by "hold"
+  (n=291, t=+4.98, correctly staying in existing positions), not "add"
+  (n=199, **t=+0.78 - statistical noise**). "trim" -0.40, "exit" -2.71.
+  Not a usable buy signal.
+- **`long_term_picks`** - still dead (current `SYSTEM_PROMPT` doesn't
+  generate it), still the strongest historical signal (t=+5.71), but its
+  old track record was itself produced under the same crammed-prompt
+  design that plausibly caused `top_performer_1d`'s flat, negative-alpha
+  output (Finding 1/2) - less trustworthy on reflection than it first
+  looked. Not revived; left as a future option, not the chosen path.
+- **`stock_analyst`** - chosen. Already fully wired end to end in both
+  `paper_trader._evaluate_one` (the FIRST source `eval_signals()` checks)
+  and `backtest.py`'s mirror - purely data-starved (13 rows total, ever,
+  last one 2026-07-12), not a missing-feature problem. Lower implementation
+  risk (zero new trading-logic code, vs. writing + mirroring a brand new
+  evaluator for a revived `long_term_picks`) and a structurally sounder
+  design (dedicated single-ticker attention vs. another array crammed
+  into the overloaded daily prompt).
 
-Either path needs its own accumulation period before it can be trusted -
-do not fast-track a new signal into live trading without the same kind of
-audit this blueprint just went through.
+**Built:** `analyzer/stock_analyst_dispatch.py` + `.github/workflows/
+stock_analyst_dispatch.yml`. Screens a FRESH, independent technical
+scan (`analyzer.technical.screen_universe` + `rank_candidates`) for
+bullish candidates - deliberately NOT the LLM's own `top_performers`
+list, since that's the exact source just proven to have negative alpha
+(Finding 1); seeding from it would reintroduce the same bad candidate
+selection one level removed. Dispatches 6 candidates/day at 09:00 IST
+(after the primary `daily_analysis` window, before market open) via the
+existing `stock_analyst.yml` workflow, at the 30-day horizon (closest
+fit to the long-horizon regime in Finding 3). Mirrors `web/app/api/
+stock-analyst/route.ts`'s insert+dispatch contract exactly - zero
+changes needed to `stock_analyst.yml` or the paper trader's consumption
+of it.
+
+**Verified live 2026-08-29:** dispatched 6/6 cleanly (MEDANTA, APARINDS,
+CARTRADE, HINDZINC, IFCI, JINDALSTEL), 5/6 completed with real ratings
+before this was written. **Watch, not yet a problem:** those 5 came back
+4 "hold" + 1 "sell" + 0 "buy" - `_evaluate_one` requires `rating ==
+"buy"` to open a trade, so working candidate generation alone doesn't
+guarantee trades follow. Needs a real run of days to know either way -
+same no-shortcut discipline as the rest of this blueprint.
 
 ### Phase 2. Re-tune the cost gate for the new horizon
 
@@ -325,8 +354,11 @@ base rate, it was regime luck and the flag should be removed.
       change to gates must show the backtest delta).
 - [ ] `KNOWLEDGE_BASE.md` updated with the outcome, including the case
       where it did NOT work.
-- [ ] Phase 5 (reviving a real buy signal) opened as its own follow-up,
-      not silently skipped.
+- [x] Phase 5 (reviving a real buy signal) - DONE 2026-08-29: `portfolio_
+      verdicts` "add" ruled out (t=+0.78, noise), `stock_analyst` seeding
+      built and verified live instead (6/6 dispatched, 5/6 completed).
+      Not yet known whether it produces real "buy" ratings at a usable
+      rate - watch over the coming days, no shortcut available.
 
 ---
 

@@ -845,6 +845,69 @@ rupee target becomes mostly a capital question, not a signal question - but
 the edge has to come first, and it does not exist yet (every backtest to
 date: Sharpe negative, PSR 0, DSR 0).
 
+## 26a. Blueprint 21 Phase 5: seeding a real buy signal (2026-08-29)
+
+Investigated the two near-term candidates for a positive-edge buy signal
+before building anything, to avoid the exact trap that fooled the
+original Phase 1 plan (trusting an aggregate score without decomposing
+it):
+
+- **`portfolio_verdicts` "add"** - the aggregate `verdict_tp_sl` t=+3.13
+  looked promising, but decomposing by verdict type shows it's entirely
+  driven by **"hold"** (n=291, t=+4.98) - correctly staying in existing
+  positions, not a fresh buy call. "add" itself: **n=199, t=+0.78,
+  statistical noise.** "trim" -0.40, "exit" -2.71. Not usable as a buy
+  signal.
+- **`pick_tp_sl`** turned out to grade `short_term_picks`, a field
+  retired before the current schema - unrelated to `stock_analyst`,
+  discarded as a red herring.
+- **`long_term_picks`/`long_pick_tp_sl`** (t=+5.71, the strongest signal
+  in the whole audit) is a **dead field** - the current `SYSTEM_PROMPT`
+  doesn't generate it. Last real data around analysis_id 77 (June 2026).
+- **`stock_analyst`** (the deep single-ticker path, horizon 30): **13
+  rows total, ever**, all manual dashboard clicks, last one 2026-07-12.
+  Zero track record either way, but already fully wired end to end in
+  both `paper_trader.py` (`_evaluate_one`, the FIRST source
+  `eval_signals()` checks) and `backtest.py` - purely a data-starvation
+  problem, not a missing-feature problem.
+
+**Decision: build on `stock_analyst`, not revive `long_term_picks`.**
+Reasoning: (1) zero new trading-logic code needed - lower risk of the
+exact kind of subtle bug hit three times already this week (notional-cap
+floor, cost-gate reference point, paper_trader/backtest mirror drift);
+(2) structurally sounder design - a dedicated single-ticker call gets
+real attention, unlike another array crammed into the already-massive
+daily prompt (the same crammed-prompt shape that plausibly produced
+`top_performer_1d`'s flat, undifferentiated, negative-alpha output); (3)
+`long_term_picks`' old t=+5.71 was itself generated under that same
+crammed-prompt regime, months ago, under a different model - less
+trustworthy than it looks.
+
+**Built and verified live 2026-08-29** (commit `c7030fd`):
+`analyzer/stock_analyst_dispatch.py` runs a fresh, independent technical
+screen (NOT the LLM's own `top_performers`, which has proven negative
+alpha - seeding from it would reintroduce the same bad candidate
+selection one level removed) and dispatches the existing
+`stock_analyst.yml` workflow per candidate, exactly matching
+`web/app/api/stock-analyst/route.ts`'s insert+dispatch contract. New
+workflow `stock_analyst_dispatch.yml`, 6 candidates/day at 09:00 IST,
+30-day horizon (matching the long-horizon regime where real skill was
+measured - Finding 3). Uses GH Actions' built-in `GITHUB_TOKEN` +
+`github.repository` context, not a custom `GH_TOKEN`/`GH_REPO` secret -
+confirmed live via `gh secret list` that neither exists on this repo
+(those names are Netlify-only env vars for the dashboard's own dispatch
+route, a separate credential store).
+
+**First real run**: dispatched 6/6 cleanly (`MEDANTA`, `APARINDS`,
+`CARTRADE`, `HINDZINC`, `IFCI`, `JINDALSTEL`), 5 completed before this
+was written. **Honest early observation, not yet a problem, just
+something to watch**: ratings came back 4 "hold" + 1 "sell" + 0 "buy".
+`_evaluate_one` requires `rating == "buy"` to open a trade, so working
+candidate generation doesn't guarantee the model will actually call
+"buy" often enough on these names to produce trades - that needs a real
+run of days to answer, same as everything else in this blueprint. No
+shortcut available.
+
 ## 27. Cost-structure fixes to the paper trader (2026-08-28)
 
 Two changes made while diagnosing the above, both shipped:
@@ -945,6 +1008,14 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-29 (later)** - Blueprint 21 Phase 5: ruled out `portfolio_
+  verdicts` "add" as a buy signal (t=+0.78, noise - the aggregate score
+  was driven by "hold" instead) and confirmed `long_term_picks` is a
+  dead prompt field. Built `analyzer/stock_analyst_dispatch.py` +
+  `stock_analyst_dispatch.yml` to systematically seed the already-wired
+  but data-starved `stock_analyst` path (13 rows ever before this) with
+  6 fresh technical-screen candidates/day. Verified live: 6/6 dispatched,
+  5/6 completed with real ratings. See §26a.
 - **2026-08-29** - Discovered and fixed the specialist eval pipeline has
   been fully broken since it was built (2026-08-15) - scored 0 real
   predictions on every run despite showing green in CI. Two bugs: a dead
