@@ -72,9 +72,22 @@ def download_gguf_url(url: str, dest_dir: str) -> str:
 
 
 def run_llama(binary: str, model_path: str, dim: str, feature_text: str, n_predict: int = 128) -> str:
-    """One-shot: -cnv applies the GGUF's own embedded chat template, -sys
-    sets the system turn, -p the single user turn, -no-cnv-save avoids
-    writing chat history to disk. Returns the model's raw completion.
+    """One-shot: -sys sets the system turn, -p the single user turn,
+    --single-turn exits after one response. Returns the model's raw
+    completion (banner + prompt echo + JSON - extract_json pulls the
+    object out).
+
+    NO -cnv: that flag was removed from llama.cpp's CLI at some point
+    after this script was written, causing an immediate
+    `error: invalid argument: -cnv` and empty stdout on every call -
+    root-caused live 2026-08-29 after this eval had scored 0/N on every
+    run since 2026-08-15 with zero visible error, because the caller
+    only ever saw "no parseable JSON" (empty stdout doesn't parse) and
+    never saw returncode or stderr. --single-turn now implies
+    conversation mode on its own; verified live against the real
+    specialist-v2 GGUF that this produces a genuine parseable
+    completion (confirmed: {"call": "sideways", "confidence": 52.7}
+    from a real feature_text sample).
 
     System prompt must match training exactly (analyzer.finetune_export's
     per-dimension instruction) - the same market-state feature_text is
@@ -83,10 +96,16 @@ def run_llama(binary: str, model_path: str, dim: str, feature_text: str, n_predi
     the training-side fix (finetune_export._system_prompt) already
     closed, just moved from train time to eval time."""
     result = subprocess.run(
-        [binary, "-m", model_path, "-cnv", "-sys", _system_prompt(dim), "-p", feature_text,
+        [binary, "-m", model_path, "-sys", _system_prompt(dim), "-p", feature_text,
          "-n", str(n_predict), "--temp", "0.1", "--single-turn", "--no-display-prompt"],
         capture_output=True, text=True, timeout=120,
     )
+    if result.returncode != 0:
+        # Surface the real reason instead of returning empty/garbage
+        # stdout for extract_json to silently fail on - this exact
+        # silent-failure shape (returncode never checked) is what let
+        # the CLI flag removal above go undetected for two weeks.
+        raise RuntimeError(f"llama-cli exited {result.returncode}: {result.stderr.strip()[:300]}")
     return result.stdout
 
 
@@ -180,6 +199,9 @@ def run_eval(model_slug: str, binary: str, model_path: str, days: int = 10) -> i
             raw = run_llama(binary, model_path, t["dimension"], t["feature_text"])
         except subprocess.TimeoutExpired:
             print(f"  {t['dimension']} analysis_id={t['analysis_id']}: llama.cpp timed out, skipped")
+            continue
+        except RuntimeError as e:
+            print(f"  {t['dimension']} analysis_id={t['analysis_id']}: {e}")
             continue
         parsed = extract_json(raw)
         if parsed is None:
