@@ -65,6 +65,24 @@ else
   echo "(delete it first if you want it reset to the template)"
 fi
 
+echo "-- firewall --"
+# Oracle's stock Ubuntu 24.04 marketplace image ships iptables pre-configured
+# to allow ONLY port 22 by default (RELATED/ESTABLISHED + 2 generic ACCEPTs +
+# an SSH-only ACCEPT + a trailing REJECT), completely separate from the VCN's
+# cloud-level Security List. Root-caused live 2026-08-29: the Security List
+# correctly allowed 80/443 from 0.0.0.0/0, but the box's own iptables still
+# silently rejected both - `curl` from outside timed out while SSH (22)
+# worked fine, and `curl localhost` on the box itself worked fine too, which
+# is what pointed at an OS-level firewall rather than the cloud one. `-C`
+# (check) makes each insert idempotent - safe to rerun.
+if ! sudo iptables -C INPUT -p tcp -m state --state NEW --dport 80 -j ACCEPT 2>/dev/null; then
+  sudo iptables -I INPUT 5 -p tcp -m state --state NEW --dport 80 -j ACCEPT
+fi
+if ! sudo iptables -C INPUT -p tcp -m state --state NEW --dport 443 -j ACCEPT 2>/dev/null; then
+  sudo iptables -I INPUT 5 -p tcp -m state --state NEW --dport 443 -j ACCEPT
+fi
+sudo netfilter-persistent save 2>/dev/null || sudo iptables-save | sudo tee /etc/iptables/rules.v4 >/dev/null || true
+
 echo "-- systemd units --"
 sudo cp "$APP_DIR/deploy/oracle/arcemx-bot.service" /etc/systemd/system/arcemx-bot.service
 sudo cp "$APP_DIR/deploy/oracle/Caddyfile" /etc/caddy/Caddyfile

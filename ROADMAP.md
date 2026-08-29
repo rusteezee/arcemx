@@ -83,7 +83,7 @@ couldn't fix.
 ### Wave 1. Protect + measure the new trade flow — ✅ DONE (Oracle migration excepted)
 | # | Blueprint | Status |
 |---|---|---|
-| 15 | oracle-migration-runbook | **In progress (started 2026-08-19)** - user now holds a live Oracle Always Free account, signup friction (the prior blocker) is gone. Runbook (`deploy/oracle/setup.sh`) verified ready. Reason to move now: bot responsiveness for INDstocks confirm-mode buttons (real money) matters more than the original bandwidth-cap trigger, which was found not urgent (~1.6% of cap) |
+| 15 | oracle-migration-runbook | **✅ Bot live on Oracle (2026-08-29)** - `VM.Standard.A1.Flex` 4 OCPU/24GB, verified end-to-end (`/trigger/sync` returned real data through the full Netlify->bot->Supabase->GH Actions path). Render kept suspended-not-deleted for a ~2 week safety window before full retirement. Two real bugs found and fixed during migration: Oracle's stock Ubuntu image blocks port 80/443 via iptables regardless of the cloud Security List (now fixed in `setup.sh` permanently), and reserved-IP attachment only works from the instance's own VNIC page, not the Reserved IPs list. See `KNOWLEDGE_BASE.md` §8. Cron-scheduling migration (GH Actions -> this box) is a separate, not-yet-started future step |
 | 03 | regime-filter-gate | ✅ Done - trend+VIX+vol-percentile gate active in both `paper_trader.py` and `backtest.py` |
 | 07 | earnings-blackout-gate | ✅ Done - active in both live and backtest paths |
 | 12 | skipped-winner-attribution | ✅ Done - `analyzer/skip_attribution.py`, geometry captured on every skip, rendered on the trader page |
@@ -132,7 +132,7 @@ started.
 | OpenRouter lifetime credit | $10 (~₹850) | Approved 2026-07-13 by user |
 | LoRA training | ₹0 | Free Kaggle T4 GPU-hours used for both v1 and v2, no paid fallback needed |
 | INDstocks brokerage | ₹5 flat per real order | Not yet incurred - Stage 3 auto-execution doesn't exist, and no real orders have been manually confirmed either as of this refresh |
-| Oracle Cloud | $0 | In progress - Always Free account live, migration started 2026-08-19, see Wave 1 |
+| Oracle Cloud | $0 | Live - bot hosted on Always Free VM.Standard.A1.Flex since 2026-08-29, see Wave 1 |
 
 ## Measurable exit gates per wave
 

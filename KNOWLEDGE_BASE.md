@@ -219,33 +219,63 @@ download GGUF -> GitHub Release -> dispatch eval workflow -> compare).
 
 ## 8. Deployment / infra
 
-- **Bot host:** migrating Render -> Oracle Cloud Always Free, **started
-  2026-08-19**. Original 2026-08-15 call to deprioritize this (real bandwidth
-  usage ~1.6% of Render's cap, not urgent) was reversed once the user's
-  Oracle signup friction (the real blocker, card rejection issues from India)
-  resolved itself - user now holds a live Always Free account. Deciding
-  factor for moving now: bot responsiveness. Render's sleep-after-15min-idle
-  matters more today than it did in July, because INDstocks confirm-mode
-  buttons (real money, blueprint 19) benefit from an always-on bot rather
-  than one waking on Telegram poll.
-  `deploy/oracle/setup.sh` is idempotent, installs python3.11 pinned via
-  deadsnakes PPA (matches GH Actions, not OS default 3.12), Caddy, systemd
-  units. Recovery doctrine: the box holds **zero unique state** - Supabase
-  has all data, GitHub has all code, INDmoney tokens live in Supabase
-  `mcp_tokens`. A destroyed instance is just a fresh `setup.sh` run +
-  refilled `/etc/arcemx.env`.
-  **Migration steps** (see README.md "Deploy bot 24x7 -> Option 1" for full
-  detail): convert Oracle tenancy to Pay-As-You-Go (still ₹0 inside Always
-  Free shapes, exempts from 7-day idle-reclaim) -> create
-  `VM.Standard.A1.Flex` 2 OCPU/12GB Ubuntu 24.04 ARM instance, reserved
-  public IP, ingress 80/443/22 open -> SSH in, run `setup.sh` -> fill
-  `/etc/arcemx.env` (same 10 vars as Render) -> restart `arcemx-bot` ->
-  verify `/health`, `/today`, `journalctl -u arcemx-bot -f` -> cutover
-  Netlify's `ARCEMX_BOT_URL` to the reserved IP in both deploy contexts,
-  redeploy dashboard, verify a dashboard-triggered sync works end-to-end ->
-  suspend (don't delete) Render for ~2 weeks before retiring it.
-  **Once cutover is verified, update this section to say "live on Oracle"
-  and remove the Render fallback framing.**
+- **Bot host: LIVE ON ORACLE as of 2026-08-29.** Migrated off Render.
+  `VM.Standard.A1.Flex`, **4 OCPU / 24 GB** (maxed the free allotment,
+  deliberately - the plan is to eventually also move GH Actions' heavy
+  compute and cron scheduling itself onto this box), Ubuntu 24.04, 200 GB
+  boot volume (OCI's minimum custom size turned out to be 50 GB, not the
+  47 GB the runbook originally said - went with the full 200 GB free
+  allotment since it's the only instance and costs nothing extra). Reserved
+  public IP: **`92.4.84.48`**. Recovery doctrine holds: the box has **zero
+  unique state** - Supabase has all data, GitHub has all code, INDmoney
+  tokens live in Supabase `mcp_tokens`.
+
+  **Real gotchas hit during migration, both fixed:**
+  1. The original instance's SSH private key was never actually downloaded
+     at creation - Oracle shows it once and never stores it server-side, so
+     it was unrecoverable. Fix: terminated and recreated the instance (zero
+     state lost, box was still empty) - this time the key was confirmed
+     saved before continuing.
+  2. **Oracle's stock Ubuntu 24.04 image ships iptables pre-configured to
+     allow ONLY port 22**, completely separate from the VCN's cloud-level
+     Security List. The Security List correctly allowed 80/443 from
+     0.0.0.0/0, but external `curl` to port 80 still timed out while SSH
+     worked and `curl localhost` on the box itself worked - that mismatch
+     (cloud-level rule correct, OS-level firewall still blocking) is what
+     pointed at iptables rather than the Security List. Fixed live via
+     `iptables -I INPUT 5 -p tcp -m state --state NEW --dport {80,443} -j
+     ACCEPT` + `netfilter-persistent save`, and **added to
+     `deploy/oracle/setup.sh` permanently** so a future rebuild doesn't hit
+     this again.
+  3. Attaching a reserved IP to an instance is NOT done from the Reserved
+     Public IPs list page (no attach action there) - it's done from the
+     instance's own **Networking tab -> VNIC -> IP administration -> ⋮ on
+     the ephemeral IP row -> "Reserve IPv4 address"**. That action also
+     does NOT let you pick a pre-existing reserved IP - it converts the
+     current ephemeral IP into a brand new reservation. The original
+     `141.148.211.234` reservation made earlier sits unused as a result
+     (harmless, free, just an orphaned reservation) - the box's real IP is
+     `92.4.84.48`.
+
+  Verified end-to-end 2026-08-29: SSH in, ran `setup.sh` clean, wrote
+  `/etc/arcemx.env` (pulled `GH_TOKEN`/`GH_REPO`/`INDSTOCKS_EXEC_MODE` from
+  the live Render service's env via Render's API, rest from local `.env`),
+  `arcemx-bot` + `caddy` both stable, `/health` returns OK externally,
+  Netlify's `ARCEMX_BOT_URL` cut over to `http://92.4.84.48` (both deploy
+  contexts), and a real `/trigger/sync` call through the full path
+  (Netlify's pattern, tested directly) returned
+  `{"ok": true, "holdings": 4, "watchlist": 9, "analysis": "queued",
+  "analysis_via": "github"}` - genuine INDmoney data, genuine GH Actions
+  dispatch.
+
+  **Not yet done:** suspend (don't delete) Render for the ~2-week safety
+  window before retiring it for good. Do that once a few days of live
+  Oracle-hosted operation confirm stability.
+
+  **Future step (not started):** move GH Actions' heavy analysis compute
+  and cron scheduling itself onto this box (systemd timers replacing GH's
+  native `schedule:` + the Cloudflare Worker dispatcher) - see §28's
+  reframe for why this matters beyond just bot hosting.
 - **Dashboard host:** Netlify, base dir `web/`.
 - **Marketing site host:** Netlify, separate app in `marketing/`.
 - **`cloudflare/cron-dispatcher/`** - single-purpose Cloudflare Worker
