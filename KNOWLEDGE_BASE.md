@@ -1063,6 +1063,49 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-30 (latest)** - Blueprint 22 **Phase A built and installed on
+  the box, timers deliberately NOT yet enabled.** Added
+  `deploy/oracle/run_job.sh` (shared wrapper) plus service/timer pairs for
+  the 5 jobs the Cloudflare dispatcher never covered (hourly_news,
+  daily_prices, daily_sync, alerts_checker, stock_analyst_dispatch), and
+  a `git-pull` timer (every 5 min, `--ff-only`) so jobs always run against
+  recent code. Box confirmed `Etc/UTC`, so every cron string ported
+  directly; all 6 `OnCalendar=` expressions validated with
+  `systemd-analyze calendar` on the real box, including the 15-min
+  stepping on alerts_checker. Verified live end to end:
+  `arcemx-daily-sync.service` ran clean against real INDmoney data
+  (4 holdings, 9 watchlist, token refresh, Supabase write, exit 0).
+
+  **Two real bugs found by testing rather than trusting the code:**
+  1. `run_job.sh` reported **success on every failed job**. The loop used
+     `if ! "$PY" -m "$module"; then rc=$?`, where `$?` is the exit status
+     of the `!` negation (always 0), not the module's - it literally
+     printed `FAILED (exit 0)` and exited 0, which would have pinged
+     Healthchecks with SUCCESS on every failure. Same green-but-did-
+     nothing class as the specialist eval bug (§23a). Found by running a
+     bogus module against the wrapper on purpose. Fixed: run bare, read
+     `$?` on the next line.
+  2. `setup.sh`'s `chmod +x run_job.sh` created a file-mode difference
+     against the committed 644, which made `git pull --ff-only` on the
+     box **abort** instead of fast-forwarding - so the box silently kept
+     running the stale, still-broken wrapper even after the fix was
+     pushed. Fixed by tracking the file as mode 100755 in git, making
+     that chmod a true no-op. Worth remembering: a mode-only local change
+     is enough to wedge the box's auto-pull, and it fails loudly in the
+     journal but silently in effect.
+
+  **Blocked on two secrets before the timers can be enabled**, both
+  recoverable from their own dashboards (neither is in local `.env` or
+  readable back from GH Secrets, which are write-only via API):
+  `GNEWS_API_KEY` from gnews.io (optional - `fetchers/news.py` works on
+  RSS alone without it) and `HC_PING_URLS` from healthchecks.io (a JSON
+  map of job name to ping URL; a missing key just means that job runs
+  unmonitored). Both added to `deploy/oracle/arcemx.env.template` with
+  the exact expected shape. Timers stay disabled until these are in
+  `/etc/arcemx.env` - a job going live unmonitored is the exact failure
+  mode the dead-man switch exists to prevent. The GH Actions `schedule:`
+  blocks are ALSO still in place on purpose, so nothing double-fires;
+  they get removed only after the timers run clean for a few days.
 - **2026-08-30 (even later)** - Scoped the long-stated cron-to-Oracle
   migration (see §8/§28's "future step, not started" and §18's Wave
   status). Wrote `blueprints/22-cron-to-oracle-migration.md`: a scope +

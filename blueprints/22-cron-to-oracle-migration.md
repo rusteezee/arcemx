@@ -116,7 +116,36 @@ zero benefit.
 
 ## STEP-BY-STEP PLAN (phased, get sign-off between phases)
 
-### Phase A. Prove the pattern on the lowest-risk jobs (no Cloudflare coverage today)
+### Phase A. Prove the pattern on the lowest-risk jobs - BUILT 2026-08-30, TIMERS NOT YET ENABLED
+
+**Status:** all units written, installed on the box, and verified to parse.
+`arcemx-daily-sync.service` verified live end to end against real INDmoney
+data. `git-pull.timer` enabled and running. The 5 job timers are installed
+but NOT enabled, and the GH Actions `schedule:` blocks are NOT yet removed
+- both deliberate, see "Remaining to finish Phase A" below.
+
+Two real bugs were found by testing rather than code review (details in
+`KNOWLEDGE_BASE.md` changelog 2026-08-30): the wrapper reported success on
+failed jobs (`if ! cmd; then rc=$?` reads the negation's status), and a
+`chmod +x` mode difference silently wedged the box's `git pull --ff-only`
+so it kept running stale code. Both fixed.
+
+**Remaining to finish Phase A (blocked on secrets, then a waiting period):**
+1. Fill `GNEWS_API_KEY` (gnews.io dashboard) and `HC_PING_URLS`
+   (healthchecks.io dashboard) into `/etc/arcemx.env` on the box.
+2. `sudo systemctl enable --now arcemx-hourly-news.timer arcemx-daily-prices.timer arcemx-daily-sync.timer arcemx-alerts-checker.timer arcemx-stock-analyst-dispatch.timer`
+3. Confirm with `systemctl list-timers 'arcemx-*'`.
+4. Watch 3-5 real days: each job firing on time, dead-man pings landing,
+   no gaps.
+5. ONLY THEN remove the `schedule:` block from those 5 workflow YAMLs
+   (keep `workflow_dispatch:`). Until step 5, both triggers are live -
+   accepted deliberately, since these 5 jobs are all idempotent
+   (upserts/fetches), so a double-run wastes a little compute but cannot
+   corrupt state or double-send a user-facing message. Do NOT carry this
+   assumption into Phase B: `daily_analysis` DOES push Telegram and is
+   NOT safe to double-fire (that is the 2026-08-28 five-push incident).
+
+### Original plan (kept for reference)
 
 Move `hourly_news.yml`, `daily_prices.yml`, `daily_sync.yml`,
 `alerts_checker.yml`, `stock_analyst_dispatch.yml` first. None of these
