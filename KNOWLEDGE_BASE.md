@@ -1063,6 +1063,19 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-30** - Checked whether the Cloudflare Worker dispatcher's
+  natural 08:20 IST trigger fired cleanly today (the real test from the
+  2026-08-28 dedup incident, see §28) - could not use the Cloudflare
+  dashboard directly (no authenticated Cloudflare MCP this session,
+  browser automation against it caused instability last time it was
+  tried). Checked via `gh run list` instead: one clean `workflow_dispatch`
+  run at 02:50 UTC (08:20 IST), success, no duplicate spam. But the log
+  itself (`gh run view --log`) shows `Not an NSE trading day
+  (weekend/holiday); skipping run` - **2026-08-30 is a Sunday**, so
+  `run_if_stale()` correctly no-op'd. The dispatcher is confirmed alive
+  and firing on schedule, but the real end-to-end test (does a live
+  trading day complete clean, no dupes) still needs an actual weekday -
+  **check again after Monday 2026-08-31's run.**
 - **2026-08-29 (latest)** - Blueprint 21 Phase 4: built `regime_bearish_block`
   (was only planned, confirmed unbuilt via grep before starting). Env-gated
   `BEARISH_BLOCK_ON` flag, mirrored in `paper_trader.py` (once-per-pass,
