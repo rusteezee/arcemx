@@ -58,9 +58,13 @@ are flagged decisions, never assumptions. Not SEBI-registered advice; educationa
   (widgets, biometric unlock, push notifications, full Telegram elimination) is
   planned but research-stage only - see `blueprints/20-native-app-migration.md`,
   0% built, real architecture decisions not yet made.
-- One open loose end: **blueprint 14's RAG Phase 1 A/B review is overdue.** Activated
-  2026-07-16, review date was 2026-08-06 (10 days ago as of this refresh) - see
-  `blueprints/_pending_ab_rag.md` for the exact comparison to run. Not done yet.
+- Blueprint 14's RAG Phase 1 A/B review, overdue since 2026-08-06, was finally
+  done 2026-08-30 (24 days late). Verdict: inconclusive, not a proven win -
+  the naive baseline-vs-today read looked like a win on direction_1d, but the
+  untargeted control dimension (insight_quality) moved in the same shape at
+  the same time, pointing to regime noise rather than a RAG effect. Left
+  RAG_PHASE1_ENABLED on (₹0 cost, no evidence of harm). See
+  `KNOWLEDGE_BASE.md` §29 for the full trend data and reasoning.
 
 ## The critical path
 
@@ -103,7 +107,7 @@ couldn't fix.
 |---|---|---|
 | 05 | options-signals-indmoney | ✅ Done - PCR/OI-walls/max-pain wired into the payload |
 | 11 | short-side-paper-trading | ✅ Done - short paper trades live, graded separately (`short_pick_tp_sl`) |
-| 14 | rag-phase1-activation | ✅ Built and active, **⚠️ 14-day A/B review overdue** (see loose end above) |
+| 14 | rag-phase1-activation | ✅ Built and active. A/B review done 2026-08-30 (24 days late) - inconclusive, not a proven win, left on regardless. See `KNOWLEDGE_BASE.md` §29 |
 | 19 | indstocks-execution-layer | ✅ Done, at its designed ceiling - read-only stage (funds/LTP) and manual-confirm stage (Execute/Skip) both live; Stage 3 auto-execution explicitly rejected in code, correctly stays locked behind Phase B |
 
 ### Wave 4. Gated Phase B core — blocked on the gate, not by date

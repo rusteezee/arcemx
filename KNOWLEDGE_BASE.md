@@ -1059,10 +1059,83 @@ box instead of dispatching to GH Actions. See §8 for the actual migration
 status - **still mid-flight**, paused after VM creation, not yet at the
 reserved-IP/bootstrap steps.
 
+## 29. RAG Phase 1 A/B review: done, 24 days late, verdict is inconclusive not a win (2026-08-30)
+
+The review blueprint 14 itself scheduled for 2026-08-06 never happened -
+`blueprints/_pending_ab_rag.md` sat untouched since the 2026-07-16 activation
+commit. Done now, from real `accuracy_summary` data, not from the single
+most recent snapshot alone (that would have been exactly the kind of
+un-decomposed read this project has been burned by twice before - see §26).
+
+**Baseline (2026-07-16, pre-activation, n=25):** direction_1d 54.83%,
+range_1d 71.63%, insight_quality 72.65%.
+
+**Full 30d-window trend since activation, not just today's point:**
+
+| Date | direction_1d | range_1d | insight_quality (control) |
+|---|---|---|---|
+| 2026-07-16 (baseline) | 54.83 | 71.63 | 72.65 |
+| 2026-07-28 | 53.98 | 69.41 | 69.42 |
+| 2026-08-09 (near the original review date) | 52.78 | 63.71 | 65.24 |
+| 2026-08-20 | 63.41 | 65.92 | 65.22 |
+| 2026-08-30 (today) | 71.59 | 67.92 | 71.54 |
+
+**The naive read is misleading.** Compared only baseline-vs-today,
+direction_1d looks like a clear win (+16.76pp) and range_1d a small loss
+(-3.71pp), which technically satisfies blueprint 14's stated pass bar
+("direction_1d and/or range_1d improved without insight_quality regressing
+meaningfully"). But `insight_quality` is the control dimension - RAG's
+exemplar retrieval does not target it at all - and it moved in the exact
+same shape as the two targeted dimensions: down through late July/August,
+then back up by month end. All three dimensions dipped together and
+recovered together. That is the signature of a shared external cause
+(most likely the "trend: down" market regime documented through most of
+this window in §24/§26), not a RAG-specific effect. A metric RAG never
+touches should not move with the metrics it does touch if the touched
+ones' movement were really coming from RAG.
+
+**Sharpest evidence against a clean win:** had this review been run on its
+originally scheduled date (2026-08-06, closest real snapshot 08-09), the
+verdict would have been the opposite - all three dimensions BELOW baseline,
+direction_1d included. The only reason today's snapshot looks like a win is
+that the review is 24 days late and caught a later recovery that hit every
+dimension equally, RAG-targeted or not.
+
+**Verdict: inconclusive.** Not a proven win, not a proven loss, no causal
+evidence either way. **Recommendation: leave `RAG_PHASE1_ENABLED` on.**
+₹0 marginal cost, no evidence of harm, and the bge-base re-embed work is
+sunk and already reused by Phase 0 selection regardless of the flag. Do
+not revert on an inconclusive result - that is the same class of mistake
+as trading an unproven signal, just in the other direction. A real answer,
+if one is ever needed, requires an actual controlled comparison (RAG
+alternated on/off across matched days, or a held-out control cohort) to
+separate its effect from regime noise - a simple before/after cannot do
+this, as demonstrated here.
+
+`blueprints/_pending_ab_rag.md` deleted per its own stated convention
+("delete this file once the review is written up") - this section is that
+write-up. `ROADMAP.md`'s Wave 3 blueprint 14 row updated to reflect the
+review is done, not overdue.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-30 (even later still)** - Did the overdue RAG Phase 1 A/B
+  review (blueprint 14) - 24 days late, file untouched since activation.
+  Pulled the full accuracy_summary trend since 2026-07-16, not just the
+  latest snapshot: a naive baseline-vs-today read looks like a win
+  (direction_1d +16.76pp), but the control dimension (insight_quality,
+  which RAG doesn't target) moved in the identical shape - dip through
+  August, recovery by month end - across all three dimensions together.
+  That is regime noise, not a RAG effect. Had the review run on its
+  original 2026-08-06 date it would have shown the opposite (all three
+  below baseline). **Verdict: inconclusive, not a proven win.**
+  Recommendation: leave RAG_PHASE1_ENABLED on (₹0 marginal cost, no
+  evidence of harm, sunk re-embed work already reused regardless) rather
+  than revert on an inconclusive result. Deleted
+  `blueprints/_pending_ab_rag.md` per its own convention now that the
+  review is written up; updated `ROADMAP.md`'s Wave 3 row. See §29.
 - **2026-08-30 (latest)** - Blueprint 22 **Phase A built and installed on
   the box, timers deliberately NOT yet enabled.** Added
   `deploy/oracle/run_job.sh` (shared wrapper) plus service/timer pairs for
