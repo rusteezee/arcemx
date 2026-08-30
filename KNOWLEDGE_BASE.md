@@ -938,9 +938,30 @@ pending on `stock_analyst_dispatch` producing an actual "buy" rating.
 Full detail and the re-test plan in `blueprints/21-horizon-pivot.md`
 Phase 2/Phase 3 sections (both now marked done/run with results inline).
 
-Blueprint 21 is now functionally complete except Phase 4
-(`regime_bearish_block`, still unconfirmed as built - see open questions)
-and the still-pending real-world wait on Phase 5's first buy signal.
+**Phase 4 built same session, right after this** (was unconfirmed at
+handoff time - grepped both files, found zero trace, so built it fresh):
+`BEARISH_BLOCK_ON` env-gated flag in both `paper_trader.py` (computed
+once per `eval_signals()` pass from the latest `analysis` row, mirroring
+`_avoid_set()`'s pattern) and `backtest.py` (no-lookahead checkpoint list
+mirroring `avoid_checkpoints`), blocking new LONG entries when
+`market_mood == "bear"` or `nifty_outlook.direction == "down"`. Backtest
+id=11: 29/1,869 blocked, trade count 5 -> 3, win rate 40.0% -> 66.67%,
+**net P&L flipped positive for the first time ever** (+₹17.66, tiny but
+real - removed exactly the 2 historically-losing trades). Read with the
+same caution the blueprint itself demands: n=3, same 4-day replay window
+as every prior run, and Finding 6's own audit showed this exact signal is
+NOT time-stable (10/10 first half vs 4/11 second half of 21 down-calls).
+Passive filter only, re-test after ~20 more down-calls accumulate. Full
+detail in blueprint 21 Phase 4 section.
+
+Blueprint 21 is now functionally complete on all 6 phases. What's left is
+real-world waiting: Phase 5's first `stock_analyst` "buy" rating, and
+Phase 4's bearish-signal re-test at a larger sample. Live path
+(`paper_trader.py`, not just the `backtest.py` mirror) not yet exercised
+against production Supabase this session - deliberately, to avoid writing
+real rows outside a scheduled run. Verify via a Supabase query for
+`paper_signals.skip_reason = 'regime_bearish_block'` once tomorrow's
+scheduled cron actually runs the live code.
 
 ## 27. Cost-structure fixes to the paper trader (2026-08-28)
 
@@ -1042,6 +1063,18 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-29 (latest)** - Blueprint 21 Phase 4: built `regime_bearish_block`
+  (was only planned, confirmed unbuilt via grep before starting). Env-gated
+  `BEARISH_BLOCK_ON` flag, mirrored in `paper_trader.py` (once-per-pass,
+  latest `analysis` row) and `backtest.py` (no-lookahead checkpoint list).
+  Blocks new LONG entries when market_mood/nifty_outlook reads bearish.
+  Backtest id=11: 29/1,869 blocked, trade count 5->3, win rate
+  40.0%->66.67%, net P&L flipped positive for the first time ever
+  (+₹17.66). Real but n=3 and same 4-day window as every prior run - not
+  over-reading it, blueprint 21 itself flags this exact signal as not yet
+  time-stable. Live paper_trader.py path deliberately not manually
+  exercised (would write real production rows) - verify via tomorrow's
+  scheduled cron + a Supabase check instead. See §26b.
 - **2026-08-29 (even later)** - Blueprint 21 Phases 2+3: ran the fresh
   Phase 3 backtest same day as Phase 5. Confirmed via direct Supabase
   query first that all 19 `stock_analyst` rows ever written are rated

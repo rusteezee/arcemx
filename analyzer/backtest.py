@@ -68,6 +68,7 @@ from analyzer.paper_trader import (
     CALIBRATION_MIN_PAIRS,
     REGIME_GATE_ON,
     REGIME_HALF_MULT,
+    BEARISH_BLOCK_ON,
     EARNINGS_BLACKOUT_SESSIONS,
     BREAKER_DD_PCT,
     BREAKER_REARM_PCT,
@@ -455,7 +456,8 @@ def _open_shadow_trade(book: ShadowBook, *, source_kind, source_run_id, ticker, 
 
 def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfolio_base: float,
                         breaker_tripped: bool = False,
-                        avoid_set: set[str] | None = None) -> str | None:
+                        avoid_set: set[str] | None = None,
+                        bearish_block: bool = False) -> str | None:
     sa_id = row["id"]
     ticker = row["ticker"]
     j = row.get("llm_json") or {}
@@ -471,6 +473,8 @@ def _eval_stock_analyst(row: dict, book: ShadowBook, hist: HistCache, sb, portfo
         return "avoid_or_skip_listed"
     if rating != "buy":
         return "not_buy"
+    if BEARISH_BLOCK_ON and bearish_block:
+        return "regime_bearish_block"
     if not isinstance(edge, (int, float)):
         return "pre_schema"
     if not isinstance(confidence, (int, float)) or confidence < MIN_CONF:
@@ -727,7 +731,8 @@ def _eval_worst_performer(a_id: int, wp: dict, asof: datetime, book: ShadowBook,
 def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, book: ShadowBook,
                   hist: HistCache, sb, portfolio_base: float, calib_by_dim: dict,
                   breaker_tripped: bool = False,
-                  avoid_set: set[str] | None = None) -> str | None:
+                  avoid_set: set[str] | None = None,
+                  bearish_block: bool = False) -> str | None:
     raw_ticker = (outlook.get("ticker") or "").strip().upper()
     if not raw_ticker:
         return None
@@ -741,6 +746,8 @@ def _eval_outlook(a_id: int, outlook: dict, source_kind: str, asof: datetime, bo
     direction = (outlook.get("direction") or "").lower()
     if direction != "up":
         return "not_buy"
+    if BEARISH_BLOCK_ON and bearish_block:
+        return "regime_bearish_block"
 
     dim = "holding_outlook_dir_1d" if source_kind == "holding_outlook_1d" else "wishlist_outlook_dir_1d"
     stated_conf = outlook.get("confidence")
@@ -844,7 +851,7 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
         "id,ticker,horizon_days,requested_at,llm_json,status"
     ).eq("status", "ok").order("requested_at").execute().data or []
     a_rows = sb.table("analysis").select(
-        "id,run_at,raw_json"
+        "id,run_at,market_mood,raw_json"
     ).order("run_at").execute().data or []
     calib_rows = sb.table("calibration_log").select(
         "dimension,stated_confidence,realized_score,graded_at"
@@ -874,6 +881,10 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
     # replay loop below only ever uses the checkpoint dated on/before the
     # event it is currently evaluating.
     avoid_checkpoints: list[tuple[datetime, set[str]]] = []
+    # blueprint 21 Phase 4: as-of bearish-mood checkpoints, one per analysis
+    # row, same no-lookahead discipline as avoid_checkpoints above - a
+    # replay event only ever sees the checkpoint dated on/before it.
+    bearish_checkpoints: list[tuple[datetime, bool]] = []
     for a in a_rows:
         asof = _parse_dt(a.get("run_at"))
         if asof is None:
@@ -887,6 +898,9 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
             if isinstance(w, dict) and w.get("ticker") and (w.get("signal") or "").lower() == "skip":
                 day_avoid.add(_normalize_ticker(w["ticker"]))
         avoid_checkpoints.append((asof, day_avoid))
+        mood = (a.get("market_mood") or "").strip().lower()
+        nifty_dir = ((raw.get("nifty_outlook") or {}).get("direction") or "").strip().lower()
+        bearish_checkpoints.append((asof, mood == "bear" or nifty_dir == "down"))
         for source_kind, key in (("holding_outlook_1d", "holding_outlooks_1d"),
                                  ("wishlist_outlook_1d", "wishlist_outlooks_1d")):
             for outlook in (raw.get(key) or []):
@@ -911,6 +925,7 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
                 events.append((asof, "worst_performer", {"a_id": a["id"], "wp": wp}))
     events.sort(key=lambda e: e[0])
     avoid_checkpoints.sort(key=lambda c: c[0])
+    bearish_checkpoints.sort(key=lambda c: c[0])
 
     if not events:
         return {"trade_count": 0, "note": "no analysis history to replay", "trades": []}
@@ -925,6 +940,8 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
     breaker_tripped = False
     avoid_set: set[str] = set()
     avoid_idx = 0
+    bearish_block = False
+    bearish_idx = 0
 
     for asof, kind, payload in events:
         _mark_shadow_book(book, hist, asof)
@@ -935,6 +952,9 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
         while avoid_idx < len(avoid_checkpoints) and avoid_checkpoints[avoid_idx][0] <= asof:
             avoid_set = avoid_checkpoints[avoid_idx][1]
             avoid_idx += 1
+        while bearish_idx < len(bearish_checkpoints) and bearish_checkpoints[bearish_idx][0] <= asof:
+            bearish_block = bearish_checkpoints[bearish_idx][1]
+            bearish_idx += 1
         # Compounding sizing (blueprint 10): when on, each evaluator's
         # qty math reads the CURRENT equity (portfolio_base + cumulative
         # closed net_pnl) instead of the fixed cost basis for the whole
@@ -949,7 +969,8 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
         )
         if kind == "stock_analyst":
             outcome = _eval_stock_analyst(payload, book, hist, sb, sizing_base,
-                                          breaker_tripped=breaker_tripped, avoid_set=avoid_set)
+                                          breaker_tripped=breaker_tripped, avoid_set=avoid_set,
+                                          bearish_block=bearish_block)
         elif kind == "top_performer":
             outcome = _eval_top_performer(payload["a_id"], payload["tp"], asof, book, hist, sb, sizing_base,
                                           calib_by_dim, breaker_tripped=breaker_tripped, avoid_set=avoid_set)
@@ -958,7 +979,8 @@ def run_backtest(compounding: bool = True) -> dict[str, Any]:
                                             calib_by_dim, breaker_tripped=breaker_tripped, avoid_set=avoid_set)
         else:
             outcome = _eval_outlook(payload["a_id"], payload["outlook"], kind, asof, book, hist, sb, sizing_base,
-                                    calib_by_dim, breaker_tripped=breaker_tripped, avoid_set=avoid_set)
+                                    calib_by_dim, breaker_tripped=breaker_tripped, avoid_set=avoid_set,
+                                    bearish_block=bearish_block)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome:

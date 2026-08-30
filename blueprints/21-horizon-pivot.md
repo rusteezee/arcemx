@@ -345,7 +345,7 @@ dispatch accumulate with no buy at all (which would itself be a finding
 worth investigating - either the scan's technical-bullish screen or the
 LLM's rating logic may be too conservative at this horizon).
 
-### Phase 4. Track the bearish-index signal forward, do not trade it
+### Phase 4. Track the bearish-index signal forward, do not trade it - BUILT 2026-08-29
 
 Add a `regime_bearish_block` flag: when today's `market_mood` is `bear` or
 `nifty_outlook.direction` is `down`, block new LONG entries for that
@@ -356,6 +356,37 @@ Do NOT build a short strategy on it. Re-test the edge after roughly 20 more
 down-calls accumulate (currently 21 total). If the second-half hit rate
 recovers toward the first half's, it is real; if it stays near the 29.9%
 base rate, it was regime luck and the flag should be removed.
+
+**Built and verified in backtest (commit pending):** `BEARISH_BLOCK_ON`
+env-gated flag (`ARCEMX_BEARISH_BLOCK`, default on) in both
+`paper_trader.py` (`_bearish_block()`, computed once per `eval_signals()`
+pass from the single most recent `analysis` row - same pattern as
+`_avoid_set()`) and `backtest.py` (no-lookahead checkpoint list,
+`bearish_checkpoints`, same pattern as `avoid_checkpoints` - each replay
+event only ever sees the checkpoint dated on/before it). Wired into both
+live evaluators (`_evaluate_one`/`_eval_stock_analyst` for stock_analyst,
+`_evaluate_outlook`/`_eval_outlook` for holding/wishlist outlooks) right
+after each one's existing direction/rating check - cheapest-first, JSON-
+only, no yfinance cost. Not wired into `top_performer`/`worst_performer`
+paths since both are disabled (Phase 0/1) and never reached.
+
+**Backtest result (id=11, 2026-08-29):** `skips.regime_bearish_block = 29`
+of 1,869 evaluated. Trade count 5 -> 3 (blocked exactly the 2 historically-
+losing trades that fell on a bearish-mood day), win rate 40.0% ->
+**66.67%**, total net P&L **flipped positive for the first time ever**
+(-₹133.18 -> +₹17.66 - a small number, real direction). Sharpe/DSR still
+unresolvable at n=3 closed trades (same structural small-n caveat as every
+run so far, not a new problem).
+
+**Read this honestly, not as a green light:** n=3 is not evidence the
+signal works - it is 2 trades removed out of a 5-trade sample, over the
+SAME 4-day replay window (2026-06-22 to 06-25) as every prior run in this
+blueprint. This is a real, promising, in-sample result on the smallest
+possible sample, exactly the situation blueprint 21's own Finding 6 warned
+is not yet time-stable (10/10 first half vs 4/11 second half of the full
+21-down-call audit). Keep it as a passive filter, keep watching, do not
+promote it to anything more decisive until the ~20-more-down-calls re-test
+happens for real.
 
 ---
 

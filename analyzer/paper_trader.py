@@ -114,6 +114,14 @@ REGIME_GATE_ON = os.getenv("ARCEMX_REGIME_GATE", "1") != "0"  # market-regime
                                  # filter (blueprint 03); env-disable via
                                  # ARCEMX_REGIME_GATE=0
 REGIME_HALF_MULT = 0.5           # position-size multiplier when regime risk_mode == "half"
+BEARISH_BLOCK_ON = os.getenv("ARCEMX_BEARISH_BLOCK", "1") != "0"  # blueprint 21
+                                 # Phase 4: blocks new LONG entries when today's
+                                 # market_mood is "bear" or nifty_outlook.direction
+                                 # is "down". Real but unstable signal (66.7% hit
+                                 # rate on 21 down-calls, not time-stable across the
+                                 # sample's two halves) - track forward via this
+                                 # free, reversible flag, do NOT build a short
+                                 # strategy on it. env-disable via ARCEMX_BEARISH_BLOCK=0
 EARNINGS_BLACKOUT_SESSIONS = 3   # no new entries when next earnings is within this many
                                  # trading sessions ahead, or yesterday/today (blueprint 07)
 BREAKER_DD_PCT = 8.0             # circuit breaker trips above this current drawdown-from-peak
@@ -171,6 +179,22 @@ def _avoid_set(sb, now: datetime) -> set[str]:
         if isinstance(w, dict) and w.get("ticker") and (w.get("signal") or "").lower() == "skip":
             out.add(_normalize_ticker(w["ticker"]))
     return out
+
+
+def _bearish_block(sb) -> bool:
+    """blueprint 21 Phase 4: True when the single most recent analysis
+    row's market_mood is "bear" or its nifty_outlook.direction is "down".
+    Real but not time-stable signal (66.7% hit rate on 21 down-calls,
+    10/10 first half vs 4/11 second half of the sample) - track forward
+    only, never gate on it beyond blocking new longs for the day."""
+    row = sb.table("analysis").select("run_at,market_mood,raw_json").order(
+        "run_at", desc=True).limit(1).execute().data
+    if not row:
+        return False
+    mood = (row[0].get("market_mood") or "").strip().lower()
+    raw = row[0].get("raw_json") or {}
+    nifty_dir = ((raw.get("nifty_outlook") or {}).get("direction") or "").strip().lower()
+    return mood == "bear" or nifty_dir == "down"
 
 
 def _resolve_portfolio_base(sb) -> float:
@@ -725,7 +749,8 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
                   regime: dict | None = None,
                   earnings_cache: dict | None = None,
                   breaker_tripped: bool = False,
-                  avoid_set: set[str] | None = None) -> str:
+                  avoid_set: set[str] | None = None,
+                  bearish_block: bool = False) -> str:
     """Apply gate stack to one stock_analyses row. Returns action or
     skip_reason string for logging. ALWAYS writes a paper_signals row
     so the skipped-winner attribution is computable later."""
@@ -769,6 +794,9 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
     if rating != "buy":
         _log_signal(sb, ticker, sa_id, "skip", "not_buy", confidence=confidence, edge=edge)
         return "not_buy"
+    if BEARISH_BLOCK_ON and bearish_block:
+        _log_signal(sb, ticker, sa_id, "skip", "regime_bearish_block", confidence=confidence, edge=edge)
+        return "regime_bearish_block"
     if not edge_present:
         _log_signal(sb, ticker, sa_id, "skip", "pre_schema", confidence=confidence, edge=edge)
         return "pre_schema"
@@ -1007,6 +1035,12 @@ def eval_signals(now: datetime | None = None) -> dict:
     if avoid_set:
         print(f"paper_trader: avoid_set ({len(avoid_set)}) = {sorted(avoid_set)}")
 
+    # blueprint 21 Phase 4: computed once per pass, same as regime/avoid_set -
+    # "today's" call, not a per-signal lookup.
+    bearish_block = _bearish_block(sb) if BEARISH_BLOCK_ON else False
+    if bearish_block:
+        print("paper_trader: bearish_block ACTIVE (today's market_mood/nifty_outlook is bearish) - new longs paused")
+
     counts = {"evaluated": 0, "entered": 0}
     skips: dict[str, int] = {}
 
@@ -1019,7 +1053,8 @@ def eval_signals(now: datetime | None = None) -> dict:
         counts["evaluated"] += 1
         outcome = _evaluate_one(sb, r, now, portfolio_base=portfolio_base,
                                regime=regime, earnings_cache=earnings_cache,
-                               breaker_tripped=breaker_tripped, avoid_set=avoid_set)
+                               breaker_tripped=breaker_tripped, avoid_set=avoid_set,
+                               bearish_block=bearish_block)
         if outcome == "enter":
             counts["entered"] += 1
         elif outcome == "already_evaluated":
@@ -1057,7 +1092,8 @@ def eval_signals(now: datetime | None = None) -> dict:
                 outcome = _evaluate_outlook(sb, a, outlook, source_kind, now,
                                            portfolio_base=portfolio_base, regime=regime,
                                            earnings_cache=earnings_cache,
-                                           breaker_tripped=breaker_tripped, avoid_set=avoid_set)
+                                           breaker_tripped=breaker_tripped, avoid_set=avoid_set,
+                                           bearish_block=bearish_block)
                 if outcome == "enter":
                     counts["entered"] += 1
                 elif outcome == "already_evaluated":
@@ -1569,7 +1605,8 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
                       portfolio_base: float, regime: dict | None = None,
                       earnings_cache: dict | None = None,
                       breaker_tripped: bool = False,
-                      avoid_set: set[str] | None = None) -> str:
+                      avoid_set: set[str] | None = None,
+                      bearish_block: bool = False) -> str:
     """Gate-stack a single outlook entry. outlook carries direction +
     range + confidence + key_driver. Target/stop synthesized from the
     range band: long entry at mid, target = upper of range, stop = lower.
@@ -1616,6 +1653,9 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
     if direction != "up":
         L("skip", "not_buy")
         return "not_buy"
+    if BEARISH_BLOCK_ON and bearish_block:
+        L("skip", "regime_bearish_block")
+        return "regime_bearish_block"
 
     # Per-dim confidence recalibration (A1). Pull the dim's bias from
     # calibration_log; apply only if a non-trivial gap exists.
