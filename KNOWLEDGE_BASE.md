@@ -1063,6 +1063,36 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-30 (even later)** - Scoped the long-stated cron-to-Oracle
+  migration (see §8/§28's "future step, not started" and §18's Wave
+  status). Wrote `blueprints/22-cron-to-oracle-migration.md`: a scope +
+  design document, not yet approved for build - phased (A: 5 jobs with
+  no Cloudflare coverage today, lowest risk; B: the 3 Cloudflare-covered
+  business-critical jobs, after A proves stable; C: weekly specialist_eval
+  cleanup), reuses the existing `arcemx-bot.service` systemd pattern +
+  `/etc/arcemx.env`, ports the currently-YAML-only `HC_PING_URLS`
+  dead-man-ping logic into a shared wrapper script (doesn't exist in any
+  Python module today, would otherwise be silently lost).
+
+  **Two real findings while scoping, not yet acted on:** (1) the
+  Cloudflare Worker's `CRON_TO_WORKFLOW` only covers 3 of the repo's 10
+  scheduled workflows (`daily_analysis`, `daily_grader`, `sensei_eod`) -
+  the other 7 (hourly_news, daily_prices, daily_sync, alerts_checker,
+  stock_analyst_dispatch, specialist_eval) rely purely on GH's native
+  `schedule:` with zero reliable-clock backup, previously undocumented as
+  a specific count anywhere in this repo. (2) The Worker's own
+  `CRON_TO_WORKFLOW` maps `sensei_eod.yml` to `"35 14 * * 1-5"`, but the
+  workflow YAML's own schedule is `"41 14 * * 1-5"` - a 6-minute mismatch
+  between the two files. Whether the Cloudflare dashboard's actual live
+  trigger is 35 or 41 is unconfirmed from repo state alone (dashboard
+  config isn't in the repo) - harmless either way (nothing depends on the
+  exact minute) but worth resolving during Phase B, not urgent now.
+
+  Explicitly flagged in the blueprint: this consolidates scheduling onto
+  the Oracle box as a second single-point-of-failure (today, a box outage
+  only silences the bot; after this, it stops the whole pipeline) -
+  stated plainly as a tradeoff to weigh, not buried. Awaiting user
+  go-ahead before Phase A starts.
 - **2026-08-30 (later)** - Re-checked the paper trader stall via real
   `paper_trades` queries: still 27 closed / 0 open, unchanged since
   2026-08-14 (16 days now, spanning Phase 0/1/5 shipping). Confirmed via
