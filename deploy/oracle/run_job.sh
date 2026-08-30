@@ -35,8 +35,14 @@ cd "$APP_DIR" || exit 1
 rc=0
 for module in "$@"; do
   echo "run_job: starting $module"
-  if ! "$PY" -m "$module"; then
-    rc=$?
+  # Run bare, then read $? on the next line. Do NOT wrap this in
+  # `if ! "$PY" -m "$module"`: inside that branch $? is the exit status of
+  # the `!` negation (always 0), not the module's, so every failure would
+  # report success to Healthchecks - caught live 2026-08-30 by running a
+  # bogus module and watching it exit 0.
+  "$PY" -m "$module"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
     echo "run_job: $module FAILED (exit $rc)" >&2
     # Stop at the first failure. Matches GH Actions step semantics, where a
     # failed step skips the remaining ones in the job.
