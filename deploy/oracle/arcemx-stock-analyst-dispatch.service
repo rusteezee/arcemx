@@ -1,0 +1,15 @@
+[Unit]
+Description=Arc'emX! daily stock analyst candidate dispatch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+# Uses GH_TOKEN/GH_REPO from /etc/arcemx.env (the bot's own PAT, already has
+# Actions:write - it dispatches workflows today via bot/telegram_bot.py).
+# The GH Actions version used the built-in GITHUB_TOKEN, which does not
+# exist off-runner.
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh stock_analyst_dispatch analyzer.stock_analyst_dispatch
+MemoryMax=6G

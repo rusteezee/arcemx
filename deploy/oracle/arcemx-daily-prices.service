@@ -1,0 +1,11 @@
+[Unit]
+Description=Arc'emX! EOD OHLCV fetch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh daily_prices fetchers.prices
+MemoryMax=6G

@@ -1,0 +1,11 @@
+[Unit]
+Description=Arc'emX! hourly news fetch + news alerts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh hourly_news fetchers.news bot.news_alerts
+MemoryMax=4G

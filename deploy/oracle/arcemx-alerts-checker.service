@@ -1,0 +1,12 @@
+[Unit]
+Description=Arc'emX! price alerts checker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh alerts_checker bot.alerts_checker
+TimeoutStartSec=300
+MemoryMax=2G

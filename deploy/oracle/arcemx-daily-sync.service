@@ -1,0 +1,14 @@
+[Unit]
+Description=Arc'emX! INDmoney holdings + watchlist sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+# fetchers.indmoney_mcp's own __main__ already does exactly what the
+# workflow's inline heredoc did (reads TELEGRAM_CHAT_ID, calls
+# sync_to_supabase) - no wrapper script needed, just call the module.
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh daily_sync fetchers.indmoney_mcp
+MemoryMax=2G

@@ -1,0 +1,11 @@
+[Unit]
+Description=Arc'emX! hourly news fetch (was GH Actions cron "0 * * * *")
+
+[Timer]
+OnCalendar=*-*-* *:00:00
+AccuracySec=1s
+# No Persistent=: a missed hour is superseded by the next run within the
+# hour, so replaying it on boot adds duplicate work for no benefit.
+
+[Install]
+WantedBy=timers.target

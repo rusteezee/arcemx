@@ -1,0 +1,10 @@
+[Unit]
+Description=Arc'emX! EOD prices, 16:30 UTC = 22:00 IST Mon-Fri (was GH cron "30 16 * * 1-5")
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 16:30:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -90,7 +90,35 @@ sudo systemctl daemon-reload
 sudo systemctl enable arcemx-bot caddy
 sudo systemctl restart arcemx-bot caddy
 
+# Scheduled jobs (blueprint 22 Phase A). These replace GH Actions' native
+# `schedule:` triggers, which drift hours late or skip days on the free tier
+# (root-caused twice: the 2026-08-28 five-Telegram-push incident, and a
+# 2026-08-30 grader run that landed past midnight IST and skipped its whole
+# pass). The workflows themselves stay `workflow_dispatch`-callable as a
+# manual recovery path. Timers are NOT auto-enabled here - see the enable
+# command printed at the end, run it once /etc/arcemx.env has HC_PING_URLS
+# and GNEWS_API_KEY filled in, so a job never goes live unmonitored.
+echo "-- scheduled job units --"
+chmod +x "$APP_DIR/deploy/oracle/run_job.sh"
+for unit in arcemx-hourly-news arcemx-daily-prices arcemx-daily-sync \
+            arcemx-alerts-checker arcemx-stock-analyst-dispatch arcemx-git-pull; do
+  sudo cp "$APP_DIR/deploy/oracle/$unit.service" "/etc/systemd/system/$unit.service"
+  sudo cp "$APP_DIR/deploy/oracle/$unit.timer" "/etc/systemd/system/$unit.timer"
+done
+sudo systemctl daemon-reload
+# git-pull is safe to enable unconditionally: no secrets, no external writes,
+# and every other job depends on the checkout being current.
+sudo systemctl enable --now arcemx-git-pull.timer
+
 echo "== Done. =="
 echo "Check status:  systemctl status arcemx-bot caddy"
 echo "Watch logs:    journalctl -u arcemx-bot -f"
 echo "Health check:  curl http://localhost/health"
+echo
+echo "Scheduled jobs are installed but NOT enabled. First confirm"
+echo "/etc/arcemx.env has HC_PING_URLS and GNEWS_API_KEY, then:"
+echo "  sudo systemctl enable --now arcemx-hourly-news.timer \\"
+echo "    arcemx-daily-prices.timer arcemx-daily-sync.timer \\"
+echo "    arcemx-alerts-checker.timer arcemx-stock-analyst-dispatch.timer"
+echo "Verify:        systemctl list-timers 'arcemx-*'"
+echo "Test one now:  sudo systemctl start arcemx-daily-sync.service"

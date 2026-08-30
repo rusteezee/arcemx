@@ -1,0 +1,10 @@
+[Unit]
+Description=Arc'emX! INDmoney sync, 02:25 UTC = 07:55 IST Mon-Fri (was GH cron "25 2 * * 1-5")
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 02:25:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

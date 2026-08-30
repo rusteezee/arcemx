@@ -1,0 +1,10 @@
+[Unit]
+Description=Arc'emX! stock analyst dispatch, 03:30 UTC = 09:00 IST Mon-Fri (was GH cron "30 3 * * 1-5")
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 03:30:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

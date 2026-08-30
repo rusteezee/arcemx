@@ -1,0 +1,12 @@
+[Unit]
+Description=Arc'emX! alerts check every 15min in NSE hours (was GH cron "*/15 3-10 * * 1-5")
+
+[Timer]
+# 03:00-10:45 UTC = 08:30-16:15 IST, a buffer around NSE's 09:15-15:30.
+OnCalendar=Mon..Fri *-*-* 03..10:00/15:00
+AccuracySec=1s
+# No Persistent=: an alert check is only meaningful against a live quote,
+# replaying a missed one on boot would check stale prices.
+
+[Install]
+WantedBy=timers.target

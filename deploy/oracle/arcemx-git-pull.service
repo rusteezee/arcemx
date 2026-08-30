@@ -1,0 +1,12 @@
+[Unit]
+Description=Arc'emX! keep /opt/arcemx current with origin/master
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+# Fast-forward only: never rewrite or merge on the box. If this ever fails
+# because the checkout diverged, that is a real signal worth seeing in the
+# journal, not something to force past.
+ExecStart=/usr/bin/git -C /opt/arcemx pull --ff-only
