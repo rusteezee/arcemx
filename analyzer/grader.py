@@ -1718,10 +1718,24 @@ def _prune_accuracy_summary(history_days: int = 400) -> None:
 
 
 if __name__ == "__main__":
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timedelta as _td, time as _time
     from zoneinfo import ZoneInfo
     from analyzer.market_calendar import is_trading_day
-    if not is_trading_day(_dt.now(ZoneInfo("Asia/Kolkata")).date()):
+    _now_ist = _dt.now(ZoneInfo("Asia/Kolkata"))
+    _today = _now_ist.date()
+    # A late-drifted native `schedule:` trigger (target 17:00 IST) can land
+    # after midnight and see tomorrow's date - is_trading_day(_today) then
+    # wrongly gates the ENTIRE pass, including paper_trader, against the
+    # wrong day (real instance: run 33212699538, landed 02:58 IST, gated
+    # out Friday's grading because wall-clock had already rolled to
+    # Saturday - see KNOWLEDGE_BASE.md changelog 2026-08-30). Before 06:00
+    # IST, also accept yesterday having been a trading day - nothing
+    # legitimately schedules a genuinely NEW day's grader run that early,
+    # so this only ever catches a late-drifted run for the prior day.
+    _ok = is_trading_day(_today) or (
+        _now_ist.time() < _time(6, 0) and is_trading_day(_today - _td(days=1))
+    )
+    if not _ok:
         print("Not an NSE trading day (weekend/holiday); skipping grader pass")
         raise SystemExit(0)
     grade_all(lookback_days=90)

@@ -1063,6 +1063,46 @@ reserved-IP/bootstrap steps.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-30 (later)** - Re-checked the paper trader stall via real
+  `paper_trades` queries: still 27 closed / 0 open, unchanged since
+  2026-08-14 (16 days now, spanning Phase 0/1/5 shipping). Confirmed via
+  4 recent on-time grader run logs that `paper_trader.eval_signals()` is
+  NOT broken - it fires every time, logs clean, enters 0 with benign skip
+  reasons (`not_buy`/`low_conf`/`avoid_or_skip_listed`, the last one
+  confirming Phase 1's negative filter is live). Real structural reason:
+  all 27 historical trades came from `top_performer`/`worst_performer`
+  (checked `source_kind` on recent closes), both disabled by Phase 0/1;
+  the remaining live sources haven't produced an entry yet
+  (`stock_analyst` still 0/19 buy-rated, outlook sources cleared zero
+  gates across every run checked). Expected continuation of the known
+  state, not a new problem.
+
+  **Side finding, real and separate:** one native `schedule:`-triggered
+  grader run (`33212699538`, fired 2026-08-28T21:28 UTC) landed after
+  midnight IST and hit `is_trading_day(datetime.now(IST).date())` against
+  the WRONG calendar day (the next one, a Saturday) - exited via
+  `SystemExit(0)` before running grading, paper_trader, or anything else
+  in `grader.py`'s `__main__` block. Same drift class already known from
+  §28 (GH's native schedule can land hours late on free tier); this is a
+  fresh concrete instance of it silently skipping the ENTIRE grader
+  pipeline, not just producing a late push. The Cloudflare-dispatched
+  `workflow_dispatch` path is unaffected when it lands on time (checked
+  2 same-day runs, both ran clean).
+
+  **Fixed same session:** `grader.py`'s `__main__` gate now also accepts
+  yesterday having been a trading day, but ONLY before 06:00 IST -
+  narrow enough that a genuine new day's run (which would never
+  legitimately fire that early) can't be misread as a late-drifted one.
+  Sanity-simulated against both real cases: the actual drifted run
+  (Saturday 02:58 IST, yesterday=Friday=trading day) now correctly
+  proceeds; today's genuine Sunday 08:20 IST case (yesterday=Saturday=
+  not a trading day either) still correctly skips. `aggregator.py`'s own
+  `is_trading_day` call (run_if_stale, 08:20 IST target) deliberately
+  left untouched - low exposure (needs ~24h drift, not ~7h, to cross
+  midnight) and semantically different (it fetches a LIVE intraday
+  snapshot; "running it for yesterday" would fetch today's live data
+  mislabeled as yesterday's, which is wrong in a different way than the
+  bug it would be fixing).
 - **2026-08-30** - Checked whether the Cloudflare Worker dispatcher's
   natural 08:20 IST trigger fired cleanly today (the real test from the
   2026-08-28 dedup incident, see §28) - could not use the Cloudflare
