@@ -1341,10 +1341,56 @@ stalls, whether that recurs or was a one-off. Worth watching real
 `daily_grader` run durations over the next several days to see the
 actual before/after.
 
+## 34. Blueprint 22 Phase B designed: only one of three jobs needs real care (2026-09-01)
+
+Real investigation before writing anything, rather than assuming the
+original placeholder plan (treat all 3 jobs with the same extra-careful
+staggered cutover) was correct. Checked each job's actual idempotency:
+
+- `analyzer.grader` writes through `_upsert_score()`, an upsert on a
+  stable key - grading twice is a no-op. Safe to port the plain Phase A
+  way (single `python -m analyzer.grader` per timer fire).
+- `analyzer.sensei`'s own workflow comment says it outright: "Sensei
+  self-grades before synthesizing, so double runs are idempotent." Same
+  safe, plain port.
+- `bot.daily_push` has **no staleness check of its own** - the real
+  dedup lives entirely in `daily_analysis.yml`'s YAML plumbing (an
+  `id: agg` step's `run_if_stale()` output gates a separate
+  `if: steps.agg.outputs.ran == 'true'` push step). A naive systemd port
+  running both modules as a sequence would lose that gate and reintroduce
+  the 2026-08-28 five-message incident through a new path.
+
+**Designed the fix, not yet built:** a new `bot/daily_analysis_runner.py`
+that calls `run_if_stale()` and only invokes `push()` if it actually
+produced a fresh row - the exact same conditional the GH workflow already
+encodes in YAML, expressed as one Python script instead of two steps
+plus an `if:`. No changes needed to `aggregator.py` or `daily_push.py`
+themselves.
+
+**Real consequence worth recording:** because `run_if_stale()` checks the
+database, not workflow-local state, it correctly dedupes regardless of
+which machine calls it or how many trigger sources are live at once. This
+means Phase B doesn't need a special atomic cutover procedure after all -
+it can follow Phase A's exact shape (enable, confirm one real automatic
+fire per job, then pull `schedule:`), as long as
+`daily_analysis_runner.py` - not a naive two-command sequence - is what
+the Oracle timer calls for `daily_analysis`. Full design in
+`blueprints/22-cron-to-oracle-migration.md`'s Phase B section.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-01** - Designed blueprint 22 Phase B (not yet built). Real
+  investigation found only daily_analysis needs special care - the
+  push-dedup logic lives entirely in GH Actions YAML plumbing today
+  (`if: steps.agg.outputs.ran`), not in any Python module, so a naive
+  systemd port would silently lose it and reintroduce the 2026-08-28
+  five-message incident. Designed a new `bot/daily_analysis_runner.py`
+  to carry that same conditional as one script. daily_grader and
+  sensei_eod are both already safely idempotent (verified against real
+  upsert/self-grading logic) and can port the plain Phase A way. See
+  section 34.
 - **2026-08-31 (latest)** - Section 33's caching fix verified real (no
   more repeat "possibly delisted" spam), but a follow-up run still
   stalled ~51min - the remaining problem is a single yf.download() call

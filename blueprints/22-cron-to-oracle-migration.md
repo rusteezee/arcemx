@@ -182,17 +182,105 @@ runs a few minutes late once, not a missed or duplicated user-facing push).
    Supabase staleness check per KB §24's query patterns) that each job is
    firing on time, no gaps, no duplicate runs.
 
-### Phase B. Migrate the 3 Cloudflare-covered, business-critical jobs
+### Phase B. Migrate the 3 Cloudflare-covered, business-critical jobs - DESIGNED 2026-09-01, NOT YET BUILT
 
-Only after Phase A has run clean for at least a week. Move
-`daily_analysis.yml`, `daily_grader.yml`, `sensei_eod.yml` the same way.
+Only after Phase A has run clean for a stretch (Phase A cut over
+2026-08-31, all 5 jobs confirmed firing real automatic work - see
+`KNOWLEDGE_BASE.md` section 30). This section was originally a thin
+placeholder assuming all 3 jobs needed the same extra-careful,
+staggered-cutover treatment `daily_analysis` does. Real investigation
+found that is true for exactly one of the three, not all three - the
+other two are already safe by design and can port the plain Phase-A way.
 
-1. Same `.service`/`.timer` pattern. Resolve the `sensei_eod` cron-string
-   mismatch (Gotchas above) by checking the Cloudflare dashboard's actual
-   configured trigger before picking which minute to port - do not
-   silently pick one.
-2. Remove `schedule:` from these 3 YAMLs, same as Phase A.
-3. Once confirmed stable, retire the Cloudflare Worker: either
+**Per-job risk, verified against real code, not assumed:**
+
+- **`daily_grader` -> `analyzer.grader`: safe, ports like Phase A.**
+  Every write goes through `_upsert_score()`, an upsert on a stable key -
+  grading the same prediction twice is a no-op, not a duplicate. No
+  Telegram push in its normal path (the paper-trader circuit-breaker
+  alert inside it is itself gated on a state *transition*, not a naive
+  re-fire). A dual-trigger overlap during cutover costs redundant compute,
+  nothing else.
+- **`sensei_eod` -> `analyzer.sensei`: safe, ports like Phase A.**
+  The workflow's own comment says it outright: "Sensei self-grades before
+  synthesizing, so double runs are idempotent and ordering vs the grader
+  no longer matters." Same low-risk profile as `daily_grader`.
+- **`daily_analysis` -> `bot.daily_push`: real risk, needs a new script.**
+  `bot/daily_push.py` has **no staleness check of its own** - it
+  unconditionally reads the latest `analysis` row and sends it. The
+  workflow's actual dedup is GH-Actions-specific YAML plumbing: an
+  `id: agg` step runs `run_if_stale(max_age_minutes=90)`, writes
+  `ran=true/false` to `$GITHUB_OUTPUT`, and the push step only runs
+  `if: steps.agg.outputs.ran == 'true'`. A naive systemd port that just
+  runs `python -m analyzer.aggregator` then `python -m bot.daily_push`
+  in sequence (Phase A's `run_job.sh <hc_key> <module1> <module2>`
+  pattern) **loses this gate entirely** and reintroduces the exact
+  double-push failure mode from the 2026-08-28 five-message incident,
+  just through a new code path instead of the old `FORCE_RUN` one.
+
+**The fix: one new script, not a workflow-level trick.** Add
+`bot/daily_analysis_runner.py`:
+
+```python
+import asyncio
+from analyzer.aggregator import run_if_stale
+from bot.daily_push import push
+
+if __name__ == "__main__":
+    res = run_if_stale(max_age_minutes=90)
+    ran = res is not None and not (res or {}).get("error")
+    if ran:
+        asyncio.run(push())
+    else:
+        print("Skipped push - no fresh analysis produced by this run.")
+```
+
+This is a straight port of the exact same conditional the GH workflow
+already encodes in YAML - `run_if_stale()`'s return value decides whether
+`push()` ever runs, in the same process, so there is no window for the
+two halves to disagree. The Oracle timer calls this ONE script via
+`run_job.sh daily_analysis bot.daily_analysis_runner` - never
+`aggregator` and `daily_push` as two separate steps, and never with a
+`--force` equivalent on the scheduled path (mirrors the YAML's own rule:
+automated dispatches stay unforced; only a human recovering a confirmed
+miss should force, via a manual invocation with an explicit flag, not
+added here since Phase A's precedent already keeps `workflow_dispatch`
+around for exactly that case).
+
+**Real consequence of this finding: the "atomic cutover" worry in the
+original Phase A-era plan was overstated for all three jobs.** Because
+`run_if_stale()` checks the database, not any workflow-local state, it
+correctly dedupes regardless of which physical machine (GH runner or the
+Oracle box) calls it, and regardless of how many trigger sources are
+live at once - GH's native `schedule:`, the Cloudflare Worker's
+`workflow_dispatch`, and the new Oracle timer could all be live
+simultaneously without producing more than one real analysis + one real
+push, AS LONG AS `daily_analysis_runner.py` is what runs on Oracle, not
+a naive two-command sequence. This means Phase B can follow the exact
+same cutover shape Phase A used - enable, watch one real automatic fire
+per job, then pull `schedule:` - rather than needing a special
+stop-the-world procedure.
+
+**Step-by-step:**
+
+1. Add `bot/daily_analysis_runner.py` (above). No changes to
+   `analyzer/aggregator.py` or `bot/daily_push.py` - both stay exactly as
+   they are, this only adds the missing orchestration layer.
+2. Three new `.service`/`.timer` pairs, mirroring Phase A's shape:
+   `arcemx-daily-analysis` (`ExecStart` calls
+   `run_job.sh daily_analysis bot.daily_analysis_runner`, `OnCalendar`
+   matching `50 2 * * 1-5` UTC), `arcemx-daily-grader`
+   (`run_job.sh daily_grader analyzer.grader`, `30 11 * * 1-5` UTC),
+   `arcemx-sensei-eod` (`run_job.sh sensei_eod analyzer.sensei`). Resolve
+   the `sensei_eod` cron-string mismatch (Gotchas above) by checking the
+   Cloudflare dashboard's actual configured trigger before picking which
+   minute to port - do not silently pick one.
+3. Install, enable, confirm one real automatic fire per job (same
+   verification bar Phase A used: check the journal shows genuine work,
+   not just exit 0).
+4. Remove `schedule:` from the 3 workflow YAMLs (keep
+   `workflow_dispatch:` as the manual recovery path, same as Phase A).
+5. Once confirmed stable, retire the Cloudflare Worker: either
    `wrangler delete` it (ask first - this is the kind of action that
    needs explicit confirmation) or simply remove its Cron Triggers in the
    dashboard and leave the Worker code dormant (lower-risk, fully
