@@ -1295,10 +1295,65 @@ blueprint 23's new `_run_portfolio_defense()` hook, which sits right after
 this exact code path in `grader.py`'s `__main__` sequence and was blocked
 from ever running by the stall, not by anything in its own logic.
 
+## 33a. The caching fix wasn't the whole story - added a job-level timeout backstop too (2026-08-31)
+
+Dispatched a fresh run to verify section 33's caching fix. The
+error-spam pattern was gone (real proof the cache works - no more
+repeated "possibly delisted" blocks for the same ticker), but the run
+still stalled, this time ~51 minutes before being cancelled by hand -
+worse than the original ~26 minutes. Reading the log showed why: the
+remaining problem is not repeat-call volume, it's that a SINGLE logical
+`yf.download()` call can hang for 9-15 minutes under today's network
+conditions - confirmed against `TATAMOTORS.NS`, a real, valid, large-cap
+NSE stock, not a dead ticker. yfinance's own `timeout=` parameter
+defaults to 10s per HTTP request, but that doesn't bound an internal
+retry/backoff loop if Yahoo is actively rate-limiting the runner's shared
+IP - a single "download" can still take many minutes end to end.
+
+Also noticed in the same log, separate and unrelated: a few clearly
+garbage ticker strings (`REALTY.NS`, `FMCG.NS`, `ERROR.NS`) being queried
+- not sector symbols (confirmed grader.py's `_normalize_ticker` correctly
+passes `^`-prefixed index tickers through unchanged), so these are stray
+fragments leaking into a per-stock ticker field from elsewhere, matching
+the already-documented JSON-glitch failure mode noted in
+`paper_trader.py`'s own comments (neighboring-key spillover on long LLM
+responses). Not fixed tonight - real, but a separate, lower-priority
+data-quality issue, not the cause of the stall.
+
+**Rather than chase yfinance's internal retry mechanism further, added
+the safety net this repo already uses elsewhere:** `daily_grader.yml`'s
+`grade` job had NO `timeout-minutes` at all, unlike `alerts_checker.yml`
+(5min), `backtest.yml` (15min), `sensei_eod.yml` (60min) which already
+have this. Without it, GH's own default job ceiling is 360 minutes - a
+degraded-network day could silently burn hours of runner time before
+anyone noticed. Added `timeout-minutes: 30`, matching this repo's
+existing convention rather than inventing a new one. This converts a
+runaway hang into a bounded, dead-man-ping-triggering failure instead of
+an indefinite silent stall - does not fix the underlying yfinance/Yahoo
+rate-limit interaction, but bounds its blast radius to a known ceiling.
+
+**Real net effect of both section 33 and this fix together:** the
+caching fix genuinely reduces call volume (verified: 3 calls for one
+ticker now cost 1 download instead of 3) and should measurably shorten
+normal-condition runs going forward. The timeout-minutes backstop is
+insurance for whatever Yahoo-side conditions caused today's specific
+stalls, whether that recurs or was a one-off. Worth watching real
+`daily_grader` run durations over the next several days to see the
+actual before/after.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-31 (latest)** - Section 33's caching fix verified real (no
+  more repeat "possibly delisted" spam), but a follow-up run still
+  stalled ~51min - the remaining problem is a single yf.download() call
+  hanging 9-15min under today's network conditions, confirmed against a
+  real valid ticker (TATAMOTORS.NS), not a dead one. Added
+  `timeout-minutes: 30` to daily_grader.yml's grade job - it was the only
+  heavy job in this repo missing this safety net that alerts_checker/
+  backtest/sensei_eod already have. Bounds the blast radius rather than
+  fixing the underlying Yahoo rate-limit interaction. See section 33a.
 - **2026-08-31 (even later)** - Root-caused and fixed a real ~26min
   grader stall found while verifying blueprint 23's real production
   entrypoint. Not a new bug from today's code - a pre-existing

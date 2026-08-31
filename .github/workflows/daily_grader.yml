@@ -32,6 +32,16 @@ env:
 jobs:
   grade:
     runs-on: ubuntu-latest
+    # Root-caused 2026-08-31: a degraded/rate-limited yfinance path can hang
+    # a single logical call for many minutes (not just a slow retry - a
+    # real run stalled ~26min, a follow-up stalled ~51min before being
+    # cancelled by hand, see KNOWLEDGE_BASE.md section 33). GH's own
+    # default job ceiling is 360min with no cap here otherwise, unlike
+    # alerts_checker.yml/backtest.yml/sensei_eod.yml which already set
+    # this. 30min gives real headroom over normal operation while turning
+    # a runaway hang into a bounded, dead-man-ping-triggering failure
+    # instead of silent unbounded wall-clock.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
