@@ -7,12 +7,12 @@ name: Stock Analyst Daily Dispatch
 # "Stock Analyst" workflow per ticker, exactly like a dashboard click
 # would (analyzer/stock_analyst_dispatch.py).
 on:
-  schedule:
-    # 03:30 UTC = 09:00 IST weekdays - after the primary daily_analysis
-    # window (08:20/08:43 IST) so the day's context exists, before market
-    # open (09:15 IST) so the technical screen reads the prior session's
-    # complete bars, not a half-formed live one.
-    - cron: "30 3 * * 1-5"
+  # blueprint 22 Phase A: moved to arcemx-stock-analyst-dispatch.timer on
+  # the Oracle box (2026-08-31), 03:30 UTC = 09:00 IST weekdays, same
+  # schedule this cron: used to target. GH's own native schedule trigger
+  # for this workflow had never actually fired successfully - every prior
+  # run was a manual workflow_dispatch. workflow_dispatch stays as a
+  # manual recovery path.
   workflow_dispatch:
 
 env:

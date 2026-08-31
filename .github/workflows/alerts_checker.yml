@@ -9,8 +9,10 @@ name: Alerts Checker
 # bot/telegram_bot.py's /alert /alerts /rm_alert commands for creation.
 
 on:
-  schedule:
-    - cron: "*/15 3-10 * * 1-5"
+  # blueprint 22 Phase A: moved to arcemx-alerts-checker.timer on the Oracle
+  # box (2026-08-31) after confirming 9 real automatic fires there - GH's
+  # own native cron for this job hadn't fired in 3 days at the time of
+  # cutover. workflow_dispatch stays as a manual recovery path.
   workflow_dispatch:
 
 env:

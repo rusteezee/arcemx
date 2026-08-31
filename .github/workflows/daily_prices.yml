@@ -5,10 +5,9 @@ name: Daily Prices Fetch
 # chart and by analyzer technical screening.
 
 on:
-  schedule:
-    # 16:30 UTC Mon-Fri = 22:00 IST (well after NSE 15:30 IST close + EOD
-    # data settling).
-    - cron: "30 16 * * 1-5"
+  # blueprint 22 Phase A: moved to arcemx-daily-prices.timer on the Oracle
+  # box (2026-08-31), 16:30 UTC Mon-Fri, same schedule this cron: used to
+  # run. workflow_dispatch stays as a manual recovery path.
   workflow_dispatch:
 
 # See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.

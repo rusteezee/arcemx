@@ -17,8 +17,10 @@ name: Daily INDmoney Sync
 # upserts holdings/watchlist), so firing alongside Render's own cron is
 # harmless redundancy, not wasted spend like a duplicate LLM call would be.
 on:
-  schedule:
-    - cron: "25 2 * * 1-5"
+  # blueprint 22 Phase A: moved to arcemx-daily-sync.timer on the Oracle box
+  # (2026-08-31) after confirming a real automatic fire there - GH's own
+  # native cron for this job hadn't fired in 3 days at the time of cutover.
+  # workflow_dispatch stays as a manual recovery path.
   workflow_dispatch:
 
 env:

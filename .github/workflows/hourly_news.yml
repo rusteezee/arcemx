@@ -1,8 +1,11 @@
 name: Hourly News Fetch
 
 on:
-  schedule:
-    - cron: "0 * * * *"  # every hour UTC
+  # blueprint 22 Phase A: moved to arcemx-hourly-news.timer on the Oracle box
+  # (2026-08-31). schedule: removed after confirming a real automatic fire
+  # there and finding GH's own native cron had gone silent for hours on this
+  # exact job that same morning. workflow_dispatch stays as a manual
+  # recovery path.
   workflow_dispatch:
 
 # See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.
