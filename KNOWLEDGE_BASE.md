@@ -1248,10 +1248,69 @@ block together once the real UUID was known), and a plain
 with an invalid-UUID error rather than a permissions error - the
 placeholder must never be pasted literally.
 
+## 33. Root-caused and fixed a real ~26min grader stall: uncached, unbatched yfinance calls (2026-08-31)
+
+Found while verifying blueprint 23's real production entrypoint. Dispatched
+a fresh `daily_grader.yml` run against the pushed code and watched it stall
+~26 minutes on the exact step containing `_run_portfolio_defense()` -
+looked at first like the new code might be hanging. It was not.
+
+**Real cause, confirmed by reading the cancelled run's log:** the stall was
+inside pre-existing sector-outlook grading, repeatedly failing on the same
+handful of NSE sector index tickers (`^CNXAUTO`, `^CNXFMCG`, `^CNXENERGY`,
+`^CNXMETAL`, `^CNXREALTY`, `^CNXMEDIA`, `NIFTY_FIN_SERVICE.NS`) with
+"possibly delisted; no price data found." Tested all seven directly against
+both a recent window and the EXACT failing historical date range
+immediately after - every single one resolved cleanly. **The tickers are
+not dead** - this was Yahoo's known shared-runner rate limiting (already
+documented in section 20) triggered by an existing, real inefficiency:
+`grader._session_bounds(ticker, run_at)` re-downloaded a fresh ~20-day
+yfinance window on EVERY call, with zero caching, called once per graded
+analysis row across all 6 call sites (NIFTY, Sensex, BankNifty, Midcap,
+up to ~10 sectors per row, and every real holding/wishlist stock ticker).
+With a 90-day lookback, adjacent rows' narrow windows overlap ~95% -
+hundreds of redundant, unbatched calls per run, more than enough to trip
+Yahoo's rate limiter on a shared GH Actions IP.
+
+**Fixed:** added `_session_hist()`, a per-process cache keyed by ticker -
+one wide (120-day-back/8-day-forward) download per unique ticker, sliced
+locally per row thereafter. Same approach `backtest.py`'s `HistCache`
+already uses for the identical class of problem, just not previously
+reused here. A failed/empty result is cached too, so a genuinely dead
+ticker (if one ever appears) is attempted once per run, not once per row -
+real defense in depth even though today's specific tickers turned out
+to be alive.
+
+**Verified live, not just by inspection:** monkey-patched `yf.download`
+to count real calls - 3 `_session_bounds()` calls for the same ticker at
+different dates now cost exactly 1 download (previously 3), with correct,
+distinct results per date. A genuinely fake ticker also costs exactly 1
+attempt across 2 calls, returning `None` both times rather than retrying.
+
+**Real-world impact, beyond just this one stall:** this bug has silently
+taxed every `daily_grader` run since sector-outlook grading was added, not
+just the one caught today - worth watching whether daily_grader's typical
+run duration drops materially once this ships. Also directly benefits
+blueprint 23's new `_run_portfolio_defense()` hook, which sits right after
+this exact code path in `grader.py`'s `__main__` sequence and was blocked
+from ever running by the stall, not by anything in its own logic.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-31 (even later)** - Root-caused and fixed a real ~26min
+  grader stall found while verifying blueprint 23's real production
+  entrypoint. Not a new bug from today's code - a pre-existing
+  inefficiency in grader._session_bounds() (uncached, unbatched yfinance
+  downloads, once per graded row across 6 call sites) that tripped
+  Yahoo's shared-runner rate limiting on ~90 days of heavily-overlapping
+  sector-index requests. Fixed with a per-process ticker cache
+  (_session_hist()), mirroring backtest.py's existing HistCache pattern.
+  Verified live by call-counting: 3 calls for one ticker now cost 1
+  download instead of 3, with correct results. Likely been silently
+  taxing every daily_grader run since sector grading was added. See
+  section 33.
 - **2026-08-31 (latest)** - Built and shipped blueprint 23 (portfolio
   defense layer), same day it was scoped. New analyzer/portfolio_defense.py,
   wired into grader.py (no workflow YAML change needed), surfaced in

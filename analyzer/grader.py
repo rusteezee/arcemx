@@ -106,6 +106,50 @@ def _close_n_sessions_later(ticker: str, base_ts: datetime, n: int) -> float | N
 _SESSION_CLOSE_UTC = 10
 
 
+_SESSION_HIST_CACHE: dict[str, "pd.DataFrame | None"] = {}
+
+
+def _session_hist(ticker: str) -> "pd.DataFrame | None":
+    """Per-process cache backing _session_bounds(). One wide yfinance
+    download per unique ticker, reused for every row grade_all() walks.
+
+    Real bug found 2026-08-31: _session_bounds() used to re-download a
+    fresh ~20-day window on EVERY call, and grade_all's 90-day lookback
+    walks many rows, each calling _session_bounds() once per sector (up
+    to 10) plus NIFTY/Sensex/BankNifty/Midcap - hundreds of unbatched
+    yfinance calls per run, with adjacent rows' narrow windows
+    overlapping ~95%. A real run stalled ~26 minutes hitting Yahoo's
+    known shared-runner rate limiting (see KNOWLEDGE_BASE.md section 20)
+    on repeated calls for the same handful of tickers, surfaced as
+    misleading "possibly delisted" errors - the tickers themselves
+    resolve fine outside that rate-limited state (verified live).
+
+    A wide window fetched once per ticker, sliced locally per row (same
+    approach backtest.py's HistCache already uses for the identical
+    problem), cuts hundreds of calls down to roughly one per unique
+    ticker. A failed/empty result is cached too, so a genuinely dead
+    ticker is attempted once per run, not once per row."""
+    ticker = _normalize_ticker(ticker)
+    if ticker in _SESSION_HIST_CACHE:
+        return _SESSION_HIST_CACHE[ticker]
+    try:
+        # 120d back covers a 90d lookback plus _session_bounds' own 12d
+        # buffer at the earliest row; 8d forward covers the same buffer
+        # at the latest row (today).
+        start = datetime.now(timezone.utc) - timedelta(days=120)
+        end = datetime.now(timezone.utc) + timedelta(days=8)
+        df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                         end=end.strftime("%Y-%m-%d"), interval="1d",
+                         progress=False, auto_adjust=True)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        _SESSION_HIST_CACHE[ticker] = df
+        return df
+    except Exception:
+        _SESSION_HIST_CACHE[ticker] = None
+        return None
+
+
 def _session_bounds(ticker: str, run_at: datetime) -> tuple[float, float, str] | None:
     """Resolve (prev_close, target_close, target_date) for the session a
     prediction made at run_at is about.
@@ -120,15 +164,9 @@ def _session_bounds(ticker: str, run_at: datetime) -> tuple[float, float, str] |
     """
     ticker = _normalize_ticker(ticker)
     try:
-        start = run_at - timedelta(days=12)
-        end = run_at + timedelta(days=8)
-        df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
-                         end=end.strftime("%Y-%m-%d"), interval="1d",
-                         progress=False, auto_adjust=True)
-        if df.empty or len(df) < 2:
+        df = _session_hist(ticker)
+        if df is None or df.empty or len(df) < 2:
             return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
         run_date = run_at.date()
         cutoff = run_date if run_at.hour < _SESSION_CLOSE_UTC else run_date + timedelta(days=1)
         target_idx = None
