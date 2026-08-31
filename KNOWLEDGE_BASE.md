@@ -1168,10 +1168,46 @@ explicitly NOT safe to cut over with the same idempotent-overlap
 tolerance Phase A used, since `daily_analysis` pushes Telegram and a
 double-fire there is the 2026-08-28 five-message incident all over again.
 
+## 31. Blueprint 23 scoped: Plan C Phase 1, portfolio defense layer (2026-08-31)
+
+Scoped, not built. Follows from the 2026-08-30 expansion review (an
+Artifact, not a repo file - "Plan C" in conversation shorthand). The
+review's headline finding: every buy-side LLM dimension measured to date
+has failed, every avoidance dimension has real edge, and none of that
+avoidance signal currently reaches the user anywhere - `/portfolio` in
+Telegram and the dashboard both show raw P&L only, nothing from
+`stocks_to_avoid`, wishlist `skip`, `portfolio_verdicts`, or
+`regime_bearish_block`.
+
+`blueprints/23-portfolio-defense-layer.md` scopes a display-only layer:
+a new `portfolio_defense_snapshot` table, a new `analyzer/portfolio_defense.py`
+that cross-references live holdings/wishlist against the three existing
+signal sources (reusing `paper_trader._avoid_set`/`_bearish_block`
+directly rather than re-deriving the same membership logic a third time),
+wired into `daily_grader.yml`, surfaced in both Telegram's
+`portfolio`/`wishlist` commands and the dashboard's portfolio page. Every
+status shown must trace to a real `reason` string already written by the
+model - explicitly constrained against fabricating new reasoning text or
+defaulting a missing signal to a false "clear."
+
+Deliberately scoped narrower than the expansion review's own Phase 1
+description ("defensive-only backtest reaches DSR above zero on 20+
+closed trades") - that gate belongs to the trading-side enforcement
+already shipped in blueprint 21 Phases 1 and 4, not to a pure display
+feature that never opens or closes a trade itself. Not yet built - next
+step is running the blueprint.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-31 (later)** - Scoped blueprint 23 (Plan C Phase 1: portfolio
+  defense layer) - a display-only feature surfacing the three signal
+  sources with proven avoidance edge (stocks_to_avoid, wishlist skip,
+  portfolio_verdicts) plus regime_bearish_block against real holdings in
+  both Telegram and the dashboard, none of which currently reaches the
+  user anywhere. Reuses paper_trader's existing avoid-set/bearish-block
+  functions rather than re-deriving them. Not yet built. See section 31.
 - **2026-08-31** - Blueprint 22 Phase A fully cut over: all 5 jobs
   confirmed firing cleanly on Oracle's systemd timers with real work done
   (news fetched, INDmoney synced, candidates dispatched, alerts checked),
