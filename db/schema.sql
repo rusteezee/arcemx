@@ -216,6 +216,24 @@ create table if not exists ticker_enrichment (
 );
 create index if not exists idx_ticker_enrichment_updated on ticker_enrichment(updated_at desc);
 
+-- Blueprint 23: daily cache of the three signal sources with real measured
+-- avoidance edge (stocks_to_avoid, wishlist skip, portfolio_verdicts) plus
+-- regime_bearish_block, cross-referenced against real holdings/wishlist.
+-- Display-only - never read by paper_trader.py/backtest.py, which already
+-- enforce these same signals directly. One row per ticker, same shape as
+-- ticker_enrichment above.
+create table if not exists portfolio_defense_snapshot (
+    ticker text primary key,
+    status text not null,        -- 'avoid' | 'caution' | 'clear' | 'no_data'
+    reason text,
+    verdict text,                -- raw portfolio_verdicts.verdict, if any
+    target numeric,
+    stop_loss numeric,
+    source text,                 -- 'stocks_to_avoid' | 'wishlist_skip' | 'portfolio_verdict' | 'regime' | null
+    computed_at timestamptz default now()
+);
+create index if not exists idx_portfolio_defense_computed on portfolio_defense_snapshot(computed_at desc);
+
 
 -- sync_log: per-attempt audit row written by fetchers.indmoney_mcp on every
 -- pull. The dashboard reads the latest ok=true row for the "last update"
@@ -498,6 +516,7 @@ alter table sensei_eod           enable row level security;
 alter table calculator_runs      enable row level security;
 alter table portfolio_score_runs enable row level security;
 alter table ticker_enrichment    enable row level security;
+alter table portfolio_defense_snapshot enable row level security;
 alter table sync_log             enable row level security;
 alter table calibration_log      enable row level security;
 alter table paper_trades         enable row level security;
@@ -534,7 +553,7 @@ begin
     'prediction_scores','accuracy_summary','sensei_eod',
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
     'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts',
-    'backtest_runs','stock_analyses','realized_pnl'
+    'backtest_runs','stock_analyses','realized_pnl','portfolio_defense_snapshot'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('drop policy if exists "owner read" on %I', t);

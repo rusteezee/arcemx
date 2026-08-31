@@ -6,6 +6,7 @@ import { Stat } from "@/components/Stat";
 import { EmptyState } from "@/components/EmptyState";
 import { LineChart } from "@/components/LineChart";
 import { PortfolioScorecard } from "@/components/PortfolioScorecard";
+import { DefensePill } from "@/components/DefensePill";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
 import { fetchQuote } from "@/lib/quotes";
 import { currencySymbol, formatPct, isIndian, stripTicker } from "@/lib/utils";
@@ -20,6 +21,8 @@ interface PortfolioRow {
   pnl: number;
   pnl_pct: number;
   currency: string;
+  defenseStatus?: string | null;
+  defenseReason?: string | null;
 }
 
 const TIMELINE_RANGES: { label: string; days: number }[] = [
@@ -88,6 +91,14 @@ export default function PortfolioPage() {
         .from("portfolio")
         .select("*")
         .eq("user_id", DEFAULT_UID);
+      // blueprint 23: fetched alongside, not blocking - a missing/stale
+      // snapshot must never hide or delay the actual P&L numbers above.
+      const { data: defenseData } = await sb
+        .from("portfolio_defense_snapshot")
+        .select("ticker,status,reason");
+      const defenseMap = new Map(
+        (defenseData || []).map((d: any) => [d.ticker, d])
+      );
       const out: PortfolioRow[] = [];
       await Promise.all(
         (data || []).map(async (h: any) => {
@@ -95,6 +106,7 @@ export default function PortfolioPage() {
           if (!q?.last) return;
           const inv = h.avg_buy_price * h.qty;
           const cur = q.last * h.qty;
+          const defense = defenseMap.get(h.ticker);
           out.push({
             ticker: h.ticker,
             qty: h.qty,
@@ -105,6 +117,8 @@ export default function PortfolioPage() {
             pnl: cur - inv,
             pnl_pct: ((cur - inv) / inv) * 100,
             currency: currencySymbol(h.ticker),
+            defenseStatus: defense?.status ?? null,
+            defenseReason: defense?.reason ?? null,
           });
         })
       );
@@ -384,6 +398,7 @@ export default function PortfolioPage() {
                   <th>Current</th>
                   <th>P&L</th>
                   <th>P&L %</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -400,6 +415,9 @@ export default function PortfolioPage() {
                     </td>
                     <td className={`num font-medium whitespace-nowrap ${r.pnl_pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]"}`}>
                       {formatPct(r.pnl_pct)}
+                    </td>
+                    <td className="whitespace-nowrap">
+                      <DefensePill status={r.defenseStatus} reason={r.defenseReason} />
                     </td>
                   </tr>
                 ))}

@@ -1197,10 +1197,74 @@ already shipped in blueprint 21 Phases 1 and 4, not to a pure display
 feature that never opens or closes a trade itself. Not yet built - next
 step is running the blueprint.
 
+## 32. Blueprint 23 built and verified live: portfolio defense layer (2026-08-31)
+
+Built and shipped the same day it was scoped (section 31). New
+`analyzer/portfolio_defense.py`, wired into `analyzer/grader.py`'s
+`__main__` via `_run_portfolio_defense()` (soft-fail, same pattern as
+`_run_paper_trader`) - no workflow YAML change needed, it rides the
+existing `python -m analyzer.grader` step in `daily_grader.yml`. Surfaced
+in `bot/telegram_bot.py`'s `portfolio()`/`wishlist()` handlers and in
+`web/app/portfolio/`, `web/app/wishlist/` (new shared `DefensePill.tsx`
+component, uses the existing `pill-loss`/`pill-warn` tokens - no new
+color introduced).
+
+**Real bug found and fixed by testing before this shipped:** `target`/
+`stop_loss` from `portfolio_verdicts` came back `None` on every row.
+Root cause: the LLM writes these as free text despite the prompt's own
+"MUST be concrete numeric INR" instruction - GROWW's real verdict entry
+had `target: "₹205"`, and `float("₹205")` raises outright. Fixed with a
+regex extractor that strips thousands-comma separators first, then pulls
+the first numeric token (handles a currency symbol, a `"360-400"` range
+taking the low end, and comma-grouped values like `"₹12,500"`).
+Unit-verified against all of these plus `None`/int/float/empty-string
+inputs before re-running against live data.
+
+**Verified live end to end, not just code review:**
+- `python -m analyzer.portfolio_defense` computed 12 real rows against
+  the actual 4 holdings + 8 wishlist tickers. Spot-checked 3 against the
+  source `analysis.raw_json` by hand: GROWW's `trim` verdict/reason,
+  PWL's `stocks_to_avoid` entry, ADANIPOWER's wishlist `skip` entry - all
+  three traced to real text, correctly classified.
+- Fail-open path checked: NTPC/VEDL/ATHERENERG all show `no_data`,
+  confirmed each genuinely has no avoid/skip/verdict entry anywhere in
+  the source row (each only has a `wait` wishlist signal, which is
+  correctly neither a red flag nor a green light).
+- Simulated the real Telegram `/portfolio` message body against live
+  data: regime banner, per-holding P&L, and the correct glyph + real
+  reason text under each flagged holding all render as designed.
+- `web/`: `npx tsc --noEmit` clean, and a real `npx next build` compiles
+  and generates every route successfully including `/portfolio` and
+  `/wishlist` - could not verify the rendered page visually since the
+  dashboard is owner-auth-walled and this session has no login
+  credentials, so build-level verification is the practical ceiling here.
+
+Schema applied live in Supabase by the user (table + index + RLS-enable +
+owner-read policy) - hit two real snags worth remembering: the whole
+first paste was one transaction, so the placeholder-UUID policy line
+failing rolled back the table creation too (had to resubmit the complete
+block together once the real UUID was known), and a plain
+`create policy ... using (auth.uid() = '<placeholder>')` fails outright
+with an invalid-UUID error rather than a permissions error - the
+placeholder must never be pasted literally.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-31 (latest)** - Built and shipped blueprint 23 (portfolio
+  defense layer), same day it was scoped. New analyzer/portfolio_defense.py,
+  wired into grader.py (no workflow YAML change needed), surfaced in
+  Telegram's /portfolio and /wishlist and in the dashboard's matching
+  pages via a new shared DefensePill component. Real bug found and fixed
+  before shipping: target/stop_loss parsing silently dropped every value
+  because the LLM writes them with a currency symbol
+  (float("₹205") raises) - fixed with a proper numeric extractor,
+  unit-tested, then re-verified live. Verified end to end: 12 real rows
+  computed against actual holdings/wishlist, 3 spot-checked by hand
+  against the source analysis row, fail-open path confirmed correct,
+  full Telegram message body simulated against live data, dashboard
+  type-checks clean and a real production build succeeds. See section 32.
 - **2026-08-31 (later)** - Scoped blueprint 23 (Plan C Phase 1: portfolio
   defense layer) - a display-only feature surfacing the three signal
   sources with proven avoidance edge (stocks_to_avoid, wishlist skip,

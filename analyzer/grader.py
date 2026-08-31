@@ -1591,6 +1591,24 @@ def _run_paper_trader() -> None:
         print(f"  paper_trader post-notify skip: {str(e)[:120]}")
 
 
+def _run_portfolio_defense() -> None:
+    """Blueprint 23 (Plan C Phase 1) hook. Cross-references real holdings/
+    wishlist against stocks_to_avoid, wishlist skip, portfolio_verdicts,
+    and regime_bearish_block, writes portfolio_defense_snapshot. Display
+    only - never touches paper_trades/paper_signals. Soft-fails so a
+    hiccup here can never block the rest of the grader pipeline."""
+    try:
+        from analyzer.portfolio_defense import compute_snapshot as _compute_pd
+    except ImportError as e:
+        print(f"Portfolio defense skipped (import failed): {str(e)[:120]}")
+        return
+    try:
+        rows = _compute_pd()
+        print(f"portfolio_defense: computed {len(rows)} rows")
+    except Exception as e:
+        print(f"Portfolio defense skipped: {str(e)[:160]}")
+
+
 def _snapshot_metrics() -> None:
     """Persist the Phase A metric bundle to metrics_snapshot so the
     tier-progress trail is queryable later. One row per grader pass.
@@ -1742,6 +1760,7 @@ if __name__ == "__main__":
     compute_summaries()
     _grade_stock_analyses()
     _run_paper_trader()
+    _run_portfolio_defense()
     _snapshot_metrics()
     _embed_new_predictions()
     _prune_accuracy_summary()

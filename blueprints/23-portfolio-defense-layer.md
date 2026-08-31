@@ -1,4 +1,6 @@
-# Blueprint 23: Portfolio Defense Layer (Plan C Phase 1)
+# Blueprint 23: Portfolio Defense Layer (Plan C Phase 1) - BUILT AND VERIFIED LIVE 2026-08-31
+
+See `KNOWLEDGE_BASE.md` section 32 for full build/verification detail, including a real bug found and fixed (target/stop_loss numeric parsing) and the exact Supabase migration snags hit.
 
 BUILDER: Claude Sonnet, working alone, cold start, cannot ask questions.
 (cross-references data that already exists, no new LLM calls, no new

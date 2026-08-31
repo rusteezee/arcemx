@@ -328,13 +328,44 @@ async def stock(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"fail: {e}")
 
 
+def _defense_map() -> dict:
+    """blueprint 23: ticker -> portfolio_defense_snapshot row. One query,
+    reused across the portfolio/wishlist renders below rather than a
+    per-ticker lookup. Fails open to an empty map - a missing/stale
+    snapshot must never break /portfolio or /wishlist."""
+    try:
+        rows = sb().table("portfolio_defense_snapshot").select(
+            "ticker,status,reason,verdict,source").execute().data or []
+        return {r["ticker"]: r for r in rows}
+    except Exception:
+        return {}
+
+
+def _defense_line(row: dict | None) -> str:
+    """One extra line for a status worth surfacing. 'clear' and missing
+    data render nothing - silence is itself informative here, and a
+    stale/absent snapshot must never read as a false all-clear."""
+    if not row:
+        return ""
+    status = row.get("status")
+    reason = row.get("reason")
+    if status == "avoid":
+        return f"  🔻 {reason}\n" if reason else "  🔻 Flagged avoid today.\n"
+    if status == "caution":
+        return f"  ⚠️ {reason}\n" if reason else "  ⚠️ Flagged caution today.\n"
+    return ""
+
+
 async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     res = sb().table("portfolio").select("*").eq("user_id", uid).execute()
     if not res.data:
         await update.message.reply_text("Empty. Use /buy TICKER PRICE QTY or /import to upload CSV.")
         return
+    defense = _defense_map()
     msg = "*Portfolio*\n"
+    if any((defense.get(h["ticker"]) or {}).get("source") == "regime" for h in res.data):
+        msg += "⚠️ _Market regime read bearish today - see flagged holdings below._\n"
     total_inv, total_cur = 0, 0
     for h in res.data:
         last = _safe_last_price(h["ticker"])
@@ -350,6 +381,7 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         arrow = "🟢" if pnl >= 0 else "🔴"
         c = _currency(h["ticker"])
         msg += f"{arrow} `{h['ticker']}` x{h['qty']} @ {c}{h['avg_buy_price']:.2f}\n  Now {c}{last:.2f} | P&L {c}{pnl:+.0f} ({pnl_pct:+.1f}%)\n"
+        msg += _defense_line(defense.get(h["ticker"]))
     tot_pnl = total_cur - total_inv
     tot_pct = tot_pnl / total_inv * 100 if total_inv else 0
     msg += f"\n*Total:* Invested ₹{total_inv:.0f} → ₹{total_cur:.0f} | P&L ₹{tot_pnl:+.0f} ({tot_pct:+.2f}%)"
@@ -387,6 +419,7 @@ async def wishlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not res.data:
         await update.message.reply_text("Wishlist empty. /add_wish TICKER")
         return
+    defense = _defense_map()
     msg = "*Wishlist*\n"
     for w in res.data:
         last = _safe_last_price(w["ticker"])
@@ -394,6 +427,7 @@ async def wishlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             msg += f"• `{w['ticker']}`. n/a\n"
         else:
             msg += f"• `{w['ticker']}` {_currency(w['ticker'])}{last:.2f}\n"
+        msg += _defense_line(defense.get(w["ticker"]))
     msg += DISCLAIMER
     await update.message.reply_text(msg, parse_mode="Markdown")
 

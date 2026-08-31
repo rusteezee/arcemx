@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { EmptyState } from "@/components/EmptyState";
+import { DefensePill } from "@/components/DefensePill";
 import { sb, DEFAULT_UID } from "@/lib/supabase";
 import { formatINR, polishMarketText } from "@/lib/utils";
 
@@ -17,6 +18,8 @@ interface WishlistOutlook {
 interface Row {
   ticker: string;
   outlook?: WishlistOutlook;
+  defenseStatus?: string | null;
+  defenseReason?: string | null;
 }
 
 function normTicker(t: string): string {
@@ -59,11 +62,23 @@ export default function WishlistPage() {
         if (o.ticker) outlookByTicker[normTicker(o.ticker)] = o;
       }
 
+      // blueprint 23: fetched alongside, not blocking - a missing/stale
+      // snapshot must never hide or delay the outlook data above.
+      const { data: defenseData } = await sb
+        .from("portfolio_defense_snapshot")
+        .select("ticker,status,reason");
+      const defenseByTicker: Record<string, { status: string; reason: string | null }> = {};
+      for (const d of defenseData || []) {
+        if (d.ticker) defenseByTicker[normTicker(d.ticker)] = d;
+      }
+
       setRows(
         tickers
           .map((t) => ({
             ticker: t,
             outlook: outlookByTicker[normTicker(t)],
+            defenseStatus: defenseByTicker[normTicker(t)]?.status ?? null,
+            defenseReason: defenseByTicker[normTicker(t)]?.reason ?? null,
           }))
           .sort((a, b) => a.ticker.localeCompare(b.ticker))
       );
@@ -136,11 +151,12 @@ export default function WishlistPage() {
           <div className="table-scroll">
           <table className="data" style={{ width: "100%" }}>
             <colgroup>
-              <col style={{ width: "16%" }} />
               <col style={{ width: "14%" }} />
-              <col style={{ width: "16%" }} />
               <col style={{ width: "12%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "10%" }} />
               <col />
+              <col style={{ width: "10%" }} />
             </colgroup>
             <thead>
               <tr>
@@ -149,10 +165,11 @@ export default function WishlistPage() {
                 <th>Range</th>
                 <th>Confidence</th>
                 <th>Key Driver</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ ticker, outlook }) => (
+              {rows.map(({ ticker, outlook, defenseStatus, defenseReason }) => (
                 <tr key={ticker}>
                   <td className="font-medium whitespace-nowrap">
                     {normTicker(ticker)}
@@ -177,6 +194,9 @@ export default function WishlistPage() {
                       Awaiting next analysis.
                     </td>
                   )}
+                  <td className="whitespace-nowrap">
+                    <DefensePill status={defenseStatus} reason={defenseReason} />
+                  </td>
                 </tr>
               ))}
             </tbody>
