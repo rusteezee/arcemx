@@ -116,34 +116,34 @@ zero benefit.
 
 ## STEP-BY-STEP PLAN (phased, get sign-off between phases)
 
-### Phase A. Prove the pattern on the lowest-risk jobs - BUILT 2026-08-30, TIMERS NOT YET ENABLED
+### Phase A. Prove the pattern on the lowest-risk jobs - DONE, cut over 2026-08-31
 
-**Status:** all units written, installed on the box, and verified to parse.
-`arcemx-daily-sync.service` verified live end to end against real INDmoney
-data. `git-pull.timer` enabled and running. The 5 job timers are installed
-but NOT enabled, and the GH Actions `schedule:` blocks are NOT yet removed
-- both deliberate, see "Remaining to finish Phase A" below.
+**Status: complete.** All 5 job timers installed, enabled, confirmed
+firing real work automatically, and the GH Actions `schedule:` trigger
+removed from all 5 workflow YAMLs (`workflow_dispatch:` kept as manual
+fallback). `git-pull.timer` running. Full detail, including the two bugs
+found by testing and the real GH-schedule-was-already-silent evidence
+found at cutover time, is in `KNOWLEDGE_BASE.md` §30.
 
-Two real bugs were found by testing rather than code review (details in
-`KNOWLEDGE_BASE.md` changelog 2026-08-30): the wrapper reported success on
-failed jobs (`if ! cmd; then rc=$?` reads the negation's status), and a
-`chmod +x` mode difference silently wedged the box's `git pull --ff-only`
-so it kept running stale code. Both fixed.
+**Known gap, accepted, not blocking:** `HC_PING_URLS` was never filled in
+- the user chose to enable and cut over without it rather than wait on a
+healthchecks.io setup. These 5 jobs currently run with zero automated
+dead-man alerting; manual `journalctl`/`systemctl` checks are the only
+detection mechanism. Add pings whenever convenient - no rework needed,
+`run_job.sh` already reads `HC_PING_URLS` and no-ops cleanly when it's
+unset.
 
-**Remaining to finish Phase A (blocked on secrets, then a waiting period):**
-1. Fill `GNEWS_API_KEY` (gnews.io dashboard) and `HC_PING_URLS`
-   (healthchecks.io dashboard) into `/etc/arcemx.env` on the box.
-2. `sudo systemctl enable --now arcemx-hourly-news.timer arcemx-daily-prices.timer arcemx-daily-sync.timer arcemx-alerts-checker.timer arcemx-stock-analyst-dispatch.timer`
-3. Confirm with `systemctl list-timers 'arcemx-*'`.
-4. Watch 3-5 real days: each job firing on time, dead-man pings landing,
-   no gaps.
-5. ONLY THEN remove the `schedule:` block from those 5 workflow YAMLs
-   (keep `workflow_dispatch:`). Until step 5, both triggers are live -
-   accepted deliberately, since these 5 jobs are all idempotent
-   (upserts/fetches), so a double-run wastes a little compute but cannot
-   corrupt state or double-send a user-facing message. Do NOT carry this
-   assumption into Phase B: `daily_analysis` DOES push Telegram and is
-   NOT safe to double-fire (that is the 2026-08-28 five-push incident).
+**What actually happened, for the record (deviated from the original
+step order below, deliberately, on live evidence):** the original plan
+was secrets first, then enable, then watch 3-5 days, then only pull
+`schedule:` once proven. In practice: enabled without the ping secret on
+explicit user call, watched the first real automatic fire of all 5 jobs
+(not the originally-planned multi-day window - cut short once GH's own
+schedule was caught having already gone silent on 4 of 5 jobs, which made
+"wait to see if the old trigger still works" a moot question for those
+four), then pulled `schedule:` from all 5 the same day. `daily_prices` was
+included despite not yet having fired via its own Oracle timer at cutover
+time - accepted on explicit go-ahead, not a default judgment call.
 
 ### Original plan (kept for reference)
 

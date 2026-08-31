@@ -1117,10 +1117,72 @@ this, as demonstrated here.
 write-up. `ROADMAP.md`'s Wave 3 blueprint 14 row updated to reflect the
 review is done, not overdue.
 
+## 30. Blueprint 22 Phase A cutover complete: GH schedule pulled, Oracle timers live (2026-08-31)
+
+All 5 Phase A jobs (`hourly_news`, `daily_prices`, `daily_sync`,
+`alerts_checker`, `stock_analyst_dispatch`) confirmed firing cleanly on
+their own systemd timers on the Oracle box, then had their GH Actions
+`schedule:` trigger removed the same day - `workflow_dispatch:` kept on
+all 5 as a manual recovery path. Commit `8638d14`.
+
+**Real evidence this was overdue, not just theoretically correct.**
+Checked GH Actions run history at cutover time and found the native
+`schedule:` trigger had gone silent on 4 of the 5 jobs, independent of
+anything to do with this migration:
+
+- `daily_sync`: last real schedule fire 2026-08-28 - **3 days silent**.
+- `alerts_checker`: last real schedule fire 2026-08-28 - **3 days silent**.
+- `stock_analyst_dispatch`: **never fired via schedule successfully, ever**
+  - every prior run in its history was a manual `workflow_dispatch`.
+- `hourly_news`: last fire 01:09 UTC that same morning, then stopped -
+  Oracle's timer fired 6 clean times in the hours after that.
+- `daily_prices`: not due at either trigger's check time, so not directly
+  comparable, but included in the cutover anyway on explicit user
+  go-ahead, accepting the small window before its first Oracle fire
+  (16:30 UTC) proved out.
+
+Oracle-side verification, all genuine work, not just clean exit codes:
+`hourly_news` fetched 261 real news items across 6 fires; `daily_sync`
+synced 4 real holdings + 9 watchlist items; `alerts_checker` ran 9 clean
+checks (`no active alerts`, a real state read, not a crash); `stock_analyst_dispatch`
+dispatched 6 real candidates (APARINDS, CARTRADE, ENGINERSIN, KPITTECH,
+PERSISTENT, VOGL) - different tickers from the 2026-08-29 dispatch, as
+expected from a fresh daily technical screen.
+
+**Bug found and fixed during this same rollout** (see §21 for the fuller
+account): `run_job.sh`'s failure path silently reported success
+(`if ! cmd; then rc=$?` reads the negation's exit status, always 0) -
+caught by deliberately running a bogus module before any real job ever
+touched the wrapper, not by a live incident. Also a `chmod +x` mode
+difference wedged the box's `git pull --ff-only`, now fixed by tracking
+the file as mode 100755 in git.
+
+**Still open:** `HC_PING_URLS` was never filled in - user chose to enable
+Phase A without it rather than wait on a healthchecks.io setup, so these
+5 jobs currently run with zero automated dead-man alerting. Manual
+`journalctl`/`systemctl` checks are the only failure-detection mechanism
+until that gets added. Phase B (the 3 Cloudflare-covered jobs -
+`daily_analysis`, `daily_grader`, `sensei_eod`) is unaffected by any of
+this and stays exactly where blueprint 22 left it - not started, and
+explicitly NOT safe to cut over with the same idempotent-overlap
+tolerance Phase A used, since `daily_analysis` pushes Telegram and a
+double-fire there is the 2026-08-28 five-message incident all over again.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-08-31** - Blueprint 22 Phase A fully cut over: all 5 jobs
+  confirmed firing cleanly on Oracle's systemd timers with real work done
+  (news fetched, INDmoney synced, candidates dispatched, alerts checked),
+  then GH Actions' `schedule:` trigger removed from all 5 workflow YAMLs
+  (`workflow_dispatch` kept as manual fallback). Found live production
+  evidence GH's native schedule had already gone silent on 4 of 5 jobs
+  independent of this migration - `daily_sync`/`alerts_checker` hadn't
+  fired via schedule in 3 days, `stock_analyst_dispatch` had never fired
+  via schedule successfully at all. Commit `8638d14`. `HC_PING_URLS` still
+  not configured (user chose to proceed without it) - these 5 jobs
+  currently have no automated dead-man alerting. See §30.
 - **2026-08-30 (even later still)** - Did the overdue RAG Phase 1 A/B
   review (blueprint 14) - 24 days late, file untouched since activation.
   Pulled the full accuracy_summary trend since 2026-07-16, not just the
