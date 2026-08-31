@@ -1377,10 +1377,49 @@ fire per job, then pull `schedule:`), as long as
 the Oracle timer calls for `daily_analysis`. Full design in
 `blueprints/22-cron-to-oracle-migration.md`'s Phase B section.
 
+## 35. Blueprint 24 scoped: Plan C Phase 2, LLM as factor miner (2026-09-01)
+
+Scoped, not built. Follows blueprint 23 (Plan C Phase 1, shipped
+2026-08-31). The 2026-08-30 expansion review's second recommendation:
+stop asking the LLM to pick a direction (six dimensions tried, all
+failed - see section 26/26b) and instead use it to propose testable
+factor hypotheses, validated statistically before any capital risk -
+the architecture the published literature (AlphaAgent, SIGKDD 2026)
+actually shows working, versus the picker-role this project's own data
+already disproved.
+
+`blueprints/24-llm-factor-miner.md` scopes a genuinely new but
+maximally-reused design: `analyzer/technical.py`'s existing
+`compute_signals()` becomes the feature schema (already point-in-time
+safe, no changes needed), a new constrained JSON DSL (never executable
+code - a hard security boundary, not a style choice) is the factor
+representation, and a new `analyzer/factor_lab.py` backtests each
+proposal by reusing `backtest.py`'s `HistCache`/`ShadowBook`,
+`paper_trader.py`'s friction/cost functions, and `metrics.py`'s
+DSR/PBO honesty layer directly - no cost-model or statistics logic
+reimplemented. Mining runs weekly (piggybacks specialist_eval's existing
+Saturday cadence), and every proposal is logged regardless of outcome,
+winners and rejects both.
+
+**Promotion discipline mirrors blueprint 13's LoRA specialist exactly:**
+a factor clearing the statistical bar (DSR > 0, 30+ trades, beats the
+live baseline) becomes a surfaced candidate for the user to manually
+review - it never trades real or paper capital on its own, and wiring a
+promoted factor into paper_trader.py's live gate stack is explicitly
+separate, future work with its own blueprint, not something this one
+does automatically. Not yet built - next step is running the blueprint.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-01 (later)** - Scoped blueprint 24 (Plan C Phase 2: LLM as
+  factor miner). New constrained JSON DSL for LLM-proposed factors
+  (never executable code), backtested by reusing HistCache/ShadowBook/
+  friction/metrics wholesale rather than reimplementing any of it.
+  Promotion discipline mirrors the LoRA specialist's manual-only rule -
+  a mined factor never trades capital automatically. Not yet built. See
+  section 35.
 - **2026-09-01** - Designed blueprint 22 Phase B (not yet built). Real
   investigation found only daily_analysis needs special care - the
   push-dedup logic lives entirely in GH Actions YAML plumbing today
