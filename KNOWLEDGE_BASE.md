@@ -1409,10 +1409,78 @@ promoted factor into paper_trader.py's live gate stack is explicitly
 separate, future work with its own blueprint, not something this one
 does automatically. Not yet built - next step is running the blueprint.
 
+## 36. Blueprint 24 built and run for real: every mined factor correctly rejected (2026-09-01)
+
+Built the same day it was scoped (section 35). `analyzer/factor_lab.py`
+(constrained JSON DSL, `validate_factor`/`evaluate_condition`/
+`backtest_factor`, reusing `HistCache`/`ShadowBook`/`_open_shadow_trade`/
+friction/geometry wholesale) and `analyzer/factor_dispatch.py` (LLM
+proposal + per-batch deflated-Sharpe scoring + `mined_factors` logging).
+
+**`factor_lab.py` verified before any LLM was involved.** A hand-written
+smoke-test factor (RSI oversold + above sma200) legitimately matched zero
+times on 5 large-cap tickers over ~1 year - checked by hand and confirmed
+real (RELIANCE genuinely traded 80-100 points below its 200-DMA with RSI
+39-50 the whole window, matching this project's own documented
+"trend: down" regime findings), not a bug. Widened to 20 tickers and a
+looser factor to get real fills: 37 trades, real entry/exit prices and
+exit reasons. Spot-checked BHARTIARTL's trade by hand against real
+yfinance OHLCV - entry/target dates and prices matched exactly.
+`validate_factor()` also verified to reject all 6 classes of malformed
+input tested (unknown field, unknown op, bad side, bad horizon, empty
+conditions, missing value). Grep-confirmed zero references to
+`paper_trades`/`paper_signals`/`eval(` anywhere in either new file.
+
+**Real end-to-end mining run, not just a code-review pass:**
+`python -m analyzer.factor_dispatch` against the live OpenRouter chain
+and real market data. The LLM (nemotron-3-super, this run's primary)
+proposed 5 real, mechanically distinct hypotheses - oversold-near-support
+bounce, resistance-rejection short, MACD/trend bearish continuation,
+volume-breakout momentum, MACD/trend bullish continuation - all validated
+cleanly on the first try (0 rejected for malformed DSL). Each backtested
+with 104-237 real trades. **Every single one came back with negative
+Sharpe (-1.8 to -5.8) and DSR 0.0 - all correctly rejected.** This is the
+honesty layer working exactly as designed: five individually reasonable-
+sounding textbook technical patterns, tested with real transaction costs
+on real Indian large-cap data, and none of them survive contact with
+reality. Consistent with this project's whole audit history (every
+buy-side dimension measured to date has failed - section 26/26b) and
+exactly the kind of result this blueprint exists to produce rather than
+suppress.
+
+**Real bug found and fixed during this same run:** `factor_dispatch.py`'s
+own `FACTOR_MINING_PRIMARY` was set to `nemotron-3-super` directly - which
+is ALSO the system's sole configured OpenRouter fallback
+(`llm_router.FALLBACK_CHAIN`). `_chain()` filters a model out of its own
+fallback list if it equals the primary, so this run's fallback chain
+came back empty (`fallbacks: []`) - zero redundancy if nemotron rate-
+limited. Fixed by defaulting to `None`, which falls through to the
+system's real primary/fallback pair (`minimax-m3` -> `nemotron-3-super`),
+verified by direct `_chain(None)` call.
+
+**No promotion path exercised yet** (by design - nothing cleared the
+bar this run) and none was expected to on a first pass with naive
+textbook hypotheses. The real test of the promotion surface (a Telegram
+notification + a human manually reviewing a `mined_factors` row) is
+still pending a future run that actually produces a `candidate`.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-01 (even later)** - Built blueprint 24 and ran it for real
+  the same day it was scoped. factor_lab.py's backtest mechanism
+  verified by hand (a smoke-test factor's zero matches confirmed real,
+  not a bug; a real trade spot-checked against actual yfinance OHLCV;
+  validation tested against 6 classes of malformed input). Real mining
+  run: LLM proposed 5 mechanically distinct, well-formed hypotheses, all
+  backtested with 104-237 real trades each, and every single one came
+  back negative Sharpe / DSR 0.0 - correctly rejected. The honesty layer
+  working as designed, not a bug. Found and fixed a real redundancy gap
+  the same run: factor_dispatch's chosen primary model was also the
+  system's sole fallback, so _chain() zeroed out its own fallback list -
+  fixed by defaulting to the system's real primary/fallback pair. See
+  section 36.
 - **2026-09-01 (later)** - Scoped blueprint 24 (Plan C Phase 2: LLM as
   factor miner). New constrained JSON DSL for LLM-proposed factors
   (never executable code), backtested by reusing HistCache/ShadowBook/

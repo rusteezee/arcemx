@@ -1,4 +1,6 @@
-# Blueprint 24: LLM as Factor Miner (Plan C Phase 2)
+# Blueprint 24: LLM as Factor Miner (Plan C Phase 2) - BUILT AND RUN LIVE 2026-09-01
+
+See `KNOWLEDGE_BASE.md` section 36 for full build/verification detail - a real mining run, LLM proposed 5 factors, all correctly rejected (negative Sharpe, DSR 0.0), the honesty layer working exactly as designed. Also documents a real redundancy bug found and fixed the same run.
 
 BUILDER: Claude Sonnet, working alone, cold start, cannot ask questions.
 (genuinely novel architecture, not plumbing - budget real design judgment

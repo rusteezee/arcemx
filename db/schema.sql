@@ -234,6 +234,35 @@ create table if not exists portfolio_defense_snapshot (
 );
 create index if not exists idx_portfolio_defense_computed on portfolio_defense_snapshot(computed_at desc);
 
+-- Blueprint 24 (Plan C Phase 2): every LLM-proposed factor from
+-- analyzer.factor_dispatch, logged regardless of outcome - a rejected
+-- factor is real information too, not just winners. A factor NEVER
+-- trades real or paper capital directly (see analyzer/factor_lab.py's
+-- own module docstring) - status starts 'proposed', moves to 'rejected'
+-- or 'candidate' by the mining script's own statistical gate, and only
+-- a human manually flips a 'candidate' to 'promoted' after deciding to
+-- wire it into paper_trader.py separately - mirrors blueprint 13's LoRA
+-- specialist promotion discipline exactly.
+create table if not exists mined_factors (
+    id bigserial primary key,
+    proposed_at timestamptz default now(),
+    name text not null,
+    hypothesis text,              -- the LLM's own stated reasoning
+    side text not null,           -- 'long' | 'short'
+    horizon_days int not null,
+    conditions jsonb not null,    -- the DSL condition list, verbatim
+    combine text not null,        -- 'AND' | 'OR'
+    trade_count int,
+    win_rate_pct numeric,
+    sharpe numeric,
+    dsr numeric,
+    pbo numeric,
+    status text not null default 'proposed',  -- 'proposed' | 'rejected' | 'candidate' | 'promoted' | 'archived'
+    reviewed_at timestamptz,
+    notes text
+);
+create index if not exists idx_mined_factors_status on mined_factors(status);
+
 
 -- sync_log: per-attempt audit row written by fetchers.indmoney_mcp on every
 -- pull. The dashboard reads the latest ok=true row for the "last update"
@@ -517,6 +546,7 @@ alter table calculator_runs      enable row level security;
 alter table portfolio_score_runs enable row level security;
 alter table ticker_enrichment    enable row level security;
 alter table portfolio_defense_snapshot enable row level security;
+alter table mined_factors enable row level security;
 alter table sync_log             enable row level security;
 alter table calibration_log      enable row level security;
 alter table paper_trades         enable row level security;
@@ -553,7 +583,8 @@ begin
     'prediction_scores','accuracy_summary','sensei_eod',
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
     'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts',
-    'backtest_runs','stock_analyses','realized_pnl','portfolio_defense_snapshot'
+    'backtest_runs','stock_analyses','realized_pnl','portfolio_defense_snapshot',
+    'mined_factors'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('drop policy if exists "owner read" on %I', t);
