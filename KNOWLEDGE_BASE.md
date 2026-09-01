@@ -1468,6 +1468,16 @@ still pending a future run that actually produces a `candidate`.
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-01 (latest)** - Wired blueprint 24's weekly trigger:
+  `arcemx-factor-mining` on the Oracle box (Sat 03:30 UTC = 09:00 IST,
+  piggybacking specialist_eval's cadence per the blueprint's own plan,
+  offset 30min). Wired directly onto Oracle rather than a new GH Actions
+  workflow - the project's actual trajectory, matching Phase A's proven
+  pattern. Verified live with a real manual trigger from the box itself:
+  1min 50s wall clock, 5 more real distinct candidates proposed and
+  correctly rejected (10 total rows now), and the earlier redundancy
+  fix confirmed working for real - this run's fallback chain showed
+  `['nemotron-3-super']` instead of the empty list the bug produced.
 - **2026-09-01 (even later)** - Built blueprint 24 and ran it for real
   the same day it was scoped. factor_lab.py's backtest mechanism
   verified by hand (a smoke-test factor's zero matches confirmed real,
