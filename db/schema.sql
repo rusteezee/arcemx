@@ -263,6 +263,29 @@ create table if not exists mined_factors (
 );
 create index if not exists idx_mined_factors_status on mined_factors(status);
 
+-- Root-caused 2026-09-01: grader.grade_all(lookback_days=90) re-walks its
+-- full trailing window EVERY DAY, and old analysis rows (from before
+-- aggregator.py's US-ADR filter existed - see that file's
+-- _is_indian_listing) still reference tickers like SFTBY/HMC/PINS
+-- (real US ADRs, no NSE listing to fail over to) and RANDK.NS/VLT.NS
+-- (dead top_performer/worst_performer picks from 2026-06-20) that will
+-- NEVER resolve on yfinance. grader._session_hist()'s per-process cache
+-- (see KNOWLEDGE_BASE.md section 33) only holds for one run's lifetime -
+-- every subsequent day starts fresh and re-attempts the same permanently
+-- dead tickers from scratch, forever, as long as they stay inside the
+-- 90-day window. This table makes that failure permanent-ish instead of
+-- daily: a ticker seen to fail gets skipped without a network call for
+-- retry_after days, then gets one real retry (Yahoo relisting something
+-- is unlikely for these specific entries, but a hard-permanent blacklist
+-- would be wrong in principle for a ticker that only had a transient
+-- failure).
+create table if not exists dead_tickers (
+    ticker text primary key,
+    first_failed_at timestamptz default now(),
+    last_checked_at timestamptz default now(),
+    fail_count int not null default 1
+);
+
 
 -- sync_log: per-attempt audit row written by fetchers.indmoney_mcp on every
 -- pull. The dashboard reads the latest ok=true row for the "last update"
@@ -545,6 +568,7 @@ alter table sensei_eod           enable row level security;
 alter table calculator_runs      enable row level security;
 alter table portfolio_score_runs enable row level security;
 alter table ticker_enrichment    enable row level security;
+alter table dead_tickers         enable row level security;
 alter table portfolio_defense_snapshot enable row level security;
 alter table mined_factors enable row level security;
 alter table sync_log             enable row level security;
@@ -594,10 +618,11 @@ begin
     );
   end loop;
 end$$;
--- No read policy on: news, trends, ticker_enrichment, mcp_tokens (OAuth
--- tokens - must never be readable), prediction_embeddings (internal
--- training data). All fully blocked, even to the owner's session, same as
--- before.
+-- No read policy on: news, trends, ticker_enrichment, dead_tickers
+-- (internal grader optimization cache, not user-facing), mcp_tokens
+-- (OAuth tokens - must never be readable), prediction_embeddings
+-- (internal training data). All fully blocked, even to the owner's
+-- session, same as before.
 
 -- Blueprint 19: symbol root -> INDstocks security_id, filled lazily from the
 -- instrument master CSV so we never bulk-load ~100k rows into Supabase.

@@ -107,6 +107,48 @@ _SESSION_CLOSE_UTC = 10
 
 
 _SESSION_HIST_CACHE: dict[str, "pd.DataFrame | None"] = {}
+DEAD_TICKER_RETRY_DAYS = 30  # after this long, give a previously-dead ticker one real retry
+
+
+def _is_known_dead(sb, ticker: str) -> bool:
+    """True if `ticker` failed recently enough that another yfinance
+    attempt isn't worth the round-trip. Fails open (False) on any error -
+    this is a pure optimization and must never itself break grading."""
+    try:
+        row = sb.table("dead_tickers").select("last_checked_at").eq(
+            "ticker", ticker).limit(1).execute().data
+    except Exception:
+        return False
+    if not row:
+        return False
+    try:
+        last = datetime.fromisoformat(str(row[0]["last_checked_at"]).replace("Z", "+00:00"))
+    except Exception:
+        return False
+    return (datetime.now(timezone.utc) - last) < timedelta(days=DEAD_TICKER_RETRY_DAYS)
+
+
+def _mark_dead(sb, ticker: str) -> None:
+    try:
+        existing = sb.table("dead_tickers").select("fail_count").eq(
+            "ticker", ticker).limit(1).execute().data
+        fail_count = (existing[0]["fail_count"] + 1) if existing else 1
+        sb.table("dead_tickers").upsert(
+            {"ticker": ticker, "last_checked_at": datetime.now(timezone.utc).isoformat(),
+             "fail_count": fail_count},
+            on_conflict="ticker",
+        ).execute()
+    except Exception as e:
+        print(f"  dead_tickers mark skipped: {str(e)[:120]}")
+
+
+def _clear_dead(sb, ticker: str) -> None:
+    """Self-healing: a ticker that resolves fine now (Yahoo relisted it,
+    or it was a transient failure) shouldn't stay blacklisted."""
+    try:
+        sb.table("dead_tickers").delete().eq("ticker", ticker).execute()
+    except Exception:
+        pass
 
 
 def _session_hist(ticker: str) -> "pd.DataFrame | None":
@@ -118,20 +160,28 @@ def _session_hist(ticker: str) -> "pd.DataFrame | None":
     walks many rows, each calling _session_bounds() once per sector (up
     to 10) plus NIFTY/Sensex/BankNifty/Midcap - hundreds of unbatched
     yfinance calls per run, with adjacent rows' narrow windows
-    overlapping ~95%. A real run stalled ~26 minutes hitting Yahoo's
-    known shared-runner rate limiting (see KNOWLEDGE_BASE.md section 20)
-    on repeated calls for the same handful of tickers, surfaced as
-    misleading "possibly delisted" errors - the tickers themselves
-    resolve fine outside that rate-limited state (verified live).
+    overlapping ~95%. A wide window fetched once per ticker, sliced
+    locally per row (same approach backtest.py's HistCache already uses
+    for the identical problem), cuts hundreds of calls down to roughly
+    one per unique ticker per RUN.
 
-    A wide window fetched once per ticker, sliced locally per row (same
-    approach backtest.py's HistCache already uses for the identical
-    problem), cuts hundreds of calls down to roughly one per unique
-    ticker. A failed/empty result is cached too, so a genuinely dead
-    ticker is attempted once per run, not once per row."""
+    Real bug found 2026-09-01, on top of that: the per-process cache
+    above only holds for one run's lifetime - grade_all's 90-day window
+    includes rows from before aggregator.py's US-ADR filter existed
+    (see that file's _is_indian_listing), so tickers like SFTBY/HMC/PINS
+    (real US ADRs, no NSE listing exists to fall back to) and dead
+    top_performer/worst_performer picks get re-attempted from scratch
+    EVERY SINGLE DAY, forever, as long as they stay inside the window -
+    a real run stalled 15+ minutes hitting exactly this. dead_tickers
+    (see db/schema.sql) makes a failure persist across runs instead of
+    just within one, checked before ever calling yfinance."""
     ticker = _normalize_ticker(ticker)
     if ticker in _SESSION_HIST_CACHE:
         return _SESSION_HIST_CACHE[ticker]
+    sb = _sb()
+    if _is_known_dead(sb, ticker):
+        _SESSION_HIST_CACHE[ticker] = None
+        return None
     try:
         # 120d back covers a 90d lookback plus _session_bounds' own 12d
         # buffer at the earliest row; 8d forward covers the same buffer
@@ -143,9 +193,15 @@ def _session_hist(ticker: str) -> "pd.DataFrame | None":
                          progress=False, auto_adjust=True)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+        if df is None or df.empty:
+            _mark_dead(sb, ticker)
+            _SESSION_HIST_CACHE[ticker] = None
+            return None
+        _clear_dead(sb, ticker)
         _SESSION_HIST_CACHE[ticker] = df
         return df
     except Exception:
+        _mark_dead(sb, ticker)
         _SESSION_HIST_CACHE[ticker] = None
         return None
 

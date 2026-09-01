@@ -1464,10 +1464,77 @@ textbook hypotheses. The real test of the promotion surface (a Telegram
 notification + a human manually reviewing a `mined_factors` row) is
 still pending a future run that actually produces a `candidate`.
 
+## 37. The real root cause of the grader stalls: dead tickers re-attempted every single day, forever (2026-09-01)
+
+Section 33's caching fix was real and necessary but incomplete - it only
+helped WITHIN one run. The actual full picture, found by finally testing
+directly against Oracle's own IP (ruling out the GH-Actions-shared-runner-
+rate-limit theory entirely - Oracle had been running yfinance-dependent
+jobs all day without incident) and reading the failing tickers by name
+instead of assuming they were just slow: `SFTBY`, `HMC`, `PINS` are real
+US ADRs with no NSE listing to fall back to, and `RANDK.NS`/`VLT.NS` are
+dead `top_performer`/`worst_performer` picks from 2026-06-20. All of them
+sit inside `grade_all(lookback_days=90)`'s trailing window and predate
+`aggregator.py`'s own US-ADR filter (`_is_indian_listing`, added later) -
+confirmed by searching the full 90-day window by date, not just recent
+rows, and finding them in real historical `wishlist_signals`/
+`wishlist_outlooks_1d`/`top_performers`/`worst_performers` entries from
+2026-06-05, 06-09, and 06-20.
+
+**The real bug:** `_session_hist()`'s per-process cache (section 33)
+starts empty every single day - a fresh `python -m analyzer.grader`
+process has no memory of yesterday's failures. Every day, forever, as
+long as these rows stay inside the 90-day window, grader re-attempts a
+real yfinance call for tickers that will NEVER resolve. This is the
+actual structural cause of the long stalls, independent of whatever
+degree of real Yahoo-side slowness was also happening on top of it that
+night.
+
+**Fixed:** a new `dead_tickers` table persists a failure across runs.
+`_session_hist()` checks it before ever calling yfinance; a ticker
+failed within the last `DEAD_TICKER_RETRY_DAYS` (30) is skipped with
+zero network calls. A success clears any existing dead-ticker row
+(self-healing, not a permanent blacklist - a transient failure or a
+genuine relisting won't stay stuck). No read policy needed (RLS enabled,
+same as `ticker_enrichment`) - purely an internal optimization cache.
+
+**Verified live, not just by inspection:** a fresh Python process (no
+in-memory cache) correctly returned `None` for `SFTBY` with **zero**
+`yf.download` calls, confirmed by monkey-patching and counting - proof
+the persistent skip works across process boundaries, not just within
+one run. Pre-seeded all 5 currently-known dead tickers
+(`SFTBY.NS`/`HMC.NS`/`PINS.NS`/`RANDK.NS`/`VLT.NS`) directly rather than
+waiting for one more real failure cycle each, since they'd already
+failed provably many times tonight.
+
+**Real lesson worth keeping:** the original diagnosis (section 33,
+"Yahoo's shared-runner rate limiting") was plausible, cited real
+precedent (section 20), and was WRONG - or at least badly incomplete.
+The thing that actually found the real cause was running the identical
+code from a second, independent IP (Oracle) and treating a repeated
+identical failure as a lead to chase by name, not a rate-limit signature
+to explain away. Matches this project's own stated discipline
+("verify against real data, don't trust the first plausible story") -
+just a case where that discipline needed a second pass to actually land.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-01 (even later still)** - Found and fixed the REAL root
+  cause behind the grader stalls (section 33's fix was real but
+  incomplete). Testing the identical code from Oracle's own IP - which
+  had been running yfinance jobs all day without incident - ruled out
+  GH-Actions-rate-limiting entirely. The real cause: historical analysis
+  rows inside grade_all's 90-day window reference tickers
+  (SFTBY/HMC/PINS - real US ADRs with no NSE listing; RANDK.NS/VLT.NS -
+  dead picks from 2026-06-20) that will never resolve, and the prior
+  fix's cache only held within one run - every day, forever, grader
+  re-attempted them from scratch. New dead_tickers table persists a
+  failure across runs (self-healing, 30-day retry, not a permanent
+  blacklist). Verified live: a fresh process made zero yfinance calls
+  for an already-known-dead ticker. All 5 currently-known offenders
+  pre-seeded directly. See section 37.
 - **2026-09-01 (latest)** - Wired blueprint 24's weekly trigger:
   `arcemx-factor-mining` on the Oracle box (Sat 03:30 UTC = 09:00 IST,
   piggybacking specialist_eval's cadence per the blueprint's own plan,
