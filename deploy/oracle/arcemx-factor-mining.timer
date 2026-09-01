@@ -1,0 +1,10 @@
+[Unit]
+Description=Arc'emX! factor mining, Sat 03:30 UTC = 09:00 IST (piggybacks specialist_eval.yml's existing Saturday cadence, offset 30min so the two never compete for the box at once - see blueprint 24)
+
+[Timer]
+OnCalendar=Sat *-*-* 03:30:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

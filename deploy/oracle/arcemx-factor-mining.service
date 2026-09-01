@@ -1,0 +1,12 @@
+[Unit]
+Description=Arc'emX! weekly LLM factor mining (blueprint 24)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh factor_mining analyzer.factor_dispatch
+TimeoutStartSec=1800
+MemoryMax=6G
