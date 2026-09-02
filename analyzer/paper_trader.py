@@ -495,8 +495,30 @@ def _flatten_yf_columns(h):
     return h
 
 
+# Per-process cache for the two functions below, keyed by normalized
+# ticker (every real call site uses the default days=20 - verified no
+# caller overrides it, so ticker alone is a safe key). Root-caused
+# 2026-09-01: both functions were completely uncached, a fresh
+# yf.download() on every call, and eval_signals() can evaluate the same
+# ticker multiple times in one pass (across stock_analyst/holding/
+# wishlist sources, and across the 3-day lookback window each source
+# uses) - a real grader run showed TATAMOTORS.NS (a genuine, valid,
+# actively-traded NSE stock, not a dead ticker) failing many times back
+# to back within a single run. Deliberately NOT given the persistent
+# cross-run dead_tickers treatment grader.py's _session_hist() has
+# (KNOWLEDGE_BASE.md section 37): this path evaluates real, currently-
+# tradeable stocks, so a transient Yahoo hiccup here should not suppress
+# evaluating a genuinely live stock for 30 days. Same-run memoization
+# only - a fresh process starts clean.
+_YF_TURNOVER_CACHE: dict[str, float | None] = {}
+_YF_SIGMA_CACHE: dict[str, float | None] = {}
+
+
 def _yf_avg_turnover(ticker: str, days: int = 20) -> float | None:
     """Rolling-20-session average turnover (qty * close) in INR."""
+    key = _normalize_ticker(ticker)
+    if key in _YF_TURNOVER_CACHE:
+        return _YF_TURNOVER_CACHE[key]
     try:
         h = yf.download(
             ticker,
@@ -508,13 +530,18 @@ def _yf_avg_turnover(ticker: str, days: int = 20) -> float | None:
         )
         h = _flatten_yf_columns(h)
         if h is None or h.empty or "Volume" not in h or "Close" not in h:
+            _YF_TURNOVER_CACHE[key] = None
             return None
         h = h.tail(days)
         turnover_series = (h["Volume"] * h["Close"]).dropna()
         if turnover_series.empty:
+            _YF_TURNOVER_CACHE[key] = None
             return None
-        return float(turnover_series.mean())
+        result = float(turnover_series.mean())
+        _YF_TURNOVER_CACHE[key] = result
+        return result
     except Exception:
+        _YF_TURNOVER_CACHE[key] = None
         return None
 
 
@@ -524,6 +551,9 @@ def _yf_realized_sigma(ticker: str, days: int = 20) -> float | None:
     for why: raw LLM target/stop levels averaged 3.80 daily sigma away
     (unreachable) on the target side and 1.67 sigma (frequent) on the
     stop side, live-measured 2026-08-15 across 27 closed trades."""
+    key = _normalize_ticker(ticker)
+    if key in _YF_SIGMA_CACHE:
+        return _YF_SIGMA_CACHE[key]
     try:
         h = yf.download(
             ticker,
@@ -535,12 +565,17 @@ def _yf_realized_sigma(ticker: str, days: int = 20) -> float | None:
         )
         h = _flatten_yf_columns(h)
         if h is None or h.empty or "Close" not in h:
+            _YF_SIGMA_CACHE[key] = None
             return None
         ret = h["Close"].pct_change().dropna().tail(days)
         if ret.empty:
+            _YF_SIGMA_CACHE[key] = None
             return None
-        return float(ret.std())
+        result = float(ret.std())
+        _YF_SIGMA_CACHE[key] = result
+        return result
     except Exception:
+        _YF_SIGMA_CACHE[key] = None
         return None
 
 

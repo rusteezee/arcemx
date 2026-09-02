@@ -1517,10 +1517,60 @@ to explain away. Matches this project's own stated discipline
 ("verify against real data, don't trust the first plausible story") -
 just a case where that discipline needed a second pass to actually land.
 
+## 38. Second uncached yfinance path found in the same diagnostic: paper_trader.py's own functions (2026-09-01)
+
+Section 37's fix was real and verified, but a full timed re-run from
+Oracle (`time python -m analyzer.grader`, fix live) still ran the full
+15-minute timeout, with `TATAMOTORS.NS` - a real, valid, heavily-traded
+NSE stock, not a dead ticker - failing repeatedly within the SAME run.
+Confirmed the dead_tickers fix itself was NOT the bug (direct call-
+counted test showed zero yfinance calls for an already-known-dead
+ticker) - a second, separate, previously-unexamined uncached path was
+the remaining cause.
+
+**Found:** `paper_trader._yf_realized_sigma()` and
+`paper_trader._yf_avg_turnover()` (called via `_run_paper_trader()`
+inside the same `grader.py` `__main__` sequence) had zero caching at
+all - a fresh `yf.download()` on every single call, and
+`eval_signals()` can evaluate the same ticker multiple times per pass
+(across stock_analyst/holding/wishlist sources and the 3-day lookback
+window each uses). Verified all 8 real call sites use the same default
+`days=20`, so a ticker-only cache key is safe.
+
+**Fixed:** added a same-run, per-process cache to both functions -
+deliberately NOT the persistent cross-run `dead_tickers` treatment
+`grader._session_hist()` has, since this path evaluates real, currently
+tradeable stocks; a transient Yahoo hiccup here should not suppress
+evaluating a genuinely live stock for 30 days the way it correctly does
+for a permanently dead historical ticker. Verified live by call-
+counting: 2 calls to each function for the same ticker now cost exactly
+1 real download each, correctly deduped.
+
+**Real, separate finding surfaced by this fix, not caused by it:**
+`TATAMOTORS.NS` is genuinely 404ing on Yahoo right now, live, verified
+by a direct isolated call outside any grader context - this is outside
+this project's control (a real Yahoo-side data gap for a major, valid,
+massively liquid stock, not a code bug). Worth rechecking in a day or
+two; if it persists, it may be worth its own investigation, but nothing
+in this codebase can fix Yahoo's own data availability for a real
+ticker.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-01 (yet later)** - Found and fixed a SECOND uncached
+  yfinance path the same night: paper_trader._yf_realized_sigma()/
+  _yf_avg_turnover() had zero caching at all, called potentially many
+  times per eval_signals() pass for the same ticker. A real timed
+  re-run (fix from section 37 live) still hit the full 15-min timeout,
+  with TATAMOTORS.NS - a genuine, valid, heavily-traded stock - failing
+  repeatedly. Fixed with a same-run cache (deliberately not the
+  persistent cross-run treatment section 37 used, since this evaluates
+  real currently-tradeable stocks). Verified live: 2 calls now cost 1
+  download, correctly deduped. Separately confirmed TATAMOTORS.NS is
+  genuinely 404ing on Yahoo right now - real, outside this project's
+  control, not a code bug. See section 38.
 - **2026-09-01 (even later still)** - Found and fixed the REAL root
   cause behind the grader stalls (section 33's fix was real but
   incomplete). Testing the identical code from Oracle's own IP - which
