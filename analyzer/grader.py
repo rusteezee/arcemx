@@ -62,37 +62,34 @@ def _normalize_ticker(ticker: str) -> str:
 
 
 def _close_on_or_after(ticker: str, ts: datetime) -> float | None:
-    """Closest trading-day close at-or-after ts."""
+    """Closest trading-day close at-or-after ts. Sliced from
+    _session_hist()'s shared per-ticker cache (see that function's
+    docstring, sections 33/37) rather than its own separate yf.download -
+    root-caused 2026-09-01: this and the three functions below were the
+    remaining uncached yfinance paths in grader.py, grading exactly the
+    top_performer/worst_performer/pick_tp_sl dimensions where the known
+    dead tickers (VLT.NS, RANDK.NS) live, invisible to the earlier fix
+    because they never went through _session_hist at all."""
     ticker = _normalize_ticker(ticker)
-    try:
-        end = ts + timedelta(days=10)
-        df = yf.download(ticker, start=ts.strftime("%Y-%m-%d"),
-                         end=end.strftime("%Y-%m-%d"),
-                         interval="1d", progress=False, auto_adjust=True)
-        if df.empty:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return float(df["Close"].iloc[0])
-    except Exception:
+    df = _session_hist(ticker)
+    if df is None or df.empty:
         return None
+    window = df[df.index.date >= ts.date()]
+    if window.empty:
+        return None
+    return float(window["Close"].iloc[0])
 
 
 def _close_n_sessions_later(ticker: str, base_ts: datetime, n: int) -> float | None:
     """Close after n trading sessions from base_ts."""
     ticker = _normalize_ticker(ticker)
-    try:
-        end = base_ts + timedelta(days=max(n * 2, 7))
-        df = yf.download(ticker, start=base_ts.strftime("%Y-%m-%d"),
-                         end=end.strftime("%Y-%m-%d"),
-                         interval="1d", progress=False, auto_adjust=True)
-        if df.empty or len(df) <= n:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return float(df["Close"].iloc[n])
-    except Exception:
+    df = _session_hist(ticker)
+    if df is None or df.empty:
         return None
+    window = df[df.index.date >= base_ts.date()]
+    if window.empty or len(window) <= n:
+        return None
+    return float(window["Close"].iloc[n])
 
 
 # NSE/BSE cash session closes 15:30 IST = 10:00 UTC. A prediction made
@@ -380,15 +377,9 @@ def _vol_regime_ratio(base_ts: datetime, horizon: int = 5) -> float | None:
     """Ratio of realized avg daily range over the next `horizon` sessions to
     the prior ~10 sessions. >1 = volatility expanded, <1 = contracted."""
     try:
-        start = base_ts - timedelta(days=30)
-        end = base_ts + timedelta(days=max(horizon * 2, 12))
-        df = yf.download("^NSEI", start=start.strftime("%Y-%m-%d"),
-                         end=end.strftime("%Y-%m-%d"), interval="1d",
-                         progress=False, auto_adjust=True)
-        if df.empty or len(df) < 12:
+        df = _session_hist("^NSEI")
+        if df is None or df.empty or len(df) < 12:
             return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
         rng = ((df["High"] - df["Low"]) / df["Close"] * 100).reset_index(drop=True)
         # Index of the first bar on/after base_ts.
         base_str = base_ts.strftime("%Y-%m-%d")
@@ -443,21 +434,16 @@ def _parse_num(s) -> float | None:
 def _ohlc_walk(ticker: str, base_ts: datetime, sessions: int) -> list[tuple[float, float, float]]:
     """(high, low, close) for up to `sessions` trading days on/after base_ts."""
     ticker = _normalize_ticker(ticker)
-    try:
-        end = base_ts + timedelta(days=max(sessions * 2, 12))
-        df = yf.download(ticker, start=base_ts.strftime("%Y-%m-%d"),
-                         end=end.strftime("%Y-%m-%d"), interval="1d",
-                         progress=False, auto_adjust=True)
-        if df.empty:
-            return []
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        rows = []
-        for _, r in df.head(sessions).iterrows():
-            rows.append((float(r["High"]), float(r["Low"]), float(r["Close"])))
-        return rows
-    except Exception:
+    df = _session_hist(ticker)
+    if df is None or df.empty:
         return []
+    window = df[df.index.date >= base_ts.date()]
+    if window.empty:
+        return []
+    rows = []
+    for _, r in window.head(sessions).iterrows():
+        rows.append((float(r["High"]), float(r["Low"]), float(r["Close"])))
+    return rows
 
 
 def grade_pick_tp_sl(ticker: str, base_ts: datetime, entry, target, stop,

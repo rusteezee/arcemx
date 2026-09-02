@@ -1555,10 +1555,59 @@ two; if it persists, it may be worth its own investigation, but nothing
 in this codebase can fix Yahoo's own data availability for a real
 ticker.
 
+## 39. The actual complete fix: 4 more uncached yfinance functions in grader.py (2026-09-01)
+
+Section 38's fix was also real and verified, but a third full timed
+re-run STILL hit the 15-minute timeout, with `VLT.NS` (an already
+pre-seeded, confirmed-dead ticker) still failing repeatedly. Direct
+isolated testing had already proven both prior fixes correct in
+isolation, which meant a THIRD, still-unexamined path had to exist.
+
+**Found by grepping every yf.download/yf.Ticker call site in
+grader.py directly** rather than continuing to trace call stacks:
+`_close_on_or_after()`, `_close_n_sessions_later()`,
+`_vol_regime_ratio()`, and `_ohlc_walk()` were four more completely
+separate, uncached functions - grading exactly the
+top_performer/worst_performer/pick_tp_sl-family dimensions where the
+known dead tickers (`VLT.NS`, `RANDK.NS`) actually live. Neither of the
+two earlier fixes touched these at all, since they call yfinance
+directly rather than through `_session_bounds`/`_session_hist`.
+
+**Fixed:** all four now slice from `_session_hist()`'s shared per-ticker
+cache instead of running their own separate `yf.download()`. This gives
+every one of them the SAME dead_tickers persistence for free - a ticker
+these functions were failing on gets recognized as dead by the exact
+same mechanism section 37 built, with no per-function special-casing
+needed. Confirmed by grep: grader.py now has exactly one `yf.download`
+call site in the whole file (`_session_hist` itself).
+
+**Verified live:** direct calls to all three ticker-taking functions for
+the already-known-dead `VLT.NS` returned safe empty results with ZERO
+yfinance calls. `_vol_regime_ratio` (the one index-only function, uses
+`^NSEI`, a real live ticker) still correctly fetches and returns a real
+computed ratio.
+
+**The actual lesson from this whole multi-round chase:** each fix
+tonight was independently real, correctly verified, and still
+INCOMPLETE, because `grep`-ing for every call site was the thing that
+finally closed it - not tracing one more call stack or building one more
+theory. Should have been the first move, not roughly the fourth.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-01 (final)** - Found and fixed the actual complete set:
+  `_close_on_or_after`/`_close_n_sessions_later`/`_vol_regime_ratio`/
+  `_ohlc_walk` in grader.py were four more uncached yfinance functions,
+  grading exactly the top/worst-performer dimensions where the dead
+  tickers live - neither prior fix touched them since they never went
+  through `_session_hist`. Found by grepping every yf.download call
+  site directly, which should have been the first move rather than the
+  fourth. All four now route through `_session_hist`'s shared cache;
+  grader.py now has exactly one yf.download call site in the whole
+  file. Verified live: zero calls for the already-known-dead VLT.NS
+  across all three ticker-taking functions. See section 39.
 - **2026-09-01 (yet later)** - Found and fixed a SECOND uncached
   yfinance path the same night: paper_trader._yf_realized_sigma()/
   _yf_avg_turnover() had zero caching at all, called potentially many
