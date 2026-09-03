@@ -66,11 +66,17 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -r requirements-embed.txt
+      # -u (PYTHONUNBUFFERED): a 2026-09-03 cancelled run showed ZERO
+      # stdout across the full 29min before the 30min timeout killed it -
+      # Python block-buffers stdout on a non-TTY pipe, and a SIGTERM never
+      # flushes that buffer, so a real hang and a buffering artifact look
+      # identical in the log. This makes every run's actual progress
+      # visible instead of guessing between "hanging" and "just quiet".
       - name: Grade past predictions + embed incremental
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python -m analyzer.grader
+        run: python -u -m analyzer.grader
       # Was never wired into any scheduled job; stock_analyses rows sat
       # ungraded indefinitely, starving stock_analyst_llm's learning loop
       # of ground truth. Deterministic (yfinance-only, no LLM cost), same
@@ -80,7 +86,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python -m analyzer.stock_analyst_grader
+        run: python -u -m analyzer.stock_analyst_grader
       # Manual backfill: triggers re-embedding when the workflow is
       # dispatched with backfill=true. Idempotent (embed_backfill skips
       # already-embedded analysis_id, dimension pairs unless --force).
