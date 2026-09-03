@@ -148,6 +148,14 @@ def compute_snapshot(sb=None) -> list[dict]:
         })
 
     if rows:
+        # computed_at's `default now()` only fires on INSERT - upsert's
+        # ON CONFLICT DO UPDATE never touched this column, so every row
+        # froze at its first-ever insert timestamp forever while status/
+        # target/stop_loss kept updating underneath it. Root-caused
+        # 2026-09-03: all 12 rows still read 2026-08-31 three days later.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for r in rows:
+            r["computed_at"] = now_iso
         sb.table("portfolio_defense_snapshot").upsert(
             rows, on_conflict="ticker").execute()
     return rows
