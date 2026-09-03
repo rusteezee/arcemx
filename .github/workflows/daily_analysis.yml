@@ -45,6 +45,14 @@ env:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    # No cap existed here before (GH's 360min default applied) - grader's
+    # own investigation (KNOWLEDGE_BASE.md section 40) found runs that
+    # "succeed" while quietly taking 40-76min instead of a normal handful
+    # of minutes, and a still-unexplained 31min gap between two adjacent
+    # prints in one real run. Bounding this turns a silent multi-hour
+    # worst case into a dead-man-ping-triggering failure, same rationale
+    # as daily_grader.yml's own timeout-minutes.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -93,7 +101,7 @@ jobs:
           # scheduler), defers to run_if_stale like the schedule triggers.
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true }}
         run: |
-          python - <<'EOF'
+          python -u - <<'EOF'
           import os
           from analyzer.aggregator import run, run_if_stale
           if os.getenv("FORCE_RUN") == "true":
@@ -113,7 +121,7 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python -m bot.daily_push
+        run: python -u -m bot.daily_push
       - name: Dead-man ping
         if: always()
         env:
