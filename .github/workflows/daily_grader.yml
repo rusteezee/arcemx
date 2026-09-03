@@ -1,9 +1,14 @@
 name: Daily Prediction Grader
 
 on:
-  schedule:
-    # 17:00 IST = 11:30 UTC, Mon-Fri (90 min after market close, yfinance EOD settled)
-    - cron: "30 11 * * 1-5"
+  # blueprint 22 Phase B: moved to arcemx-daily-grader.timer on the Oracle
+  # box (2026-09-03) after diagnosing why GH's own schedule kept getting
+  # cancelled at the 30min timeout even after every real code bug this repo
+  # had was fixed (KNOWLEDGE_BASE.md sections 33/37/38/39) - a clean
+  # unbuffered run here still took ~12s per graded analysis vs near-instant
+  # on Oracle, a real network-path bottleneck to Yahoo Finance from GH's
+  # shared runners, not a caching bug. See section 40. workflow_dispatch
+  # stays as a manual recovery path.
   workflow_dispatch:
     inputs:
       backfill:

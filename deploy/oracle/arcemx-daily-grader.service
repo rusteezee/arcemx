@@ -1,0 +1,12 @@
+[Unit]
+Description=Arc'emX! daily prediction grader + Stock Analyst grader (blueprint 22 Phase B)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh daily_grader analyzer.grader analyzer.stock_analyst_grader
+TimeoutStartSec=1800
+MemoryMax=6G

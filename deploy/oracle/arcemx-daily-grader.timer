@@ -1,0 +1,10 @@
+[Unit]
+Description=Arc'emX! daily grader, 11:30 UTC = 17:00 IST Mon-Fri (was GH cron "30 11 * * 1-5" - moved off GH 2026-09-03, GH's shared runners ran ~12s per graded analysis vs near-instant here, a real network bottleneck to Yahoo Finance not a caching bug, see KNOWLEDGE_BASE.md section 40)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 11:30:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
