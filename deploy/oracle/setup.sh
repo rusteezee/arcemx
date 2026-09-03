@@ -53,6 +53,14 @@ if [ ! -d "$APP_DIR/.venv" ]; then
 fi
 "$APP_DIR/.venv/bin/pip" install --upgrade pip
 "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+# requirements-embed.txt was GH-Actions-only (7GB runners) since Render's
+# 512MB dyno can't fit torch+transformers - Oracle's 23GB/4CPU box has
+# far more headroom than GH Actions ever did, so install it here too.
+# Without this, RAG Phase 1 embedding silently degrades to Phase 0
+# score-based exemplar selection (embed.py's try/except guard) - found
+# 2026-09-03 after Phase A moved daily_grader off GH Actions onto this
+# box and the embed backfill kept "succeeding" with 0 real embeddings.
+"$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements-embed.txt"
 
 echo "-- env file --"
 if [ ! -f "$ENV_FILE" ]; then
