@@ -1645,23 +1645,79 @@ was 2026-08-31, so probably not yet at review time, but worth noting
 the two are now adjacent in the timeline) - not re-litigating that
 verdict, just flagging the adjacency for whoever revisits it.
 
+**A third bug found the same night, checking trader health directly:**
+`portfolio_defense_snapshot`'s `computed_at` column never actually
+refreshed after each ticker's first-ever insert. `compute_snapshot()`'s
+upsert payload never included `computed_at`, and Postgres only applies
+a column's `DEFAULT now()` on INSERT - the `ON CONFLICT DO UPDATE` path
+never touches an omitted column. So `status`/`target`/`stop_loss` kept
+updating correctly every single day, but the timestamp silently froze
+at 2026-08-31 forever, three days and several real runs later. Found
+by directly querying the table rather than trusting the grader's own
+"computed 12 rows" stdout line. **Fixed:** `compute_snapshot()` now
+sets `computed_at` explicitly on every row before upsert. Verified live.
+
+**Then the actual remaining production gap, found by triggering a real
+GH Actions run and reading its (now-unbuffered) log line by line:**
+GH's own scheduled `daily_grader` runs had been getting cancelled at
+the 30min timeout on EVERY run since 2026-08-31 - the entire span this
+whole investigation covers - independent of any of the three code bugs
+above. A diagnostic run with `python -u` (see the earlier fix in this
+section) showed it wasn't hanging at all: it was grading at ~12
+SECONDS per analysis (141/206 done by 28m35s elapsed), a rate that
+needs ~41+ minutes to finish 206 analyses even before paper_trader,
+metrics, and embed backfill run. The identical code, same 206 rows,
+same day, took under a minute for the grading loop on Oracle. This is
+a real network-path bottleneck from GH's shared runner IPs to Yahoo
+Finance - not a caching bug, not fixable by any code change. This
+partially validates section 33's original (later "ruled out") GH-
+runner-rate-limiting hypothesis: it was wrong about Oracle, right about
+GH.
+
+**Fixed by executing blueprint 22 Phase B for daily_grader** (already
+scoped as safe/idempotent in section 34): added
+`arcemx-daily-grader.service`/`.timer` (11:30 UTC = 17:00 IST Mon-Fri,
+`run_job.sh daily_grader analyzer.grader analyzer.stock_analyst_grader`,
+`TimeoutStartSec=1800`, `MemoryMax=6G` matching factor-mining's torch
+footprint), pulled GH's `schedule:` trigger (workflow_dispatch stays as
+manual recovery, matching every other Phase A job's pattern). **Verified
+live via the real systemd path** (not an ad-hoc SSH shell):
+`systemctl start arcemx-daily-grader.service` completed in ~1min15s CPU
+time, `status=0/SUCCESS`, both modules ok, `portfolio_defense_snapshot`
+confirmed with a genuinely fresh `computed_at` (07:22:45 UTC) - all
+three of tonight's fixes verified together in one real run.
+
+**daily_analysis and sensei_eod are very likely hitting this exact same
+GH-runner-to-Yahoo bottleneck** (both call yfinance-backed modules) and
+have not yet been checked or migrated - see Pending below.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-03 (latest)** - Grader stall genuinely closed: found and
-  fixed a 4th bug (`_normalize_ticker` not stripping internal
-  whitespace, which made `yf.download()` silently split one malformed
-  ticker into two), then a clean 5th timed run at 6m41.9s (down from
-  15-30min timeouts) with `EXIT_CODE:0`. Same run proved
-  `_run_portfolio_defense()` fires live inside a real grader run,
-  closing blueprint 23's last verification gap. Also found and fixed a
-  separate bug hiding in the same output: Oracle's `setup.sh` never
-  installed `requirements-embed.txt` (GH-Actions-only by original
-  design), so RAG Phase 1 embedding had been silently degrading to
-  Phase 0 since the Oracle cutover. Fixed setup.sh, installed live on
-  the box (23GB/4CPU, plenty of headroom), verified real embeddings
-  generating (`encoded=195 skipped=0`). See section 40.
+- **2026-09-03 (latest)** - Full health check turned into closing out
+  the grader saga for real. Fixed a 4th bug (`_normalize_ticker` not
+  stripping whitespace, splitting one malformed ticker into two yfinance
+  calls). Fixed a 5th: Oracle's `setup.sh` never installed
+  `requirements-embed.txt` (GH-Actions-only by original design), so RAG
+  embedding had silently degraded to Phase 0 since the Oracle cutover -
+  installed live, verified real embeddings generating. Fixed a 6th, found
+  by querying the trader's live DB state directly instead of trusting
+  stdout: `portfolio_defense_snapshot.computed_at` never refreshed after
+  first insert (upsert never touched it, Postgres `DEFAULT now()` only
+  fires on INSERT) - status/target/stop_loss were updating correctly the
+  whole time, just the timestamp lied. Then found the ACTUAL remaining
+  production gap: GH Actions' `daily_grader` had been cancelled at the
+  30min timeout on every single run since 2026-08-31, for a reason none
+  of the above touched - a real network-path bottleneck from GH's shared
+  runners to Yahoo Finance (~12s/graded-analysis vs near-instant on
+  Oracle), proven by running with `python -u` and reading the log
+  line-by-line. Fixed by executing blueprint 22 Phase B for daily_grader:
+  moved it to `arcemx-daily-grader.timer` on Oracle, pulled GH's
+  schedule. Verified via the real systemd path: clean run, all three DB-
+  level fixes confirmed together in one pass. See section 40.
+  daily_analysis/sensei_eod likely share this same GH bottleneck,
+  unchecked - see Pending Tasks.
 - **2026-09-01 (final)** - Found and fixed the actual complete set:
   `_close_on_or_after`/`_close_n_sessions_later`/`_vol_regime_ratio`/
   `_ohlc_walk` in grader.py were four more uncached yfinance functions,
