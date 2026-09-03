@@ -54,8 +54,14 @@ def _normalize_ticker(ticker: str) -> str:
     `if pick_pct is None: continue` skip in every caller - not a crash,
     but quiet, permanent data loss for that pick's grade (root-caused
     2026-07-13 from 100+ failed-download lines in a single grader run).
-    Indices (^NSEI etc.) and already-suffixed tickers pass through as-is."""
-    t = (ticker or "").strip().upper()
+    Indices (^NSEI etc.) and already-suffixed tickers pass through as-is.
+    Internal whitespace is stripped before suffixing - a raw ticker like
+    "HINDUSTAN ZINC" (bad LLM output, not a real symbol) would otherwise
+    become "HINDUSTAN ZINC.NS" and yf.download(), given a *string* (not
+    a list), splits on whitespace internally and silently queries it as
+    TWO separate tickers ("HINDUSTAN" + "ZINC.NS") - root-caused
+    2026-09-03 from split failed-download pairs in a timed grader run."""
+    t = "".join((ticker or "").split()).upper()
     if not t or t.startswith("^") or t.endswith(".NS") or t.endswith(".BO"):
         return t
     return f"{t}.NS"
