@@ -2,6 +2,8 @@
 
 See `KNOWLEDGE_BASE.md` section 32 for full build/verification detail, including a real bug found and fixed (target/stop_loss numeric parsing) and the exact Supabase migration snags hit.
 
+4th verification path (the real GH-Actions-equivalent entrypoint, `python -m analyzer.grader` end to end on Oracle) was blocked for several days by an unrelated grader stall - see KNOWLEDGE_BASE.md sections 33/37/38/39/40. Closed 2026-09-03: a clean timed run confirmed `_run_portfolio_defense()` fires correctly inside a real, complete grader run (`portfolio_defense: computed 12 rows`). All four verification paths now pass.
+
 BUILDER: Claude Sonnet, working alone, cold start, cannot ask questions.
 (cross-references data that already exists, no new LLM calls, no new
 trading logic - assembly and display work, well-scoped)

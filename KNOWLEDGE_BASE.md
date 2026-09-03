@@ -1595,8 +1595,73 @@ theory. Should have been the first move, not roughly the fourth.
 
 ---
 
+## 40. Grader stall genuinely closed, plus two more fixes found chasing it (2026-09-03)
+
+A 4th timed re-run (after section 39's fix) got cut off mid-run by an
+SSH connection reset before it could report a result - inconclusive,
+not a failure. Its partial output surfaced a real, separate bug before
+the reset: `_normalize_ticker()` didn't strip internal whitespace. A
+malformed raw ticker with a space in it (e.g. `"HINDUSTAN ZINC"`, not a
+real NSE symbol) survived normalization as `"HINDUSTAN ZINC.NS"`, and
+`yf.download()` given a *string* (not a list) splits on whitespace
+internally - silently querying it as TWO separate tickers
+(`"HINDUSTAN"` + `"ZINC.NS"`) instead of one clean 404. This defeated
+the dead_tickers cache (each malformed variant got its own row, never
+converging) and risked misattributed data if either fragment happened
+to collide with a real symbol. **Fixed:** `_normalize_ticker()` now
+collapses all whitespace before suffixing. Shipped and deployed.
+
+**5th timed run, clean: `EXIT_CODE:0`, real 6m41.9s.** Down from
+15-30 minute timeouts. The stall - all three root causes from sections
+37-39 plus this whitespace bug - is genuinely closed. This run also
+finally gave direct, real proof that `_run_portfolio_defense()` fires
+correctly inside a complete `analyzer.grader` run
+(`portfolio_defense: computed 12 rows` in the output), closing
+blueprint 23's last open verification gap.
+
+**A second, unrelated bug surfaced in the same output:**
+`Embedding pass skipped: sentence-transformers not installed`.
+`requirements-embed.txt` was deliberately GH-Actions-only by design
+(comment in the file: Render's 512MB dyno can't fit torch+transformers,
+so embedding runs off-dyno on GH's ~7GB runners and degrades to Phase 0
+score-based exemplar selection when the package is absent). But
+blueprint 22 Phase A moved `daily_grader` (which does the embed
+backfill) off GH Actions onto Oracle, and Oracle's `setup.sh` only ever
+installed `requirements.txt` - so since the 2026-08-31 cutover, RAG
+Phase 1 embedding had been silently degrading to Phase 0 on Oracle too,
+the exact same failure mode Render always had, just not by design this
+time. Checked Oracle's actual headroom before fixing: 23GB RAM / 4 CPU
+/ 187GB disk free, far more than the 7GB GH runners this was scoped
+for. **Fixed:** `setup.sh` now also installs `requirements-embed.txt`;
+installed live on the box to not wait for a future re-provision.
+**Verified live:** re-ran the grader, model loaded
+(`BAAI/bge-base-en-v1.5`), `backfill: encoded=195 skipped=0 in 47.6s`.
+Real embeddings are generating on Oracle now.
+
+This also retroactively colors section 29's RAG Phase 1 A/B review
+(inconclusive, left enabled 2026-08-30): if the embed backfill had
+already been silently no-op-ing on Oracle before that review (cutover
+was 2026-08-31, so probably not yet at review time, but worth noting
+the two are now adjacent in the timeline) - not re-litigating that
+verdict, just flagging the adjacency for whoever revisits it.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
+- **2026-09-03 (latest)** - Grader stall genuinely closed: found and
+  fixed a 4th bug (`_normalize_ticker` not stripping internal
+  whitespace, which made `yf.download()` silently split one malformed
+  ticker into two), then a clean 5th timed run at 6m41.9s (down from
+  15-30min timeouts) with `EXIT_CODE:0`. Same run proved
+  `_run_portfolio_defense()` fires live inside a real grader run,
+  closing blueprint 23's last verification gap. Also found and fixed a
+  separate bug hiding in the same output: Oracle's `setup.sh` never
+  installed `requirements-embed.txt` (GH-Actions-only by original
+  design), so RAG Phase 1 embedding had been silently degrading to
+  Phase 0 since the Oracle cutover. Fixed setup.sh, installed live on
+  the box (23GB/4CPU, plenty of headroom), verified real embeddings
+  generating (`encoded=195 skipped=0`). See section 40.
 - **2026-09-01 (final)** - Found and fixed the actual complete set:
   `_close_on_or_after`/`_close_n_sessions_later`/`_vol_regime_ratio`/
   `_ohlc_walk` in grader.py were four more uncached yfinance functions,
