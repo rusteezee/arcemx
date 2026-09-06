@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -268,6 +269,34 @@ def _parse_llm_json(resp: dict) -> dict | None:
         return None
 
 
+_HAS_DIGIT = re.compile(r"\d")
+
+
+def _is_material_reason(text: str) -> bool:
+    """A `reasons_could_be_wrong` / bear-pass entry only counts toward
+    confidence dampening if it looks like the quantified claim both
+    prompts explicitly demand ("cite a number from the payload, not a
+    vibe") - not just a sufficiently long sentence.
+
+    Root-caused 2026-09-06: the old length>=20 check counted almost
+    every entry the model wrote (any ordinary sentence clears 20 chars),
+    so n_material was always 4-5 regardless of which of 36 different
+    real tickers was being analysed - a materiality filter with zero
+    discriminating power is not a filter, it's a constant. Real
+    stock_analyses data showed `bear_pass_added` at 4-5 on every single
+    row, capping `dampen` at its max (25) every time and making any buy
+    call with pre-bear confidence under 75 mathematically unable to
+    survive - a structural deadlock, not the model being appropriately
+    skeptical (its own bull confidence DID vary 40-65 across tickers,
+    proving it CAN discriminate; the bear pass just never did).
+    Requiring a real digit is a cheap, robust proxy for "quantified"
+    that needs no second LLM call to check."""
+    if not isinstance(text, str):
+        return False
+    t = text.strip()
+    return len(t) >= 20 and bool(_HAS_DIGIT.search(t))
+
+
 def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
     """Strict shape check. Returns (ok, error_msg). Anything missing
     is a hard fail so we never persist a half-shaped row.
@@ -347,7 +376,9 @@ def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
     # list but did not lower its own confidence to match. 12 pts per
     # material item beyond the first, capped at -25. Modifies `out` in
     # place so the persisted row carries the calibrated number.
-    n_material = sum(1 for r in rcbw if isinstance(r, str) and len(r.strip()) >= 20)
+    # "Material" = _is_material_reason (quantified claim), not just long
+    # enough to clear a length check - see that function's docstring.
+    n_material = sum(1 for r in rcbw if _is_material_reason(r))
     if n_material >= 2:
         dampen = min(25, 12 * (n_material - 1))
         out["confidence_raw"] = out["confidence"]
@@ -560,8 +591,13 @@ def run(run_id: int) -> dict:
                     # re-dampen against the merged count.
                     if out.get("confidence_raw") is not None:
                         out["confidence"] = int(out["confidence_raw"])
-                    n_material = sum(1 for x in merged
-                                     if isinstance(x, str) and len(x.strip()) >= 20)
+                    # "Material" = _is_material_reason (quantified claim),
+                    # not just long enough - see that function's docstring
+                    # for why the old length-only check made this dampen
+                    # at its -25 cap on every single row regardless of
+                    # ticker, a materiality filter with zero discriminating
+                    # power.
+                    n_material = sum(1 for x in merged if _is_material_reason(x))
                     if n_material >= 2:
                         dampen = min(25, 12 * (n_material - 1))
                         out["confidence_raw"] = out["confidence"]
