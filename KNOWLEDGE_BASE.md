@@ -1868,11 +1868,103 @@ value?" exchange:**
    averages so this doesn't silently break again for a different app
    with a different review velocity.
 
+## 43. God's Eye View research and the FIRMS thermal backtest: a real negative result (2026-09-06)
+
+User asked to research `github.com/bilawalsidhu/gods-eye-view` (18.2k
+stars, browser-based live-globe OSINT viewer) for ways to make arcemx
+"more advanced." Read the actual source (not the README's own framing):
+~200 modules, almost entirely WebGL/Cesium rendering (cockpit math, HUD,
+shaders, voice control). No headless mode, no data API, no Python
+surface - **not integrable into an unattended Python cron pipeline**.
+The only transferable thing is which upstream feeds its data modules
+point at: OpenSky flights, AIS ships (aisstream.io), USGS earthquakes,
+TomTom traffic, NASA FIRMS thermal anomalies. Of these, only FIRMS had
+any plausible connection to the current holdings (thermal signature at
+power/metal plants as a capacity-utilization proxy) - everything else
+(flights, earthquakes, traffic, CCTV) has zero relevance to this
+portfolio.
+
+Explicitly flagged, before building anything, that arcemx's real
+bottleneck this whole session has been discrimination, not data volume
+(section 26's `top_performer_1d`: MORE signal crammed into one call
+measured NEGATIVE alpha). Recommended testing FIRMS as a real backtest
+first, not a live signal - user agreed.
+
+**Built `analyzer/dev/firms_thermal_backtest.py`** (research only, no
+production wiring): 4 candidates with coordinates cross-verified live
+against Global Energy Monitor / Wikipedia / Global Energy Observatory -
+VEDL (Jharsuguda smelter + captive power, geographically isolated,
+predicted strongest/cleanest), ADANIPOWER + TATAPOWER (both at Mundra,
+confirmed live their bounding boxes genuinely overlap at ~3.5km apart -
+VIIRS resolution cannot cleanly separate them), NTPC (Vindhyachal, its
+single largest plant but under 7% of NTPC's real 70+GW total capacity,
+predicted weakest by dilution alone).
+
+**Two real corrections needed live, both from assumptions that turned
+out wrong when actually checked**: (1) assumed FIRMS's `day_range` param
+went up to 366 from general API knowledge - a live test immediately
+returned `"Invalid day range. Expects [1..5]"`. Real max is 5. (2)
+Assumed `VIIRS_SNPP_SP` (the science-quality archive source) covered up
+to "today" - it doesn't; querying past its real `max_date` (2026-04-27
+at test time) silently returns an empty-but-valid CSV, indistinguishable
+from "zero fire activity" unless availability is checked first.
+`VIIRS_SNPP_NRT`'s own `min_date` picks up exactly where SP's `max_date`
+ends (verified live, same satellite family) - `fetch_full_history` now
+queries both sources' real availability live and switches at the real
+seam, not a hardcoded date.
+
+**Real result, full 2-year run, ~584 FIRMS calls, 16m26s:**
+
+- **VEDL** (predicted strongest): 3,638 real detections, mean FRP 11.85 -
+  genuinely the strongest raw thermal signature of the four, as
+  predicted. Correlation with forward returns: **no horizon significant**
+  (max \|t\|=1.91 at 20d). Clean null on the best-case candidate.
+- **NTPC** (predicted weakest): also null (max \|t\|=1.70), consistent
+  with the dilution prediction.
+- **ADANIPOWER + TATAPOWER**: both had almost no real data - 20 and 21
+  raw detections over 2 years (16-17 actual days with any thermal
+  reading out of ~700). ADANIPOWER: mostly noise, one borderline hit
+  (t=-2.05 at 20d). TATAPOWER: all 4 horizons "significant"
+  (t=3.4/5.1/3.4/2.3), consistent positive r - looks like a real finding
+  in isolation.
+
+**It is not treated as one.** These two plants share an overlapping
+bounding box and the same physical heat source - if the thermal signal
+were real, both tickers should show something similar. Instead one
+shows nothing and the other shows a strong clean signal off a sample of
+17 real data points. That inconsistency between two companies sharing
+one physical location is the signature of overfitting, not physics.
+Across the 16 total tests run here (4 tickers x 4 horizons), pure chance
+alone predicts ~0.8 false positives at the \|t\|>2 bar - 2 were found,
+landing almost exactly where noise predicts, not evidence of a real
+relationship. Same multiple-testing discipline this project already
+applies everywhere else (deflated Sharpe, section 26's audit).
+
+**Verdict: negative result, reported as one.** FIRMS satellite thermal
+signature at a flagship-plant coordinate does not show a reliable
+relationship with forward stock returns for any of the four names
+tested - including the cleanest, strongest-signal candidate (VEDL),
+which was the best case for the hypothesis to hold. Not wired into
+production. Not pursuing further expansion of this specific approach
+(more plants, more tickers) since the strongest candidate already came
+back null.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-06 (latest)** - Widened NSE announcements to the full
+- **2026-09-06 (latest)** - Researched `gods-eye-view` (18.2k-star OSINT
+  globe viewer) - not integrable (browser rendering app, no data API).
+  Built a real FIRMS satellite-thermal backtest instead (4 plants,
+  coordinates verified live, 2-year history, ~584 real API calls) to
+  test whether thermal signature predicts forward returns. Real result:
+  negative. Even the cleanest candidate (VEDL, strongest raw signal) had
+  no significant correlation at any horizon; the two "significant"
+  results found (Adani/Tata Mundra) are built on 17 real data points
+  each and contradict each other despite sharing one physical location -
+  textbook overfitting, not signal. Not wired into production. See
+  section 43.
+- **2026-09-06 (earlier)** - Widened NSE announcements to the full
   universe (candidate-priority boost in stock_analyst_dispatch.py, not
   a new prompt dump) and built app review sentiment as a scoped
   "smaller side addition" (portfolio_verdicts only, never next-day
