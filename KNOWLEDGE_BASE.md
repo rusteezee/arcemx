@@ -1825,11 +1825,62 @@ bigger architecture decision (new eval_signals path, new risk
 questions) that deserves its own scoping conversation, not a silent
 add-on to this feature.
 
+**Same session, two follow-ups after an honest "does this add real
+value?" exchange:**
+
+1. **Widened NSE announcements from holdings+wishlist to the full
+   universe**, wired into `stock_analyst_dispatch.py`'s candidate
+   selection (Phase 5, blueprint 21). A same-day material catalyst
+   (board outcome, results, credit rating, management change) AND
+   decent technicals now gets prioritized ahead of pure momentum for
+   the daily deep-dive dispatch - a structured priority reorder within
+   the existing technical-bullish ranked list, not a new prompt dump.
+   One extra market-wide fetch, same cost as the holdings/wishlist
+   integration. Verified live: 6 real catalyst tickers found
+   market-wide same day (BANDHANBNK, NLCINDIA, OLAELEC, PHOENIXLTD,
+   PTCIL, TITAGARH); none overlapped with that day's technical-bullish
+   top-24, so the reorder correctly did nothing extra - expected most
+   days given the small overlap probability, not a bug. Full run
+   (505-ticker screen + universe-wide catalyst check): ~30s.
+
+2. **App review sentiment (`fetchers/app_reviews.py`), the "smaller
+   side addition"** the user asked for after being told plainly that
+   app reviews are the wrong tool for next-day trading (single-ticker,
+   weeks-scale drift, not an event) - built anyway, scoped honestly:
+   feeds `portfolio_verdicts` (hold/add/trim/exit) only, explicitly
+   never `holding_outlooks_1d`/`wishlist_outlooks_1d`. Uses real Google
+   Play star ratings directly as the sentiment signal (no NLP
+   classifier needed). `google-play-scraper` (PyPI, MIT, no API key)
+   confirmed live and still working. Nykaa's package ID (`com.fsn.nykaa`)
+   verified against 5 independent sources.
+
+   **Design had to be corrected twice, live, before it was right**:
+   first cut used calendar-day windows (30d recent / 90d baseline) -
+   a 900-review paginated pull for Nykaa never even reached a
+   30-day-old review, because Nykaa's app gets **~200 reviews/day**.
+   Rebuilt as review-COUNT windows (newest N vs the N before that)
+   instead, which costs the same regardless of app popularity - but
+   the first count tried (200) only spanned ~1 day per window, still
+   too noisy for a "weeks-scale drift" signal. Bumped to 1500,
+   verified live: 14-day recent window avg 3.82 vs 13-day baseline
+   avg 3.80, delta +0.02 (genuinely stable, not noise) - 4.6s total.
+   `recent_span_days`/`baseline_span_days` are reported alongside the
+   averages so this doesn't silently break again for a different app
+   with a different review velocity.
+
 ---
 
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-06 (latest)** - Built and shipped a genuinely new signal
+- **2026-09-06 (latest)** - Widened NSE announcements to the full
+  universe (candidate-priority boost in stock_analyst_dispatch.py, not
+  a new prompt dump) and built app review sentiment as a scoped
+  "smaller side addition" (portfolio_verdicts only, never next-day
+  outlooks). Both live-tested; the review-sentiment design needed two
+  live corrections (calendar-day windows didn't work at Nykaa's ~200
+  reviews/day - rebuilt as count-based windows, then retuned the count
+  to actually span multiple days instead of one). See section 42.
+- **2026-09-06 (earlier)** - Built and shipped a genuinely new signal
   source: NSE corporate announcements, verified live from Oracle's IP
   (the earlier "NSE blocks cloud-runner IPs" finding doesn't apply to
   this box). Filtered to material categories only (noise dominates the
