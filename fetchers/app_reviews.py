@@ -78,7 +78,7 @@ def fetch_recent_reviews(ticker: str, total: int = 600) -> "list[dict] | None":
         return all_rows or None
 
 
-def sentiment_summary(ticker: str, window: int = 200) -> "dict | None":
+def sentiment_summary(ticker: str, window: int = 1500) -> "dict | None":
     """Compares the average star rating of the newest `window` reviews
     against the `window` reviews immediately before those, using real
     Play Store ratings as the sentiment signal - not a generated score.
