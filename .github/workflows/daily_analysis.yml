@@ -76,6 +76,14 @@ jobs:
       - name: Run aggregator (skips when the bot already ran this morning)
         id: agg
         env:
+          # indmoney_mcp.py's headless guard only fires on RENDER (set
+          # automatically there) or this var - GH Actions sets neither,
+          # so aggregator's options_chain fetch was taking the interactive
+          # OAuth branch, waiting the full 300s for a browser callback
+          # that can never arrive on this runner, twice, burning ~10min
+          # of every run for nothing (root-caused 2026-09-06 after the
+          # python -u fix made this actually visible in the log).
+          ARCEMX_NO_BROWSER: "1"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
