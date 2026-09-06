@@ -208,6 +208,18 @@ setup than one with a debt_to_equity above 200 and a negative headline; ranges
 and directions must reflect that. Never invent fundamentals or news that are not
 in the payload. If the block is empty for a ticker, fall back to technicals only.
 
+holding_nse_announcements[TICKER] and wishlist_nse_announcements[TICKER] carry
+OFFICIAL NSE exchange filings (board meeting outcomes, results, credit rating
+actions, management changes, M&A, insider disclosures - already pre-filtered
+to material categories only, routine filings never reach this block). These
+outrank holding_news/wishlist_news in reliability: an exchange filing is the
+company's own disclosure, not a third-party headline. A negative credit rating
+action or a director resignation here is a stronger down-signal than an
+ordinary negative headline; weight it accordingly. Cite the `desc` category
+and `an_dt` timestamp when you use one. Empty or absent for a ticker most
+days - that is normal, not a data gap; do not fabricate a filing that is not
+in the payload.
+
 market_context.sectors gives next-day technical posture for 10 NSE sectors (BANK,
 IT, AUTO, PHARMA, FMCG, ENERGY, METAL, REALTY, MEDIA, FINSERV). For EVERY sector
 present in that block, emit a sector_outlooks entry:
@@ -1056,6 +1068,11 @@ _PAYLOAD_DROP_ORDER = (
     "holding_news",
     "technical_bearish_top", "technical_bullish_top",
     "holding_fundamentals",
+    # Official exchange filings, pre-filtered to material categories only -
+    # more protected than generic scraped news/fundamentals above (see the
+    # system prompt's own guidance: these outrank holding_news/wishlist_news
+    # in reliability). Dropped only as a last resort.
+    "wishlist_nse_announcements", "holding_nse_announcements",
 )
 
 

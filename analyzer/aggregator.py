@@ -16,6 +16,7 @@ from fetchers.news import fetch_rss, fetch_gnews
 from fetchers.reddit import fetch_hot
 from fetchers.fii_dii import fetch_latest as fetch_fii_dii, fetch_history as fetch_fii_dii_history
 from fetchers.options_chain import fetch_options_signals
+from fetchers.nse_announcements import material_for_tickers as fetch_nse_announcements
 from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm_router import analyze
 from analyzer.feedback import build_feedback as _load_feedback
@@ -550,6 +551,27 @@ def build_payload() -> dict:
             except Exception as e:
                 print(f"per-ticker enrichment fail: {e}")
             gc.collect()
+
+        # NSE corporate announcements (blueprint TBD, 2026-09-06): official
+        # exchange filings for holdings + wishlist specifically, filtered to
+        # material categories only (board meeting outcomes, results, credit
+        # rating, management changes, M&A - see fetchers/nse_announcements.py
+        # for the full allow-list and why it's filtered this hard). One
+        # market-wide fetch, sliced client-side - cheaper than a per-ticker
+        # call and avoids re-warming NSE's session N times.
+        holding_nse_announcements: dict = {}
+        wishlist_nse_announcements: dict = {}
+        if all_focus:
+            try:
+                ann = fetch_nse_announcements(all_focus, days=1)
+                for tk, rows in ann.items():
+                    if tk in holding_set:
+                        holding_nse_announcements[tk] = rows
+                    if tk in wishlist_set:
+                        wishlist_nse_announcements[tk] = rows
+            except Exception as e:
+                print(f"nse_announcements fail: {e}")
+
         # Prior analysis for self-context
         try:
             prev = sb.table("analysis").select("run_at,market_mood,raw_json").order(
@@ -611,6 +633,11 @@ def build_payload() -> dict:
         "wishlist_technicals": wishlist_technicals,
         "holding_fundamentals": {tk: v.get("fundamentals") for tk, v in holding_enrichment.items() if v.get("fundamentals")},
         "wishlist_fundamentals": {tk: v.get("fundamentals") for tk, v in wishlist_enrichment.items() if v.get("fundamentals")},
+        # Official NSE exchange filings, material categories only - ranked
+        # ahead of holding_news/wishlist_news (scraped/generic) since these
+        # are structured, authoritative, and directly exchange-sourced.
+        "holding_nse_announcements": holding_nse_announcements,
+        "wishlist_nse_announcements": wishlist_nse_announcements,
         "holding_news": {tk: v.get("news") for tk, v in holding_enrichment.items() if v.get("news")},
         "wishlist_news": {tk: v.get("news") for tk, v in wishlist_enrichment.items() if v.get("news")},
         "prior_call": prior_call,
