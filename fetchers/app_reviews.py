@@ -33,23 +33,42 @@ TICKER_TO_PLAY_STORE_ID = {
 }
 
 
-def fetch_recent_reviews(ticker: str, count: int = 150) -> "list[dict] | None":
-    """Most recent `count` reviews (with text) for `ticker`'s mapped app,
-    newest first. None if the ticker has no known app or the fetch
-    fails - callers must treat that as "no data", never as neutral or
-    bad sentiment."""
+def fetch_recent_reviews(ticker: str, min_days_coverage: int = 120,
+                         max_total: int = 900) -> "list[dict] | None":
+    """Reviews for `ticker`'s mapped app, newest first, paginated via
+    google_play_scraper's continuation_token until either the oldest
+    review fetched is >= `min_days_coverage` days old or `max_total` is
+    hit. A single 200-review page for a high-volume app like Nykaa
+    (~5/day) only reaches back ~40 days - not enough to cover both a
+    30-day recent window AND a 90-day baseline window behind it
+    (verified live 2026-09-06: a 150-review pull returned 0 baseline
+    rows, all 150 fell inside the last 30 days). None if the ticker has
+    no known app or the fetch fails entirely - callers must treat that
+    as "no data", never as neutral or bad sentiment."""
     app_id = TICKER_TO_PLAY_STORE_ID.get(ticker.upper())
     if not app_id:
         return None
+    cutoff = datetime.now(timezone.utc) - timedelta(days=min_days_coverage)
+    all_rows: list[dict] = []
+    token = None
     try:
-        result, _ = reviews(
-            app_id, lang="en", country="in",
-            sort=Sort.NEWEST, count=count,
-        )
-        return result
+        while len(all_rows) < max_total:
+            batch, token = reviews(
+                app_id, lang="en", country="in",
+                sort=Sort.NEWEST, count=200, continuation_token=token,
+            )
+            if not batch:
+                break
+            all_rows.extend(batch)
+            oldest = _as_aware(batch[-1].get("at"))
+            if oldest is not None and oldest <= cutoff:
+                break
+            if token is None:
+                break
+        return all_rows
     except Exception as e:
         print(f"app_reviews: fetch fail for {ticker} ({app_id}): {e}")
-        return None
+        return all_rows or None
 
 
 def _as_aware(dt) -> "datetime | None":
@@ -58,8 +77,7 @@ def _as_aware(dt) -> "datetime | None":
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def sentiment_summary(ticker: str, recent_days: int = 30, baseline_days: int = 90,
-                      count: int = 150) -> "dict | None":
+def sentiment_summary(ticker: str, recent_days: int = 30, baseline_days: int = 90) -> "dict | None":
     """Compares average star rating over the last `recent_days` against
     the `baseline_days` immediately before that window, using real Play
     Store ratings as the sentiment signal - not a generated score.
@@ -68,7 +86,7 @@ def sentiment_summary(ticker: str, recent_days: int = 30, baseline_days: int = 9
     sample to mean anything). `delta` is None (not 0) when the baseline
     window itself is too thin - a missing comparison is not the same
     claim as "no change"."""
-    rows = fetch_recent_reviews(ticker, count=count)
+    rows = fetch_recent_reviews(ticker, min_days_coverage=recent_days + baseline_days)
     if not rows:
         return None
     now = datetime.now(timezone.utc)
