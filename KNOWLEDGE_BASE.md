@@ -1767,9 +1767,75 @@ regardless of the underlying stock.
 
 ---
 
+## 42. NSE corporate announcements: a new signal source, live-verified from Oracle (2026-09-06)
+
+User asked to scrape more of the web for trading signal - real, direct
+answer: more raw volume repeats the exact `top_performer_1d` crammed-
+prompt trap (section 26). The one genuinely new, high-value source that
+was completely absent from this pipeline: **official NSE exchange
+filings** - structured, authoritative, moves prices same-day. Not
+previously used because `fetchers/fii_dii.py`'s docstring said NSE
+"blocks cloud-runner IP ranges (verified in prior sessions)" - that
+finding was about whichever cloud host was tested before, not
+necessarily Oracle's specific IP (`92.4.84.48`). **Tested live, right
+now, from Oracle: it works.** Homepage warmup returns 403 (does not
+matter), the second warm URL + the actual
+`nseindia.com/api/corporate-announcements` call both return 200 with
+real live data - no scraping library, no headless browser, just
+`requests` + a homepage cookie warmup, the exact pattern several
+open-source NSE API wrappers already use (`indian-corp-action`,
+`nselib`, `dalal`).
+
+**Feed is very noisy.** A real pull covering ~3800 announcements/6 days
+market-wide: top categories are routine SEBI-mandated filings (`Copy of
+Newspaper Publication` 728, `Shareholders meeting` 689, `General
+Updates` 555, `Analysts/Institutional Investor Meet Updates` 316) -
+zero real trading signal. Real categories exist too: `Outcome of Board
+Meeting` 178, `Credit Rating` 46, `Change in Management` 40,
+`Resignation of Director/KMP/SMP` 33, `Price movement` 29.
+
+**Built `fetchers/nse_announcements.py`**: one market-wide fetch (not
+per-ticker - cheaper, avoids re-warming the session N times), sliced
+client-side to holdings+wishlist symbols, filtered through an explicit
+allow-list of material `desc` categories (board outcomes, results,
+credit rating, management changes, M&A, insider disclosures) built from
+categories actually observed live, with a deny-list checked first so a
+routine category never false-positives on an allow-list substring.
+
+**Wired into `analyzer/aggregator.py`** (new `holding_nse_announcements`
+/ `wishlist_nse_announcements` payload keys, same tier as the existing
+holdings/wishlist fundamentals+news enrichment) and
+**`analyzer/llm_router.py`** - explicit system-prompt guidance (these
+outrank generic scraped news since they're the company's own
+disclosure) plus placement in `_PAYLOAD_DROP_ORDER` as the LAST-dropped
+fields, more protected than `holding_fundamentals`.
+
+**Verified live end-to-end** against the real 12 current holdings+
+wishlist tickers: 3/12 had genuine material filings in the last 5 days
+(SUZLON appointment, ATHERENERG ESOP allotment, ADANIPOWER credit
+rating) - all correctly categorized, routine filings correctly
+excluded. Real signal, real tickers, real pipeline, shipped same
+session.
+
+**Not built (explicitly deferred, needs its own decision)**: a
+same-day real-time alert/auto-trade path on breaking announcements.
+What shipped feeds tomorrow's regular morning analysis only, matching
+the existing daily cadence - a same-day reactive trading path is a
+bigger architecture decision (new eval_signals path, new risk
+questions) that deserves its own scoping conversation, not a silent
+add-on to this feature.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-06 (latest)** - Suspended Render (not deleted) via its API
+- **2026-09-06 (latest)** - Built and shipped a genuinely new signal
+  source: NSE corporate announcements, verified live from Oracle's IP
+  (the earlier "NSE blocks cloud-runner IPs" finding doesn't apply to
+  this box). Filtered to material categories only (noise dominates the
+  raw feed), wired into aggregator.py + llm_router.py, verified live
+  against real holdings/wishlist (3/12 had real filings). See section 42.
+- **2026-09-06 (earlier)** - Suspended Render (not deleted) via its API
   after 8 days of confirmed Oracle stability - the last open item from
   the Oracle cutover. Retire for good ~2026-09-20 if nothing needs it.
   See §8.
