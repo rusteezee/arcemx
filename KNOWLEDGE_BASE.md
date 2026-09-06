@@ -268,9 +268,14 @@ download GGUF -> GitHub Release -> dispatch eval workflow -> compare).
   "analysis_via": "github"}` - genuine INDmoney data, genuine GH Actions
   dispatch.
 
-  **Not yet done:** suspend (don't delete) Render for the ~2-week safety
-  window before retiring it for good. Do that once a few days of live
-  Oracle-hosted operation confirm stability.
+  **Suspended (not deleted) 2026-09-06** via Render's API
+  (`POST /v1/services/{id}/suspend`, confirmed via a follow-up GET:
+  `"suspended":"suspended"`, `"suspenders":["user"]`) - 8 days of live
+  Oracle-hosted stability confirmed first (all systemd timers healthy,
+  zero failed units, multiple real automatic fires verified this
+  session). Keep suspended (reversible via the same API's `/resume`) as
+  the safety window; retire for good around **2026-09-20** if nothing
+  has needed it by then.
 
   **Future step (not started):** move GH Actions' heavy analysis compute
   and cron scheduling itself onto this box (systemd timers replacing GH's
@@ -1764,7 +1769,11 @@ regardless of the underlying stock.
 
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-06 (latest)** - Bumped factor mining weekly->daily Mon-Fri.
+- **2026-09-06 (latest)** - Suspended Render (not deleted) via its API
+  after 8 days of confirmed Oracle stability - the last open item from
+  the Oracle cutover. Retire for good ~2026-09-20 if nothing needs it.
+  See §8.
+- **2026-09-06 (earlier same day)** - Bumped factor mining weekly->daily Mon-Fri.
   Fixed a real bug in `daily_analysis.yml`: aggregator was burning
   ~10min/run on a doomed INDmoney OAuth wait (ARCEMX_NO_BROWSER now
   set). Investigated Phase 5's candidate screen (clean) and found the
