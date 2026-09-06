@@ -1,5 +1,5 @@
 [Unit]
-Description=Arc'emX! weekly LLM factor mining (blueprint 24)
+Description=Arc'emX! daily LLM factor mining (blueprint 24, bumped from weekly 2026-09-06)
 After=network-online.target
 Wants=network-online.target
 

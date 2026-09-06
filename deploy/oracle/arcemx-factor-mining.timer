@@ -1,8 +1,8 @@
 [Unit]
-Description=Arc'emX! factor mining, Sat 03:30 UTC = 09:00 IST (piggybacks specialist_eval.yml's existing Saturday cadence, offset 30min so the two never compete for the box at once - see blueprint 24)
+Description=Arc'emX! factor mining, 12:00 UTC = 17:30 IST Mon-Fri (bumped from weekly Sat to daily 2026-09-06 - the buy-side signal drought (KNOWLEDGE_BASE.md section 26/26a: 0 "buy" ratings in 75 days) means this is now the more promising active search for a real signal; daily gives 7x more shots at clearing the deflated-Sharpe bar per unit time. Runs 30min after arcemx-daily-grader's 11:30 UTC slot so EOD data is settled and grader has long finished (now ~1-2min, was the multi-hour GH bottleneck - see section 40) - no longer 03:30 UTC piggybacking specialist_eval.yml's cadence, that was a GH Actions job on a different host anyway, and 03:30 UTC would now collide with arcemx-stock-analyst-dispatch.timer)
 
 [Timer]
-OnCalendar=Sat *-*-* 03:30:00
+OnCalendar=Mon..Fri *-*-* 12:00:00
 AccuracySec=1s
 Persistent=true
 

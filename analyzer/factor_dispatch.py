@@ -1,7 +1,11 @@
 """Factor mining dispatch (blueprint 24, Plan C Phase 2).
 
-Weekly (piggybacks specialist_eval.yml's Saturday cadence - no new
-schedule invented). Prompts the LLM with the factor DSL schema plus real
+Daily Mon-Fri on Oracle (bumped from weekly 2026-09-06: the buy-side
+signal drought - KNOWLEDGE_BASE.md section 26/26a, 0 "buy" ratings in 75
+days from stock_analyst - makes this the more promising active search
+for a real signal right now; daily gives 7x more shots at clearing the
+deflated-Sharpe bar per unit time, one LLM call per run so cost/rate-
+limit risk is trivial). Prompts the LLM with the factor DSL schema plus real
 grounded historical examples (never invented), asks for a handful of
 candidate factors, backtests every one via analyzer.factor_lab, and logs
 all of them to mined_factors regardless of outcome - a rejected factor
