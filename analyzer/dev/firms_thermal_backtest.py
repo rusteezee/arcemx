@@ -40,10 +40,18 @@ load_dotenv()
 
 FIRMS_MAP_KEY = os.getenv("FIRMS_MAP_KEY")
 FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
-# VIIRS_SNPP_SP = Suomi NPP, science-quality reprocessed - longest clean
-# archive. Swap to VIIRS_NOAA20_NRT for the last ~2 months of near-real-time
-# if SP's archive does not reach far enough back for a given date.
-FIRMS_SOURCE = "VIIRS_SNPP_SP"
+FIRMS_AVAIL_BASE = "https://firms.modaps.eosdis.nasa.gov/api/data_availability/csv"
+# VIIRS_SNPP_SP (Suomi NPP, science-quality reprocessed) hands off cleanly
+# to VIIRS_SNPP_NRT (near-real-time) at the exact date SP's reprocessing
+# lags behind - verified live 2026-09-06: SP max_date was 2026-04-27, NRT
+# min_date was 2026-04-28. Same satellite/instrument family throughout, so
+# no cross-sensor inconsistency at the seam. Real max day_range per call is
+# 5 (verified live: querying 366 returned "Invalid day range. Expects
+# [1..5]" - do not trust the API docs' larger day_range claims for other
+# sources without checking per-source, they are not universal).
+FIRMS_SOURCE_ARCHIVE = "VIIRS_SNPP_SP"
+FIRMS_SOURCE_RECENT = "VIIRS_SNPP_NRT"
+FIRMS_DAY_RANGE = 5
 
 # Half-width of the bounding box around each plant, in degrees (~0.06 deg
 # is roughly 6.5km at these latitudes) - tight enough to stay plant-local,
@@ -102,20 +110,46 @@ def _bbox(lat: float, lon: float) -> str:
             f"{lon + _BOX_HALF_DEG},{lat + _BOX_HALF_DEG}")
 
 
-def fetch_firms_window(lat: float, lon: float, end_date: date,
-                       day_range: int = 366) -> "pd.DataFrame | None":
-    """One FIRMS archive call: day_range days of VIIRS detections ending
-    on end_date, inside the plant bounding box. Returns raw hotspot rows
-    (lat/lon/brightness/frp/acq_date/acq_time/confidence) or None on any
-    failure - callers must not treat None as zero activity."""
+def fetch_source_availability(source: str) -> "tuple[date, date] | None":
+    """Real min_date/max_date for a FIRMS source, queried live rather than
+    assumed - verified live 2026-09-06 that VIIRS_SNPP_SP's own max_date
+    (2026-04-27) does NOT extend to "today" the way the API's general
+    day_range docs might suggest, and that guessing it wrong just returns
+    an empty CSV body with no error, which looks identical to "no fire
+    activity" unless you check availability first."""
+    if not FIRMS_MAP_KEY:
+        return None
+    try:
+        r = requests.get(f"{FIRMS_AVAIL_BASE}/{FIRMS_MAP_KEY}/{source}", timeout=15)
+        r.raise_for_status()
+        line = r.text.strip().splitlines()[1]
+        _id, min_d, max_d = line.split(",")
+        return (datetime.strptime(min_d, "%Y-%m-%d").date(),
+                datetime.strptime(max_d, "%Y-%m-%d").date())
+    except Exception as e:
+        print(f"firms_thermal_backtest: availability check failed for {source}: {e}")
+        return None
+
+
+def fetch_firms_window(lat: float, lon: float, end_date: date, source: str,
+                       day_range: int = FIRMS_DAY_RANGE) -> "pd.DataFrame | None":
+    """One FIRMS call: day_range days (max 5, verified live - see
+    FIRMS_DAY_RANGE) of VIIRS detections from `source` ending on end_date,
+    inside the plant bounding box. Returns raw hotspot rows (lat/lon/
+    brightness/frp/acq_date/acq_time/confidence) or None on any failure -
+    callers must not treat None as zero activity; an EMPTY (but valid)
+    DataFrame is the real "zero detections this window" case."""
     if not FIRMS_MAP_KEY:
         print("firms_thermal_backtest: FIRMS_MAP_KEY not set, skipping fetch")
         return None
-    url = (f"{FIRMS_BASE}/{FIRMS_MAP_KEY}/{FIRMS_SOURCE}/"
+    url = (f"{FIRMS_BASE}/{FIRMS_MAP_KEY}/{source}/"
            f"{_bbox(lat, lon)}/{day_range}/{end_date.isoformat()}")
     try:
         r = requests.get(url, timeout=30)
-        r.raise_for_status()
+        if not r.ok:
+            print(f"firms_thermal_backtest: HTTP {r.status_code} for {lat},{lon} "
+                  f"{source} ending {end_date}: {r.text[:200]}")
+            return None
         if not r.text.strip() or r.text.startswith("Invalid"):
             print(f"firms_thermal_backtest: bad response for {lat},{lon} "
                   f"ending {end_date}: {r.text[:200]}")
@@ -128,18 +162,27 @@ def fetch_firms_window(lat: float, lon: float, end_date: date,
 
 
 def fetch_full_history(plant: Plant, start: date, end: date) -> pd.DataFrame:
-    """Chains fetch_firms_window in <=366-day chunks to cover [start, end].
-    Sleeps briefly between calls - this is a one-shot research script, not
-    a production job, no need to be fast, only need to not hammer FIRMS."""
+    """Chains fetch_firms_window in FIRMS_DAY_RANGE-day steps to cover
+    [start, end], switching from the archive source to the recent source
+    at whichever date the two sources' own availability windows say to -
+    queried live, not hardcoded, since that seam date moves forward as
+    NASA keeps reprocessing. A short sleep between calls keeps this well
+    under the 5000-req/10-min key limit without being needlessly slow."""
+    archive_avail = fetch_source_availability(FIRMS_SOURCE_ARCHIVE)
+    recent_avail = fetch_source_availability(FIRMS_SOURCE_RECENT)
+    archive_max = archive_avail[1] if archive_avail else None
+
     chunks: list[pd.DataFrame] = []
     window_end = end
     while window_end >= start:
-        days_this_chunk = min(366, (window_end - start).days + 1)
-        df = fetch_firms_window(plant.lat, plant.lon, window_end, days_this_chunk)
+        days_this_chunk = min(FIRMS_DAY_RANGE, (window_end - start).days + 1)
+        source = (FIRMS_SOURCE_RECENT if archive_max and window_end > archive_max
+                 else FIRMS_SOURCE_ARCHIVE)
+        df = fetch_firms_window(plant.lat, plant.lon, window_end, source, days_this_chunk)
         if df is not None and not df.empty:
             chunks.append(df)
         window_end = window_end - timedelta(days=days_this_chunk)
-        time.sleep(1)
+        time.sleep(0.3)
     if not chunks:
         return pd.DataFrame()
     out = pd.concat(chunks, ignore_index=True)
