@@ -567,14 +567,17 @@ Cite the dim that drove a non-hold call in the reason field.
 holding_app_reviews[TICKER] (present only for tickers with a known consumer
 app - most holdings will have no entry, that is normal, not a gap) carries
 real Google Play star-rating sentiment: recent_avg_rating vs baseline_avg_rating
-over the preceding months, plus a few of the lowest-scored recent reviews'
-text. This is a SLOW signal about company execution quality (app crashes,
-delivery complaints, customer service collapse) - it drifts over weeks, it is
-NOT a next-day price signal. Use it ONLY as portfolio_verdicts context (a
-large negative delta, e.g. -0.5 or worse, is a real trim/exit input alongside
-technicals+fundamentals) - NEVER cite it in holding_outlooks_1d/
-wishlist_outlooks_1d, which are next-day directional calls this signal has no
-business informing.
+from two equal-sized windows of the newest reviews (recent_span_days/
+baseline_span_days tell you how many actual calendar days each window covers -
+a high-volume app's "recent" window may be a few days, a low-volume app's may
+be months, check the span before reading too much into a delta), plus a few
+of the lowest-scored recent reviews' text. This is a SLOW signal about
+company execution quality (app crashes, delivery complaints, customer service
+collapse) - it drifts over weeks, it is NOT a next-day price signal. Use it
+ONLY as portfolio_verdicts context (a large negative delta, e.g. -0.5 or
+worse, is a real trim/exit input alongside technicals+fundamentals) - NEVER
+cite it in holding_outlooks_1d/wishlist_outlooks_1d, which are next-day
+directional calls this signal has no business informing.
 
 CRITICAL: reasoning_breakdown is REQUIRED on every response. You MUST include all 5 keys
 (technicals, macro, news_flow, sentiment, prior_call_check) with non-empty string values.
