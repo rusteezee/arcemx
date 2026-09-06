@@ -17,6 +17,7 @@ from fetchers.reddit import fetch_hot
 from fetchers.fii_dii import fetch_latest as fetch_fii_dii, fetch_history as fetch_fii_dii_history
 from fetchers.options_chain import fetch_options_signals
 from fetchers.nse_announcements import material_for_tickers as fetch_nse_announcements
+from fetchers.app_reviews import sentiment_summary as fetch_app_review_sentiment
 from analyzer.technical import screen_universe, rank_candidates
 from analyzer.llm_router import analyze
 from analyzer.feedback import build_feedback as _load_feedback
@@ -572,6 +573,22 @@ def build_payload() -> dict:
             except Exception as e:
                 print(f"nse_announcements fail: {e}")
 
+        # App review sentiment (side signal, KB section 42): HOLDINGS only,
+        # not wishlist - this feeds portfolio_verdicts (hold/add/trim/exit
+        # reasoning on an existing position), not next-day outlook calls.
+        # Silently empty for any ticker without a mapped app - see
+        # fetchers/app_reviews.py's TICKER_TO_PLAY_STORE_ID.
+        holding_app_reviews: dict = {}
+        for tk in holding_set:
+            try:
+                summary = fetch_app_review_sentiment(tk)
+                if summary:
+                    holding_app_reviews[tk] = summary
+            except Exception as e:
+                print(f"app_reviews fail for {tk}: {e}")
+        if holding_app_reviews:
+            print(f"App review sentiment: {list(holding_app_reviews.keys())}")
+
         # Prior analysis for self-context
         try:
             prev = sb.table("analysis").select("run_at,market_mood,raw_json").order(
@@ -638,6 +655,10 @@ def build_payload() -> dict:
         # are structured, authoritative, and directly exchange-sourced.
         "holding_nse_announcements": holding_nse_announcements,
         "wishlist_nse_announcements": wishlist_nse_announcements,
+        # Slow signal (weeks-scale drift, not a next-day trigger) - see
+        # llm_router.py's prompt guidance: feeds portfolio_verdicts
+        # reasoning only, HOLDINGS only, not holding_outlooks_1d.
+        "holding_app_reviews": holding_app_reviews,
         "holding_news": {tk: v.get("news") for tk, v in holding_enrichment.items() if v.get("news")},
         "wishlist_news": {tk: v.get("news") for tk, v in wishlist_enrichment.items() if v.get("news")},
         "prior_call": prior_call,

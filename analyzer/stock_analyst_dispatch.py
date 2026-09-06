@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from fetchers.prices import load_universe
+from fetchers.nse_announcements import material_for_tickers as fetch_nse_announcements
 from analyzer.technical import screen_universe, rank_candidates
 
 load_dotenv()
@@ -74,7 +75,30 @@ def pick_candidates(n: int) -> list[str]:
     # requested today), so overfetch the ranked list rather than the
     # exact count needed.
     ranked = rank_candidates(signals, n=n * 4)
-    return [row["ticker"] for row in ranked["bullish"]]
+    bullish = ranked["bullish"]
+
+    # Widened to the full universe 2026-09-06 (KB section 42): a stock with
+    # a real same-day catalyst (board meeting outcome, results, credit
+    # rating, management change - material categories only, see
+    # fetchers/nse_announcements.py) AND decent technicals is a better
+    # dispatch candidate than technicals alone. One market-wide fetch,
+    # sliced against the whole universe - same cost as the holdings/
+    # wishlist-scoped call already wired into aggregator.py. This is a
+    # structured PRIORITY reorder, not a raw prompt dump, so it doesn't
+    # repeat the top_performer_1d crammed-prompt trap (section 26).
+    try:
+        catalysts = fetch_nse_announcements(set(universe), days=1)
+    except Exception as e:
+        print(f"NSE announcement catalyst check failed: {e}")
+        catalysts = {}
+    if catalysts:
+        print(f"Catalyst tickers today: {sorted(catalysts.keys())}")
+    catalyst_set = set(catalysts.keys())
+    with_catalyst = [r for r in bullish if r["ticker"] in catalyst_set]
+    without_catalyst = [r for r in bullish if r["ticker"] not in catalyst_set]
+    ordered = with_catalyst + without_catalyst
+
+    return [row["ticker"] for row in ordered]
 
 
 def run(n: int = DAILY_CANDIDATES) -> dict:
