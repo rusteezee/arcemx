@@ -1693,9 +1693,94 @@ have not yet been checked or migrated - see Pending below.
 
 ---
 
+## 41. Weekend follow-up (2026-09-06): daily_analysis's own real bug, factor mining bumped to daily, and the bear-pass materiality fix
+
+Checked `daily_analysis.yml` and `sensei_eod.yml` for the same GH-runner
+bottleneck as section 40. `sensei_eod` is healthy (8-17min, well under
+its 60min cap, no yfinance-heavy path). `daily_analysis` had its own,
+different real bug: `python -u` (added this session) made a "succeeding"
+24min run's log finally legible, and it showed `analyzer.aggregator`
+burning **~10 minutes waiting on an INDmoney OAuth browser callback that
+can never arrive on a headless GH runner**, retried once. `indmoney_mcp.py`
+already had a headless guard (`is_headless = RENDER env or
+ARCEMX_NO_BROWSER`) - Render sets `RENDER` automatically, GH Actions sets
+neither. Fixed: added `ARCEMX_NO_BROWSER: "1"` to the aggregator step's
+env. `options_chain.py` already degrades gracefully on this failure
+(falls back to no options_signals), so this just makes that happen in
+~instant instead of ~10min.
+
+**Bumped factor mining from weekly (Sat) to daily (Mon-Fri)**, 12:00 UTC
+on Oracle - the buy-side drought makes it the more promising active
+search right now; one LLM call per run keeps cost trivial. Old 03:30 UTC
+slot would now collide with `arcemx-stock-analyst-dispatch.timer`.
+
+**Investigated Phase 5's (stock_analyst) candidate-selection logic** per
+user request - `technical.screen_universe`/`rank_candidates` is sound
+(rewards RSI 50-70, MACD bullish cross, real uptrend, volume
+confirmation, not overbought exhaustion). Not the problem.
+
+**Found the real mechanism behind 0/36 "buy" ratings**: pulled every
+`stock_analyses` row's `llm_json` directly. Bull's own confidence
+legitimately varies 40-65 across tickers (it discriminates fine). But
+`_adversarial_bear_pass`'s dampening used `n_material = count of
+reasons_could_be_wrong entries >=20 chars` - a materiality check that
+almost any ordinary sentence clears. Real result: `bear_pass_added` was
+**exactly 4 or 5 on every single one of 36 rows**, capping
+`dampen = min(25, 12*(n-1))` at its max (25) every time, unconditionally.
+With observed raw confidence never exceeding 65, and 65-25=40 still
+under the confidence<50 auto-downgrade-to-hold floor, **no buy call
+could mathematically survive** regardless of how strong the underlying
+case was - a structural deadlock caused by a non-discriminating filter,
+not the model being appropriately skeptical.
+
+**Fixed**: added `_is_material_reason()` - requires both the existing
+length>=20 AND a real cited digit (both the bull and bear prompts
+already explicitly demand "cite a number from the payload, not a
+vibe" - the free-tier model just wasn't being held to it). Applied to
+both the bull's own self-critique dampening (`_validate`) and the
+bear-pass re-dampen, so the two stay consistent. Does NOT lower the
+dampen cap or loosen any threshold - explicitly avoided the "force
+volume through a weaker gate" anti-pattern the original audit banned;
+this only stops crediting non-quantified filler toward the penalty.
+
+**Verified live**: inserted a fresh `stock_analyses` row for RELIANCE.NS
+(id=54, deleted after), dispatched `stock_analyst.yml` for real. Result:
+`confidence_raw=60 -> confidence=35`, `bear_pass_added=5`, still
+downgraded to hold - looks unchanged from the old broken pattern at
+first glance, but checking the actual 9 `reasons_could_be_wrong`
+entries, every one **genuinely cites a real number** (SMA200 1384.92 vs
+price 1322, 3-of-4 quarters missed consensus, PE 23.92 vs sector
+10-15x, near-52w-low). RELIANCE's bear case is legitimately
+well-substantiated right now, so it correctly still dampens hard under
+BOTH the old and new filter - this one sample can't distinguish
+"fix works" from "fix is a no-op," since a genuinely strong bear case
+satisfies both. Real proof requires watching whether upcoming daily
+dispatches (6/day starting now that a real signal cycle is live) show
+`bear_pass_added` *varying* by ticker (0-2 for genuinely clean setups,
+4-5 for genuinely weak ones) instead of the old constant 4-5
+regardless of the underlying stock.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-03 (latest)** - Full health check turned into closing out
+- **2026-09-06 (latest)** - Bumped factor mining weekly->daily Mon-Fri.
+  Fixed a real bug in `daily_analysis.yml`: aggregator was burning
+  ~10min/run on a doomed INDmoney OAuth wait (ARCEMX_NO_BROWSER now
+  set). Investigated Phase 5's candidate screen (clean) and found the
+  real mechanism behind 0/36 buy ratings: bear-pass confidence dampening
+  counted any reasons_could_be_wrong entry >=20 chars as "material",
+  which was true of almost every sentence - `bear_pass_added` was 4-5 on
+  every single row regardless of ticker, capping the -25 max dampen
+  unconditionally, mathematically blocking any buy since raw confidence
+  never exceeded 65. Fixed with `_is_material_reason()` (requires a real
+  cited digit, not just length) in both `stock_analyst_llm.py`'s bull
+  self-critique and bear-pass re-dampen. Verified live on a fresh
+  RELIANCE.NS dispatch - mechanism runs correctly, though that specific
+  case had a genuinely well-substantiated bear case so it still
+  downgraded (expected, not a fix failure). Real proof needs the
+  upcoming daily dispatch volume. See section 41.
+- **2026-09-03** - Full health check turned into closing out
   the grader saga for real. Fixed a 4th bug (`_normalize_ticker` not
   stripping whitespace, splitting one malformed ticker into two yfinance
   calls). Fixed a 5th: Oracle's `setup.sh` never installed
