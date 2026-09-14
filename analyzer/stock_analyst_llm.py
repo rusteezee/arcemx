@@ -271,6 +271,21 @@ def _parse_llm_json(resp: dict) -> dict | None:
 
 _HAS_DIGIT = re.compile(r"\d")
 
+# Free baseline before dampening starts. The system prompt MANDATES >=2
+# material reasons_could_be_wrong on every call, good or bad ("If the
+# list contains 2+ material reasons, drop confidence 10-20 pts" is
+# describing the NORMAL case, not an exception) - so counting from item
+# 1 penalized the act of complying with a mandatory instruction, not any
+# real signal about call quality. Root-caused 2026-09-14: a full week of
+# real post-bear-pass-fix data showed EVERY "buy" attempt died, including
+# the week's single highest-confidence call (conf_raw=73, the model's own
+# strongest read) - the old (n-1) formula drags any call under 50 almost
+# regardless of quality, because 2-4 material items is what ANY honest
+# analysis produces. (n-2) leaves the mandated baseline free and only
+# penalizes past it; a setup with genuinely many (5+) real red flags
+# still hits the same -25 cap as before.
+_DAMPEN_FREE_ITEMS = 2
+
 
 def _is_material_reason(text: str) -> bool:
     """A `reasons_could_be_wrong` / bear-pass entry only counts toward
@@ -374,13 +389,16 @@ def _validate(out: dict, ticker: str, horizon_days: int) -> tuple[bool, str]:
         )
     # Auto-dampen confidence if the model produced the self-critique
     # list but did not lower its own confidence to match. 12 pts per
-    # material item beyond the first, capped at -25. Modifies `out` in
+    # material item PAST the mandated free baseline (_DAMPEN_FREE_ITEMS -
+    # see its own docstring for why), capped at -25. Modifies `out` in
     # place so the persisted row carries the calibrated number.
     # "Material" = _is_material_reason (quantified claim), not just long
     # enough to clear a length check - see that function's docstring.
     n_material = sum(1 for r in rcbw if _is_material_reason(r))
-    if n_material >= 2:
-        dampen = min(25, 12 * (n_material - 1))
+    out["n_material_total"] = n_material
+    n_excess = max(0, n_material - _DAMPEN_FREE_ITEMS)
+    if n_excess >= 1:
+        dampen = min(25, 12 * n_excess)
         out["confidence_raw"] = out["confidence"]
         out["confidence"] = max(0, out["confidence"] - dampen)
         out["confidence_dampen_applied"] = dampen
@@ -598,8 +616,10 @@ def run(run_id: int) -> dict:
                     # ticker, a materiality filter with zero discriminating
                     # power.
                     n_material = sum(1 for x in merged if _is_material_reason(x))
-                    if n_material >= 2:
-                        dampen = min(25, 12 * (n_material - 1))
+                    out["n_material_total"] = n_material
+                    n_excess = max(0, n_material - _DAMPEN_FREE_ITEMS)
+                    if n_excess >= 1:
+                        dampen = min(25, 12 * n_excess)
                         out["confidence_raw"] = out["confidence"]
                         out["confidence"] = max(0, out["confidence"] - dampen)
                         out["confidence_dampen_applied"] = dampen
