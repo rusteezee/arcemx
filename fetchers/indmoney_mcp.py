@@ -235,16 +235,35 @@ def _extract(result) -> dict:
     return {}
 
 
-async def fetch_holdings(asset_type: str = "IND_STOCK") -> list[dict]:
-    out = await call_tool("networth_holdings", {"asset_type": asset_type})
+async def fetch_holdings(asset_type: str = "IND_STOCK", user_id: str | None = None) -> list[dict]:
+    # Root-caused 2026-09-17: this and fetch_watchlist_flat below defaulted
+    # to call_tool's own user_id="default" - a dead token row last touched
+    # 2026-06-07, never refreshed since. sync_to_supabase uses the real
+    # user_id (TELEGRAM_CHAT_ID) plus a proactive _refresh_tokens_if_needed
+    # call, which is why IT has been working daily while these two silently
+    # never worked at all. Confirmed live: calling this bare gets the exact
+    # same "tokens expired or revoked" error sync_to_supabase would hit
+    # without its manual refresh step - not an account problem, a wrong-
+    # identity-plus-wrong-refresh-path problem.
+    user_id = user_id or os.getenv("TELEGRAM_CHAT_ID", "default")
+    try:
+        await _refresh_tokens_if_needed(user_id)
+    except Exception as e:
+        print(f"fetch_holdings: proactive token refresh failed, trying anyway: {e}")
+    out = await call_tool("networth_holdings", {"asset_type": asset_type}, user_id=user_id)
     if isinstance(out, dict):
         return out.get("holdings") or []
     return out or []
 
 
-async def fetch_watchlist_flat() -> list[dict]:
+async def fetch_watchlist_flat(user_id: str | None = None) -> list[dict]:
     """Flatten all watchlists into [{ticker, ind_key}]. Filter nulls."""
-    out = await call_tool("user_watchlist", {})
+    user_id = user_id or os.getenv("TELEGRAM_CHAT_ID", "default")
+    try:
+        await _refresh_tokens_if_needed(user_id)
+    except Exception as e:
+        print(f"fetch_watchlist_flat: proactive token refresh failed, trying anyway: {e}")
+    out = await call_tool("user_watchlist", {}, user_id=user_id)
     flat = []
     if not isinstance(out, dict):
         return flat

@@ -26,6 +26,7 @@ from fetchers.indmoney_mcp import (
     ClientSession,
     _build_auth_sync,
     _extract,
+    _refresh_tokens_if_needed,
     call_tool,
     streamablehttp_client,
     MCP_URL,
@@ -61,6 +62,21 @@ def fetch_options_signals(symbols: list[str] | None = None) -> dict | None:
     phrasing, not something the DoD checklist actually tests)."""
     user_id = os.getenv("TELEGRAM_CHAT_ID", "default")
     args = {"ind_key": NIFTY_IND_KEY, "use_expiry_date": False, "strikes_around_atm": 7}
+
+    # Root-caused 2026-09-17: this call was always using the correct real
+    # user_id, but skipped indmoney_mcp.sync_to_supabase's proactive
+    # refresh step - the MCP SDK's own auto-refresh-on-401 is explicitly
+    # documented (see _refresh_tokens_if_needed's docstring) as unreliable
+    # with our Supabase-backed token storage, so every call here was
+    # falling straight into "needs full re-auth" instead of just
+    # refreshing. Confirmed live: fetch_holdings() (same SDK auto-refresh
+    # path, no manual pre-refresh) failed identically from Oracle itself,
+    # not just GH Actions - this was never an expired/revoked account,
+    # just the wrong refresh mechanism.
+    try:
+        asyncio.run(_refresh_tokens_if_needed(user_id))
+    except Exception as e:
+        print(f"options_chain: proactive token refresh failed, trying anyway: {e}")
 
     data = None
     last_error = None
