@@ -6,7 +6,6 @@
 // purely to be a clock that reliably makes that API call on time.
 const CRON_TO_WORKFLOW = {
   "50 2 * * 1-5": "daily_analysis.yml",
-  "30 11 * * 1-5": "daily_grader.yml",
   "35 14 * * 1-5": "sensei_eod.yml",
 };
 
