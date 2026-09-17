@@ -1951,9 +1951,89 @@ back null.
 
 ---
 
+## 44. Recalibrated stock_analyst's dampen formula, and a real failure sweep (2026-09-14/17)
+
+A full week of real post-bear-pass-fix data (section 41) showed 18 of
+33 stock_analyst rows had `rating_raw=buy` (the bull attempts buy 55%
+of the time, with genuinely varied `conf_raw` 50-73) - every single one
+still died. Root cause: the auto-dampen formula
+(`min(25, 12*(n_material-1))`) counted from the FIRST material
+`reasons_could_be_wrong` item, but the system prompt MANDATES >=2 such
+items on every call, good or bad - so the formula was penalizing
+compliance with a mandatory instruction, not any real signal about
+call quality. Even the week's single highest-confidence call
+(`conf_raw=73`) still landed at 48, under the floor.
+
+**Fixed**: shifted the free baseline from 1 item to 2
+(`_DAMPEN_FREE_ITEMS`), matching the prompt's own framing of "2+
+material reasons" as the normal case. A setup with genuinely many (5+)
+real red flags still hits the same -25 cap as before. Added
+`n_material_total` to the output for transparency. **Verified with
+real production data within days**: 2026-09-15, `CHENNPETRO.NS` -
+`n_material=2` (zero excess, zero dampen), survived at raw confidence
+55, rating stayed "buy" - and the paper trader opened a REAL position
+on it, the first new trade since 2026-08-12. 2026-09-16,
+`ACMESOLAR.NS` also survived (`conf_raw=75, n_material=7, dampen=25`,
+landing at exactly 50). Rating distribution since the fix: 19 rows, 2
+buy - versus 0 buy across the entire prior 8-day window (36 rows).
+
+**Failure sweep across the same period found one real bug and two
+categories of self-healing external flakiness:**
+
+1. **Real bug, fixed**: the Cloudflare `cron-dispatcher` Worker was
+   still firing `daily_grader.yml`'s `workflow_dispatch` every weekday
+   at 11:30 UTC - a leftover from the Phase B migration (section 40,
+   2026-09-03) that pulled GH's own `schedule:` trigger but never
+   touched this separate Worker. Cancelled (30min timeout) every
+   single weekday for 2+ weeks - not data-corrupting (idempotent,
+   never even finished), just wasted GH Actions minutes and log noise.
+   Removed from the Worker's cron map, redeployed via wrangler,
+   confirmed live (only 2 real triggers remain).
+2. **Real bug, fixed**: `options_chain.py`'s INDmoney calls failed with
+   "tokens expired or revoked" - confirmed this was NEVER an actual
+   account/auth problem. `fetch_options_signals()` already used the
+   correct real user_id (`TELEGRAM_CHAT_ID`), same as the daily
+   holdings sync. The actual bug: `sync_to_supabase()` calls a
+   proactive `_refresh_tokens_if_needed()` before every session (its
+   own docstring: "Bypasses SDK auto-refresh which doesn't work
+   reliably with our storage") - `options_chain.py` never got this
+   same treatment, relying purely on the SDK's own auto-refresh this
+   codebase already knew was unreliable here. Confirmed by calling
+   `fetch_holdings()` directly from Oracle (identical environment to
+   the working daily sync): it failed identically, since it (and
+   `fetch_watchlist_flat()`) also skip the proactive refresh AND
+   default to `user_id="default"` - a dead token row last touched
+   2026-06-07, completely separate from the real, actively-refreshed
+   `TELEGRAM_CHAT_ID` row. Fixed all three functions. **Verified live**:
+   real NIFTY options-chain data now returns (PCR 1.086, real strikes,
+   spot 23322.4).
+3. **External, self-healed, not actionable**: OpenRouter free-tier
+   flakiness on 2026-09-16/17 (`minimax-m3` failing repeatedly;
+   `nemotron-3-super`'s own Nvidia-side hosting also genuinely
+   overloaded on those two days) caused 3 `stock_analyst` failures, 2
+   `daily_analysis` failures, and 1 `sensei_eod` failure. Checked all
+   three job types for a missed trading day - none: every one still
+   produced a real successful row that same day via the existing
+   redundant-trigger design (Cloudflare Worker + GH schedule + bot's
+   own scheduler). The system worked exactly as designed; it just took
+   extra attempts.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-06 (latest)** - Researched `gods-eye-view` (18.2k-star OSINT
+- **2026-09-17 (latest)** - Recalibrated stock_analyst's dampen formula
+  (freed the mandated-baseline first 2 material items from penalty) -
+  verified with real production data: 2 real buy calls survived within
+  3 days (0 in the prior 8), one of them (CHENNPETRO.NS) became the
+  first new paper trade since 2026-08-12. Failure sweep found and fixed
+  2 real bugs (a stale Cloudflare Worker cron still hitting
+  daily_grader.yml 2+ weeks after its Oracle migration; options_chain
+  never doing the proactive token refresh sync_to_supabase already
+  relied on) and confirmed a week of OpenRouter free-tier flakiness
+  self-healed via existing redundancy with zero missed trading days.
+  See section 44.
+- **2026-09-06 (earlier)** - Researched `gods-eye-view` (18.2k-star OSINT
   globe viewer) - not integrable (browser rendering app, no data API).
   Built a real FIRMS satellite-thermal backtest instead (4 plants,
   coordinates verified live, 2-year history, ~584 real API calls) to
