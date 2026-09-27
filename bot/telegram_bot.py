@@ -1315,40 +1315,10 @@ async def _start_health_server(port: int):
     return server
 
 
-async def scheduled_grader():
-    """Grader trigger from the bot's APScheduler. Now dispatches the
-    daily_grader.yml workflow on GH Actions instead of running the
-    grader in-process; pandas + yfinance + the full prediction_scores
-    sweep tripped the Render 512 MB ceiling on 12/06/2026. The GH
-    workflow's own 17:00 IST cron stays the redundancy layer; the
-    grader is idempotent so both writing to accuracy_summary /
-    prediction_scores is safe. Falls back to in-process when
-    GH_TOKEN/GH_REPO are unset."""
-    if "grader" in _JOB_RUNNING:
-        print("Scheduled grader: already running, skip")
-        return
-    print("Scheduled grader: dispatching GH workflow...")
-    ok, detail = await _dispatch_github_workflow("daily_grader.yml")
-    if ok:
-        _acquire_dispatch_lock("grader", ttl_seconds=600)
-        print(f"  {detail}")
-        return
-    print(f"  {detail}; falling back to in-process run")
-    import asyncio as _asyncio
-    try:
-        from analyzer.grader import grade_all, compute_summaries
-        loop = _asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: grade_all(lookback_days=90))
-        await loop.run_in_executor(None, compute_summaries)
-        print("In-bot scheduled grader complete.")
-    except Exception as e:
-        print(f"In-bot scheduled grader failed: {e}")
-
-
 async def scheduled_sensei():
     """Sensei EOD synthesis trigger. Dispatches sensei_eod.yml on GH
     Actions; the workflow self-grades before synthesizing so ordering
-    against scheduled_grader is irrelevant. Falls back in-process when
+    against the (Oracle-hosted) grader is irrelevant. Falls back in-process when
     the GH PAT env vars are missing."""
     if "sensei" in _JOB_RUNNING:
         print("Scheduled Sensei: already running, skip")
@@ -1479,17 +1449,10 @@ async def _startup_catchup():
                 print("Catch-up: no analysis today, running morning analysis")
                 await scheduled_analysis()
 
-        # --- Grader pass missing? (past 17:10 IST, summaries stale) ---
-        if (ist.hour, ist.minute) >= (17, 10):
-            cutoff = datetime(today_ist.year, today_ist.month, today_ist.day,
-                              11, 30, tzinfo=_tz.utc)  # 17:00 IST in UTC
-            acc = sb.table("accuracy_summary").select("computed_at").order(
-                "computed_at", desc=True).limit(1).execute().data or []
-            fresh = acc and datetime.fromisoformat(
-                acc[0]["computed_at"].replace("Z", "+00:00")) >= cutoff
-            if not fresh:
-                print("Catch-up: summaries predate 17:00 IST, running grader")
-                await scheduled_grader()
+        # (Grader catch-up removed 2026-09-27: the grader runs from the
+        # Oracle systemd timer now, which is Persistent=true and replays a
+        # missed fire at boot. Dispatching it to GH Actions from here was
+        # a useless "recovery" - GH's runners time out at 30min.)
 
         # --- Sensei missing or pre-grading? (past 20:10 IST) ---
         if (ist.hour, ist.minute) >= (20, 10):
@@ -1789,11 +1752,13 @@ async def _post_init(app: Application):
     # 08:30 IST: morning analysis, bot-primary (GH cron drifted hours or
     # skipped entirely on free tier; see scheduled_analysis docstring).
     scheduler.add_job(scheduled_analysis, CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone=_IST))
-    # 17:05 IST: grader pass. Run 5 minutes after the GH cron's 17:00
-    # target so when GH fires on time both runs grade the same row set
-    # (idempotent), and when GH drifts the bot-side run still lands
-    # before evening Sensei needs the scores.
-    scheduler.add_job(scheduled_grader, CronTrigger(hour=17, minute=5, day_of_week="mon-fri", timezone=_IST))
+    # Grader is NOT scheduled here anymore: blueprint 22 Phase B moved it to
+    # arcemx-daily-grader.timer on the Oracle box (17:00 IST, Persistent=true
+    # so a missed fire replays at boot). This job kept dispatching
+    # daily_grader.yml to GH Actions every weekday at 17:05 IST, where GH's
+    # slow runners hit the 30min timeout and cancelled every time
+    # (found 2026-09-27: 7 straight cancelled runs since the 09-17 Worker
+    # fix, which had only removed one of three stray triggers).
     # 20:05 IST: Sensei EOD. Same 5-minute offset from GH's 20:00 target.
     # Sensei also self-grades before synthesizing, so even a late fire
     # never produces a data-thin retrospective again.

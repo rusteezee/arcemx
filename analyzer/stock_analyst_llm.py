@@ -286,6 +286,12 @@ _HAS_DIGIT = re.compile(r"\d")
 # still hits the same -25 cap as before.
 _DAMPEN_FREE_ITEMS = 2
 
+# Bull-pass LLM attempts before a run is marked failed (see the retry loop
+# in run() for why), and the base backoff between attempts (multiplied by
+# the attempt number). Free-tier calls, only spent when a call fails.
+_LLM_MAX_ATTEMPTS = 3
+_LLM_RETRY_DELAY_S = 15
+
 
 def _is_material_reason(text: str) -> bool:
     """A `reasons_could_be_wrong` / bear-pass entry only counts toward
@@ -563,21 +569,48 @@ def run(run_id: int) -> dict:
         # analyzer uses. reasoning=True so Nemotron Super does its
         # thinking pass; deep analysis warrants it.
         model_chain = [PRIMARY_MODEL] + FALLBACK_CHAIN
-        t1 = time.time()
-        resp = _post(messages, model_chain, reasoning=True, timeout=300)
-        model_used = resp.get("model") or PRIMARY_MODEL
-        print(f"  LLM in {time.time() - t1:.1f}s via {model_used}")
+        model_used = PRIMARY_MODEL
+        out = None
+        last_err: Exception | None = None
+        # Bounded retry (2026-09-27): 7 of ~18 daily dispatches failed over
+        # 3 days, mostly "output validation failed: missing key:
+        # confidence" - `confidence` is the LAST key in the output schema,
+        # so a truncated/partial provider response (Nvidia-side overloads,
+        # "Response ended prematurely") parses but lacks it. The router only
+        # rotates models on empty/errored responses, not on a response that
+        # parses but fails validation, so the whole run died with no retry
+        # on the pipeline's only buy-signal source. Each retry rotates the
+        # chain so it starts on a different model than the one that just
+        # gave a bad answer.
+        for attempt in range(1, _LLM_MAX_ATTEMPTS + 1):
+            t1 = time.time()
+            try:
+                resp = _post(messages, model_chain, reasoning=True, timeout=300)
+                model_used = resp.get("model") or PRIMARY_MODEL
+                print(f"  LLM in {time.time() - t1:.1f}s via {model_used} "
+                      f"(attempt {attempt}/{_LLM_MAX_ATTEMPTS})")
 
-        out = _parse_llm_json(resp)
+                candidate = _parse_llm_json(resp)
+                if candidate is None:
+                    raise RuntimeError("LLM response did not contain valid JSON")
+                # Sometimes models echo wrong ticker / horizon. Stamp ours.
+                candidate["ticker"] = ticker
+                candidate["horizon_days"] = horizon
+
+                ok, err = _validate(candidate, ticker, horizon)
+                if not ok:
+                    raise RuntimeError(f"output validation failed: {err}")
+                out = candidate
+                break
+            except Exception as e:
+                last_err = e
+                print(f"  attempt {attempt}/{_LLM_MAX_ATTEMPTS} failed: "
+                      f"{type(e).__name__}: {str(e)[:160]}")
+                if attempt < _LLM_MAX_ATTEMPTS:
+                    model_chain = model_chain[1:] + model_chain[:1]
+                    time.sleep(_LLM_RETRY_DELAY_S * attempt)
         if out is None:
-            raise RuntimeError("LLM response did not contain valid JSON")
-        # Sometimes models echo wrong ticker / horizon. Stamp ours.
-        out["ticker"] = ticker
-        out["horizon_days"] = horizon
-
-        ok, err = _validate(out, ticker, horizon)
-        if not ok:
-            raise RuntimeError(f"output validation failed: {err}")
+            raise last_err
 
         # 4b. Adversarial bear-case 2nd pass. Take the bull output back
         # to the same LLM with a focused "find the kill shot" prompt.
