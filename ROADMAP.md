@@ -77,14 +77,14 @@ couldn't fix.
 
 ## Waves
 
-### Wave 0. Stop the bleeding — ✅ DONE
+### Wave 0. Stop the bleeding. ✅ DONE
 | # | Blueprint | Status |
 |---|---|---|
 | 16 | hygiene-sweep | ✅ Done - RLS probe, schema parity, dead code, NSE-holiday guard all verified live in code |
 | 02 | deadman-switch-observability | ✅ Done - dead-man pings wired into workflows (e.g. `specialist_eval.yml`) |
 | 01 | multi-provider-llm-failover | ✅ Done - OpenRouter → Gemini → Groq chain live, extended 2026-08-15 with degenerate-output detection |
 
-### Wave 1. Protect + measure the new trade flow — ✅ DONE (Oracle migration excepted)
+### Wave 1. Protect + measure the new trade flow. ✅ DONE (Oracle migration excepted)
 | # | Blueprint | Status |
 |---|---|---|
 | 15 | oracle-migration-runbook | **✅ Bot live on Oracle (2026-08-29)** - `VM.Standard.A1.Flex` 4 OCPU/24GB, verified end-to-end (`/trigger/sync` returned real data through the full Netlify->bot->Supabase->GH Actions path). Render kept suspended-not-deleted for a ~2 week safety window before full retirement. Two real bugs found and fixed during migration: Oracle's stock Ubuntu image blocks port 80/443 via iptables regardless of the cloud Security List (now fixed in `setup.sh` permanently), and reserved-IP attachment only works from the instance's own VNIC page, not the Reserved IPs list. See `KNOWLEDGE_BASE.md` §8. Cron-scheduling migration (GH Actions -> this box) is a separate, not-yet-started future step |
@@ -94,7 +94,7 @@ couldn't fix.
 | 17 | news-relevance-engine | ✅ Done - ticker linking + portfolio-aware alerts, `hourly_news.yml` live |
 | 18 | free-data-source-expansion | ✅ Done - dead feeds replaced, new sources added |
 
-### Wave 2. Honesty layer — ✅ DONE
+### Wave 2. Honesty layer. ✅ DONE
 | # | Blueprint | Status |
 |---|---|---|
 | 04 | winprob-recalibration-platt | ✅ Done - Platt calibration live on multiple dims |
@@ -102,7 +102,7 @@ couldn't fix.
 | 10 | dsr-pbo-honesty-layer | ✅ Done - DSR + PBO computed on every backtest run (confirmed live in `backtest_runs` output) |
 | 06 | fii-dii-history-trend | ✅ Done |
 
-### Wave 3. Signal expansion — ✅ DONE
+### Wave 3. Signal expansion. ✅ DONE
 | # | Blueprint | Status |
 |---|---|---|
 | 05 | options-signals-indmoney | ✅ Done - PCR/OI-walls/max-pain wired into the payload |
@@ -110,7 +110,7 @@ couldn't fix.
 | 14 | rag-phase1-activation | ✅ Built and active. A/B review done 2026-08-30 (24 days late) - inconclusive, not a proven win, left on regardless. See `KNOWLEDGE_BASE.md` §29 |
 | 19 | indstocks-execution-layer | ✅ Done, at its designed ceiling - read-only stage (funds/LTP) and manual-confirm stage (Execute/Skip) both live; Stage 3 auto-execution explicitly rejected in code, correctly stays locked behind Phase B |
 
-### Wave 4. Gated Phase B core — blocked on the gate, not by date
+### Wave 4. Gated Phase B core. blocked on the gate, not by date
 | # | Blueprint | Gate | Status |
 |---|---|---|
 | 09 | half-kelly-sizing | 60 closed paper trades | **Not built** - correctly deferred, currently 27/60 |
