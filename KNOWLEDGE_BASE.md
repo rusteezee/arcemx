@@ -2012,7 +2012,7 @@ categories of self-healing external flakiness:**
    `nemotron-3-super`'s own Nvidia-side hosting also genuinely
    overloaded on those two days) caused 3 `stock_analyst` failures, 2
    `daily_analysis` failures, and 1 `sensei_eod` failure. Checked all
-   three job types for a missed trading day - none: every one still
+   three job types for a missed trading day, found none: every one still
    produced a real successful row that same day via the existing
    redundant-trigger design (Cloudflare Worker + GH schedule + bot's
    own scheduler). The system worked exactly as designed; it just took
@@ -2020,9 +2020,98 @@ categories of self-healing external flakiness:**
 
 ---
 
+## 45. Ten-day sweep (2026-09-27): dampen fix's real conversion rate, one more redundant-dispatch bug, and a bounded LLM retry
+
+**Dampen fix (section 44), 10 more days of data.** 47 stock_analyst rows
+since 2026-09-14: 43 hold, 3 buy, 1 sell. Only 1 of those 3 buys
+(`CHENNPETRO.NS`, confidence 55) survived `paper_trader.py`'s own
+stricter `MIN_CONF=55` gate and opened a real trade. `ACMESOLAR.NS`
+(confidence 50) and `PINELABS.NS` (confidence 53, 2026-09-18) both
+correctly skipped with `low_conf` at that second gate. The fix is real
+and traceable end to end, but the true conversion rate from LLM buy
+call to actual paper trade is low (1 of 3, and only 3 of 47 total
+calls). That is a genuine improvement over the prior 0-in-36-day
+drought, not a solved problem.
+
+**CHENNPETRO.NS mark-to-market**: still open, entered 2026-09-15 at
+1501.88, last close (2026-09-25) 1376.40, unrealized -8.35% against a
+stop at 1231.64 and target at 1902.53. Real money-losing-so-far
+position, not yet stopped out, too early to call a verdict either way.
+
+**Factor mining, 10 more days**: 44 proposed, 44 rejected, still 0
+candidates. Checked whether the 43-of-44-unique-name diversity claimed
+by the LLM is real (it is, not a repetition bug) and whether the
+rejection rate reflects an over-harsh gate or genuine noise: median raw
+Sharpe across all 44 is -5.227, only 2 have positive raw Sharpe at all.
+One near-miss worth flagging, not acting on:
+`strong_uptrend_near_resistance_low_vol` (short side, 10-day horizon)
+scored a real Sharpe of 2.779, 62.07% win rate, but only 29 trades, one
+short of `MIN_TRADES_FOR_CANDIDATE=30`. Left the threshold alone;
+lowering it to rescue one observation is the same "loosen the gate to
+force a result" trap this project has already paid for once
+(`top_performer_1d`).
+
+**Found and fixed two more real bugs in the same sweep:**
+
+1. **`bot/telegram_bot.py` had its own, separate leftover from the
+   Oracle migration** the section-44 Cloudflare Worker fix (2026-09-17)
+   did not cover: the bot's own APScheduler (`scheduled_grader`,
+   CronTrigger 17:05 IST Mon-Fri) and the grader branch inside
+   `_startup_catchup()` were BOTH still dispatching `daily_grader.yml`
+   to GH Actions. Confirmed live: 7 straight cancelled GH runs since
+   the Worker fix, which only removed one of three stray triggers, not
+   all of them. Removed the scheduler job, the catch-up branch, and the
+   now-dead `scheduled_grader()` function entirely; Oracle's own
+   `arcemx-daily-grader.timer` (`Persistent=true`) already covers the
+   missed-fire recovery case this code existed for. The manual
+   `/trigger/grader` and `/trigger/paper-eval` HTTP endpoints are
+   untouched, they intentionally still dispatch to GH on demand.
+2. **`analyzer/stock_analyst_llm.py`'s bull-pass LLM call had no
+   retry at all.** 7 of roughly 18 daily dispatches over the prior 3
+   days failed with `"output validation failed: missing key:
+   confidence"`, confidence being the last key in the output schema, so
+   a truncated or partial provider response, confirmed Nvidia-side
+   `"Service temporarily overloaded"` on several, parses as valid JSON
+   but silently fails validation. The router's own model-rotation logic
+   only triggers on an empty or errored response, never on one that
+   parses but is incomplete, so these runs died with zero retry on the
+   pipeline's only real buy-signal source. Wrapped the call+parse+
+   validate in a bounded 3-attempt retry (`_LLM_MAX_ATTEMPTS`,
+   `_LLM_RETRY_DELAY_S=15`), rotating the model chain between attempts
+   so a retry starts on a different model than the one that just gave a
+   bad answer. Self-reviewed before shipping: confirmed `_validate`'s
+   required-key check runs before any dampening/mutation, each attempt
+   parses a fresh dict with no cross-attempt contamination, `last_err`
+   preserves the real exception for the outer failure handler, and the
+   DB write happens once, outside the loop, so a retry cannot double
+   write.
+
+**Deployed and verified**: pulled on Oracle, restarted `arcemx-bot`,
+confirmed via `grep` that zero automatic (non-manual) dispatch paths
+for `daily_grader.yml` remain in the deployed source. The
+`stock_analyst_llm.py` fix takes effect automatically on GH Actions'
+next dispatch, no restart needed there.
+
+**Also found this sweep, unrelated to any of the above**: this repo has
+a binding house-style rule (`AGENTS.md`, "no em dashes anywhere") that
+had drifted in `ROADMAP.md`. Ran the repo's own
+`scripts/strip_emdash.py`, idempotent and safe to re-run, and committed
+the fix.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-17 (latest)** - Recalibrated stock_analyst's dampen formula
+- **2026-09-27 (latest)** - Ten-day sweep: dampen fix converts real LLM
+  buy calls to trades at a low but real rate (1 of 3 attempts, 3 of 47
+  total rows), CHENNPETRO.NS sitting at -8.35% unrealized, factor mining
+  still 0/44 with one near-miss left alone on purpose. Found and fixed
+  two more real bugs: bot/telegram_bot.py had its own separate leftover
+  daily_grader.yml dispatcher (the 09-17 Worker fix only caught one of
+  three), and stock_analyst_llm.py's LLM call had zero retry, losing
+  7 of ~18 daily runs to truncated provider responses. Also stripped
+  stray em dashes from ROADMAP.md per house style. See section 45.
+- **2026-09-17 (earlier)** - Recalibrated stock_analyst's dampen formula
   (freed the mandated-baseline first 2 material items from penalty) -
   verified with real production data: 2 real buy calls survived within
   3 days (0 in the prior 8), one of them (CHENNPETRO.NS) became the
