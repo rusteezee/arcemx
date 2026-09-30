@@ -59,10 +59,18 @@ _MATERIAL_8K_ITEMS = {
     "3.01", "4.01", "4.02", "5.01", "5.02",
 }
 _KEYWORDS = (
-    "revenue", "net income", "earnings", "dividend", "repurchase", "buyback",
-    "acquisition", "merger", "offering", "guidance", "resign", "restatement",
-    "impairment", "bankruptcy", "delist", "capital increase",
+    "dividend", "revenue", "net income", "financial results",
+    "share repurchase", "treasury shares", "buyback",
+    "merger agreement", "to acquire", "tender offer",
+    "public offering", "capital increase",
+    "resign", "restatement", "impairment", "bankruptcy", "delist", "guidance",
 )
+# First cut, audited 2026-09-30 against 13 real TSM and SKHY 6-Ks. Generic
+# words were dropped because they only matched boilerplate: "acquisition"
+# hit TSMC's month-end 6-K every month (its standing list "...the acquisition
+# and disposition of assets...") and table headers in SK hynix filings;
+# "earnings" hit an investor-relations schedule line. Phase 3's LLM brief
+# reads every stored event anyway, so this list only decides what alerts.
 
 _last_call = 0.0
 _ticker_to_cik: dict[str, int] | None = None
