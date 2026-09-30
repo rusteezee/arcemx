@@ -2170,6 +2170,20 @@ the module self-limits to 5/s).
 - Backfill is silent: on first run only filings up to 3 days old alert.
 - **The SEC contact email is only in `/etc/arcemx.env`
   (`SEC_CONTACT_EMAIL`), never in the repo.** `_headers()` raises if unset.
+- **`/us` Telegram command (2026-09-30, commit d0e9a54).** `bot/telegram_bot.py`
+  `us_status` reads only stored `us_holdings` and `us_events` (never calls
+  INDmoney or SEC live), formats via the pure `us/summary.py`
+  (`format_us_summary`, Indian grouping, dd/mm/yyyy, IST AM/PM, no emojis),
+  tests in `tests/test_us_summary.py`. Owner-only via the existing guard.
+  Dashboard page still to do (needs an owner-read RLS policy on
+  `us_holdings` and `us_events` with the real auth UUID).
+- **Gotcha, journald timestamps lie for the bot.** Python block-buffers
+  stdout under systemd, so `journalctl -u arcemx-bot` stamps a process's
+  whole buffered output at the moment it EXITS. After a restart, the tail
+  shows the OLD process's startup lines (sync, "dispatched daily_analysis")
+  with the restart time, which looks like a fresh dispatch. It is not. Verify
+  with `gh run list --workflow X` created times and the `analysis` row date,
+  not with journal timestamps.
 - `us_events` DDL applied by the user 2026-09-30. First real run stored 6
   filings (TSM 3, SKHY 3), 2 material (TSM 6-K 2026-09-10 "revenue", TSM
   6-K 2026-09-01 "dividend"), 0 alerts because both are older than 3 days.

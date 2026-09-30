@@ -41,7 +41,8 @@ as INDmoney returns them, never suffixed.
 - `us/holdings_sync.py`: INDmoney `US_STOCK` holdings into `us_holdings`.
 - `arcemx-us-sync` timer: 12:30 UTC (before the open) and 21:30 UTC (after
   the close), Mon to Fri.
-- Still to do in this phase: Telegram `/us`, dashboard page.
+- Telegram `/us` built (reads stored rows only, `us/summary.py`).
+- Still to do in this phase: dashboard page.
 - DDL for `us_holdings` must be applied by hand in the Supabase SQL editor.
 
 **Phase 2 - Information layer (the part with real precedent). BUILT.** The
