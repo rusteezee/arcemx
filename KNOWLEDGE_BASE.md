@@ -2100,9 +2100,80 @@ the fix.
 
 ---
 
+## 46. US market expansion, Phase 1 (2026-09-30): separate read-only pipeline, plus a silent factor-mining no-op
+
+Full scope in `blueprints/25-us-market-expansion.md`. Summary of what
+discovery found and what was built.
+
+**Discovery (live).** INDmoney's MCP already exposes US data on the token
+the project holds: `networth_holdings` accepts `asset_type=US_STOCK`, plus
+`get_us_stocks_details`, `get_us_stocks_ohlc`, `get_us_stocks_movers`,
+`us_stocks_sips`. It is **read-only for US, there is no order tool**. The
+user's US book is 2 positions (SK Hynix `SKHY`, TSMC `TSM`, fractional
+units, broker Alpaca), about 23,000 INR, every amount reported in INR.
+
+**Architecture decision: separate `us/` pipeline, not a retrofit.** 16
+files force-suffix `.NS` onto bare tickers and 33 carry NIFTY, NSE, SEBI or
+INR logic. A US symbol pushed through those paths silently becomes
+`TSM.NS`, a wrong symbol. So the US side has its own package, its own
+`us_*` tables, its own timers and its own calendar, and shares only
+generic utilities. Zero edits to India code paths.
+
+**Built and pushed (commit 4720523):**
+- `us/market_calendar.py` plus `data/nyse_holidays_2026.json` and
+  `_2027.json`, sourced from NYSE's published calendar and verified
+  2026-09-30. DST-correct session bounds in UTC (the 4 PM ET close is
+  20:00 UTC in summer, 21:00 UTC in winter), 1 PM early closes on
+  27/11/2026 and 24/12/2026. Named `market_calendar.py`, not
+  `calendar.py`, because a module named `calendar` inside a directory
+  that ends up first on `sys.path` shadows the stdlib.
+- `us/holdings_sync.py`: fetches `US_STOCK` holdings (proactive token
+  refresh first, the section 44 lesson) and upserts `us_holdings`. Prunes
+  sold positions, but never wipes the table on an empty response.
+- `arcemx-us-sync` service and timer, 12:30 UTC and 21:30 UTC Mon-Fri,
+  with `ARCEMX_NO_BROWSER=1` so an expired token fails fast.
+- `us_holdings` table added to `db/schema.sql`.
+- `fetchers/dev/indmoney_probe_us.py`, a read-only probe that lists every
+  MCP tool and schema.
+
+**Verified live on Oracle:** calendar output, and a dry run of the fetch
+plus row mapping against the real holdings (no DB write).
+
+**Open, needs the user:** DDL for `us_holdings` cannot run from a client
+and must be pasted into the Supabase SQL editor. Until then the timer is
+installed but deliberately NOT enabled. Phase 2 (SEC EDGAR filings, the US
+analogue of the NSE announcements win) needs a contact email for SEC's
+required User-Agent, and Phase 3 is advisory-only unless the user says
+otherwise. Nothing in the US pipeline can trade.
+
+**Also fixed in the same session: factor mining silently no-oped.** On
+2026-09-25 and 2026-09-28 every OpenRouter provider was down, the router
+returned an error dict, `propose_factors` turned it into an empty list,
+and the job logged "proposed 0" and exited 0, so two of three daily runs
+did nothing with no failed unit to notice. Now retries 3 times with
+backoff and raises if it still gets nothing (commit fb1f250).
+
+**Status snapshot 2026-09-30:** infra clean (7 timers, 0 failed units,
+32 day uptime), zero non-success GH Actions runs since 2026-09-27 across
+all five workflows (the bot grader-dispatch fix from section 45 held, and
+`stock_analyst` had 0 failures in 18 rows). `CHENNPETRO.NS` still open,
+recovered from -8.35% to -2.15% unrealized. Since 2026-09-27: 18
+`stock_analyst` rows, all hold, 0 buy. Lifetime paper metrics unchanged
+(27 trades, Sharpe -23.1).
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-27 (latest)** - Ten-day sweep: dampen fix converts real LLM
+- **2026-09-30 (latest)** - US market expansion Phase 1 built: read-only
+  INDmoney `US_STOCK` sync into its own `us_holdings` table, NYSE
+  calendar, its own timer, deliberately a separate `us/` pipeline because
+  India code force-suffixes `.NS`. Blueprint 25 scopes Phases 2 to 4
+  (SEC EDGAR filings, an advisory US brief, then gated paper trading).
+  Timer installed but not enabled until the user applies the DDL. Also
+  fixed factor mining silently no-oping when LLM providers were down.
+  See section 46.
+- **2026-09-27 (earlier)** - Ten-day sweep: dampen fix converts real LLM
   buy calls to trades at a low but real rate (1 of 3 attempts, 3 of 47
   total rows), CHENNPETRO.NS sitting at -8.35% unrealized, factor mining
   still 0/44 with one near-miss left alone on purpose. Found and fixed
