@@ -2170,9 +2170,10 @@ the module self-limits to 5/s).
 - Backfill is silent: on first run only filings up to 3 days old alert.
 - **The SEC contact email is only in `/etc/arcemx.env`
   (`SEC_CONTACT_EMAIL`), never in the repo.** `_headers()` raises if unset.
-- `us_events` needs its DDL applied in the Supabase SQL editor before the
-  module can run for real (`--dry` works without it). The timer is
-  installed but NOT enabled until then.
+- `us_events` DDL applied by the user 2026-09-30. First real run stored 6
+  filings (TSM 3, SKHY 3), 2 material (TSM 6-K 2026-09-10 "revenue", TSM
+  6-K 2026-09-01 "dividend"), 0 alerts because both are older than 3 days.
+  A rerun stored 0 new (idempotent). `arcemx-us-filings.timer` enabled.
 
 **Also fixed in the same session: factor mining silently no-oped.** On
 2026-09-25 and 2026-09-28 every OpenRouter provider was down, the router
