@@ -1,0 +1,20 @@
+{
+  "_source": "NYSE Group published holiday and early-closing calendar (nyse.com/markets/hours-calendars), verified 2026-09-30. Applies to NYSE, NYSE American, Arca, Chicago and National cash equity markets, and Nasdaq follows the same schedule.",
+  "_note": "Independence Day 2026 falls on a Saturday so the market closes Friday 03/07 (observed). Weekend-coinciding dates are otherwise omitted, is_us_trading_day() already excludes Sat/Sun. early_closes are 1:00 PM Eastern.",
+  "holidays": [
+    {"date": "2026-01-01", "name": "New Year's Day"},
+    {"date": "2026-01-19", "name": "Martin Luther King Jr. Day"},
+    {"date": "2026-02-16", "name": "Washington's Birthday"},
+    {"date": "2026-04-03", "name": "Good Friday"},
+    {"date": "2026-05-25", "name": "Memorial Day"},
+    {"date": "2026-06-19", "name": "Juneteenth"},
+    {"date": "2026-07-03", "name": "Independence Day (observed)"},
+    {"date": "2026-09-07", "name": "Labor Day"},
+    {"date": "2026-11-26", "name": "Thanksgiving Day"},
+    {"date": "2026-12-25", "name": "Christmas Day"}
+  ],
+  "early_closes": [
+    {"date": "2026-11-27", "name": "Day after Thanksgiving"},
+    {"date": "2026-12-24", "name": "Christmas Eve"}
+  ]
+}

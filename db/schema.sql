@@ -234,6 +234,29 @@ create table if not exists portfolio_defense_snapshot (
 );
 create index if not exists idx_portfolio_defense_computed on portfolio_defense_snapshot(computed_at desc);
 
+-- US market expansion (blueprint 25), Phase 1: the user's US stock holdings
+-- as INDmoney reports them (asset_type US_STOCK, broker Alpaca). Its own
+-- table on purpose: India code force-suffixes ".NS" onto bare tickers in 16
+-- files, so US symbols must never share a ticker-keyed table with the India
+-- pipeline. Symbols stored exactly as INDmoney returns them, uppercase, no
+-- suffix. Amounts are INR (account funded via LRS); raw keeps the original
+-- row so an upstream schema change loses nothing.
+create table if not exists us_holdings (
+    user_id text not null default 'default',
+    ticker text not null,
+    name text,
+    units numeric,
+    invested_inr numeric,
+    value_inr numeric,
+    pnl_inr numeric,
+    pnl_pct numeric,
+    one_day_change_inr numeric,
+    broker text,
+    raw jsonb,
+    synced_at timestamptz not null default now(),
+    primary key (user_id, ticker)
+);
+
 -- Blueprint 24 (Plan C Phase 2): every LLM-proposed factor from
 -- analyzer.factor_dispatch, logged regardless of outcome - a rejected
 -- factor is real information too, not just winners. A factor NEVER
@@ -571,6 +594,7 @@ alter table ticker_enrichment    enable row level security;
 alter table dead_tickers         enable row level security;
 alter table portfolio_defense_snapshot enable row level security;
 alter table mined_factors enable row level security;
+alter table us_holdings enable row level security;
 alter table sync_log             enable row level security;
 alter table calibration_log      enable row level security;
 alter table paper_trades         enable row level security;
@@ -608,7 +632,7 @@ begin
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
     'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts',
     'backtest_runs','stock_analyses','realized_pnl','portfolio_defense_snapshot',
-    'mined_factors'
+    'mined_factors','us_holdings'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('drop policy if exists "owner read" on %I', t);

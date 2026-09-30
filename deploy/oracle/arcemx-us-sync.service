@@ -1,0 +1,16 @@
+[Unit]
+Description=Arc'emX! US stock holdings sync from INDmoney (blueprint 25 Phase 1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+# Headless guard: without this an expired INDmoney token makes the MCP client
+# wait 300s for a browser callback that cannot arrive on this box, instead of
+# failing fast (see indmoney_mcp._build_auth_sync's is_headless check).
+Environment=ARCEMX_NO_BROWSER=1
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh us_sync us.holdings_sync
+TimeoutStartSec=300
+MemoryMax=2G
