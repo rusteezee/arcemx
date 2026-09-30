@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -57,6 +58,11 @@ UNIVERSE = [
     "SUNPHARMA.NS", "ULTRACEMCO.NS", "NESTLEIND.NS", "WIPRO.NS", "NTPC.NS",
 ]
 N_CANDIDATES = 5
+# LLM proposal attempts per run, and base backoff between them (multiplied
+# by the attempt number). 5 min total worst case, covers a short provider
+# blip without holding the box for long.
+_PROPOSE_MAX_ATTEMPTS = 3
+_PROPOSE_RETRY_DELAY_S = 60
 MIN_TRADES_FOR_CANDIDATE = 30
 LOOKBACK_DAYS = 450  # comfortably covers sma200's 200-session requirement
 
@@ -161,13 +167,28 @@ def propose_factors(hist: HistCache) -> list[dict]:
                 "actual forward 10-session return):\n\n"
                 + json.dumps(examples, default=str)
                 + "\n\nPropose factors per the schema in your system prompt.")
-    resp = _post(
-        [{"role": "system", "content": FACTOR_SYSTEM_PROMPT},
-         {"role": "user", "content": user_msg}],
-        models=chain,
-    )
-    parsed = _parse_json(resp)
-    return parsed.get("factors", []) if isinstance(parsed, dict) else []
+    messages = [{"role": "system", "content": FACTOR_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg}]
+    # Bounded retry + loud failure (2026-09-30): on 09-25 and 09-28 every
+    # OpenRouter provider was down ("Service temporarily overloaded"), the
+    # router returned an error dict, and this function turned that into an
+    # empty list. The job then logged "proposed 0" and exited 0, so two of
+    # three daily runs were silent no-ops with no failed unit to notice.
+    # Retry with backoff, and raise if it still yields nothing so systemd
+    # marks the run failed instead of pretending it worked.
+    for attempt in range(1, _PROPOSE_MAX_ATTEMPTS + 1):
+        resp = _post(messages, models=chain)
+        parsed = _parse_json(resp)
+        factors = parsed.get("factors") if isinstance(parsed, dict) else None
+        if factors:
+            return factors
+        print(f"factor_dispatch: attempt {attempt}/{_PROPOSE_MAX_ATTEMPTS} "
+              f"returned no factors")
+        if attempt < _PROPOSE_MAX_ATTEMPTS:
+            time.sleep(_PROPOSE_RETRY_DELAY_S * attempt)
+    raise RuntimeError(
+        f"LLM proposed no factors after {_PROPOSE_MAX_ATTEMPTS} attempts "
+        f"(providers likely down)")
 
 
 def _log_factor(sb, factor: dict, bt: dict | None, sharpe_v: float | None,
