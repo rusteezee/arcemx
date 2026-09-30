@@ -257,6 +257,26 @@ create table if not exists us_holdings (
     primary key (user_id, ticker)
 );
 
+-- US market expansion Phase 2: SEC EDGAR filings for held tickers, one row
+-- per filing (accession number is EDGAR's own unique id). material and
+-- material_reason record WHY a filing was flagged so the classifier can be
+-- audited later; alerted marks the ones that were pushed to Telegram.
+create table if not exists us_events (
+    accession text primary key,
+    ticker text not null,
+    form text not null,
+    items text,
+    filed_date date not null,
+    accepted_at timestamptz,
+    material boolean not null default false,
+    material_reason text,
+    snippet text,
+    url text,
+    alerted boolean not null default false,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_us_events_ticker_filed on us_events(ticker, filed_date desc);
+
 -- Blueprint 24 (Plan C Phase 2): every LLM-proposed factor from
 -- analyzer.factor_dispatch, logged regardless of outcome - a rejected
 -- factor is real information too, not just winners. A factor NEVER
@@ -595,6 +615,7 @@ alter table dead_tickers         enable row level security;
 alter table portfolio_defense_snapshot enable row level security;
 alter table mined_factors enable row level security;
 alter table us_holdings enable row level security;
+alter table us_events enable row level security;
 alter table sync_log             enable row level security;
 alter table calibration_log      enable row level security;
 alter table paper_trades         enable row level security;
@@ -632,7 +653,7 @@ begin
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
     'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts',
     'backtest_runs','stock_analyses','realized_pnl','portfolio_defense_snapshot',
-    'mined_factors','us_holdings'
+    'mined_factors','us_holdings','us_events'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('drop policy if exists "owner read" on %I', t);

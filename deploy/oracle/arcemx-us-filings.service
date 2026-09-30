@@ -1,0 +1,12 @@
+[Unit]
+Description=Arc'emX! SEC EDGAR filings check for held US tickers (blueprint 25 Phase 2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh us_filings us.sec_filings
+TimeoutStartSec=300
+MemoryMax=1G

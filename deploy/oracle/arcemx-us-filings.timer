@@ -1,0 +1,9 @@
+[Unit]
+Description=Arc'emX! SEC filings check, hourly 11:00 to 23:00 UTC Mon-Fri (07:00 to 19:00 ET in summer, 06:00 to 18:00 ET in winter, covering EDGAR's main filing window). Each run is a handful of requests, well inside SEC's 10 req/s limit.
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 11..23:10:00
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
