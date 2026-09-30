@@ -234,6 +234,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/nifty /sensex. index snapshot\n"
         "/stock TICKER. single stock view\n"
         "/portfolio. your holdings + P&L\n"
+        "/us. US holdings + recent SEC filings\n"
         "/wishlist. your watchlist\n"
         "/buy TICKER PRICE QTY\n"
         "/sell TICKER\n"
@@ -387,6 +388,23 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg += f"\n*Total:* Invested ₹{total_inv:.0f} → ₹{total_cur:.0f} | P&L ₹{tot_pnl:+.0f} ({tot_pct:+.2f}%)"
     msg += DISCLAIMER
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def us_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """US book (blueprint 25). Reads only what the us_sync and us_filings
+    timers already stored, so it never calls INDmoney or SEC itself and a
+    slow upstream cannot hang the command. Advisory, nothing here trades."""
+    from us.summary import format_us_summary
+    uid = str(update.effective_user.id)
+    holdings = sb().table("us_holdings").select("*").eq("user_id", uid).execute().data or []
+    events = []
+    if holdings:
+        events = (sb().table("us_events")
+                  .select("ticker,form,filed_date,material,material_reason")
+                  .in_("ticker", [h["ticker"] for h in holdings])
+                  .order("filed_date", desc=True).limit(6).execute().data or [])
+    await update.message.reply_text(format_us_summary(holdings, events),
+                                    parse_mode="Markdown", disable_web_page_preview=True)
 
 
 async def buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1800,6 +1818,7 @@ def main():
     app.add_handler(CommandHandler("sensex", sensex))
     app.add_handler(CommandHandler("stock", stock))
     app.add_handler(CommandHandler("portfolio", portfolio))
+    app.add_handler(CommandHandler("us", us_status))
     app.add_handler(CommandHandler("wishlist", wishlist))
     app.add_handler(CommandHandler("buy", buy))
     app.add_handler(CommandHandler("sell", sell))
