@@ -2139,12 +2139,40 @@ generic utilities. Zero edits to India code paths.
 **Verified live on Oracle:** calendar output, and a dry run of the fetch
 plus row mapping against the real holdings (no DB write).
 
-**Open, needs the user:** DDL for `us_holdings` cannot run from a client
-and must be pasted into the Supabase SQL editor. Until then the timer is
-installed but deliberately NOT enabled. Phase 2 (SEC EDGAR filings, the US
-analogue of the NSE announcements win) needs a contact email for SEC's
-required User-Agent, and Phase 3 is advisory-only unless the user says
-otherwise. Nothing in the US pipeline can trade.
+**DDL note:** DDL cannot run from a client, it must be pasted into the
+Supabase SQL editor. The user applied `us_holdings`, and the
+`arcemx-us-sync` timer is enabled. Phase 3 is advisory-only unless the user
+says otherwise. Nothing in the US pipeline can trade.
+
+**Phase 2 (2026-09-30): SEC EDGAR filings.** `us/sec_filings.py`, table
+`us_events` (PK accession), timer `arcemx-us-filings` (hourly 11:00 to
+23:00 UTC Mon to Fri, about 3 requests per run, SEC's ceiling is 10/s and
+the module self-limits to 5/s).
+- Ticker to CIK via SEC's `company_tickers.json`, filings via
+  `data.sec.gov/submissions/CIK##########.json` (`filings.recent`).
+- Both holdings are foreign private issuers. They file 6-K and 20-F, and
+  `items` is empty on every 6-K, so metadata alone never says what a 6-K is
+  about. The document text (first 8,000 chars) is keyword-classified;
+  periodic forms are material by form; 8-K item codes are honoured for
+  future domestic issuers.
+- Form 3/4 is deliberately skipped: the Form 4s filed under a foreign
+  issuer's CIK are its stakes in other companies, not insider trades in it.
+- **Keyword lesson:** the first keyword list ("acquisition", "earnings",
+  and similar) was audited against 13 real TSM and SKHY 6-Ks and was mostly
+  false positives. TSMC's month-end 6-K contains the standing sentence
+  "...the acquisition and disposition of assets..." every single month,
+  SK hynix filings carry "acquisition" in table headers, and "earnings"
+  matched an IR schedule line. Replaced with phrase-level keywords
+  (`share repurchase`, `merger agreement`, `to acquire`, `financial
+  results`, ...). Audit any classifier on real data before it can page the
+  user. Phase 3's LLM reads every stored event regardless; the keywords
+  only decide what alerts.
+- Backfill is silent: on first run only filings up to 3 days old alert.
+- **The SEC contact email is only in `/etc/arcemx.env`
+  (`SEC_CONTACT_EMAIL`), never in the repo.** `_headers()` raises if unset.
+- `us_events` needs its DDL applied in the Supabase SQL editor before the
+  module can run for real (`--dry` works without it). The timer is
+  installed but NOT enabled until then.
 
 **Also fixed in the same session: factor mining silently no-oped.** On
 2026-09-25 and 2026-09-28 every OpenRouter provider was down, the router
@@ -2165,7 +2193,12 @@ recovered from -8.35% to -2.15% unrealized. Since 2026-09-27: 18
 
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-30 (latest)** - US market expansion Phase 1 built: read-only
+- **2026-09-30 (latest)** - US Phase 2 built: `us/sec_filings.py` and
+  `us_events` table read SEC EDGAR filings for held tickers, keyword
+  classification tuned against real 6-Ks (foreign private issuers have no
+  8-K items), hourly timer installed, awaiting the `us_events` DDL before
+  it is enabled. See section 46.
+- **2026-09-30 (earlier)** - US market expansion Phase 1 built: read-only
   INDmoney `US_STOCK` sync into its own `us_holdings` table, NYSE
   calendar, its own timer, deliberately a separate `us/` pipeline because
   India code force-suffixes `.NS`. Blueprint 25 scopes Phases 2 to 4

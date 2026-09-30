@@ -44,14 +44,25 @@ as INDmoney returns them, never suffixed.
 - Still to do in this phase: Telegram `/us`, dashboard page.
 - DDL for `us_holdings` must be applied by hand in the Supabase SQL editor.
 
-**Phase 2 - Information layer (the part with real precedent).** The one
-genuinely valuable source added on the India side was official exchange
+**Phase 2 - Information layer (the part with real precedent). BUILT.** The
+one genuinely valuable source added on the India side was official exchange
 filings (NSE announcements). The US equivalent is SEC EDGAR: free,
-official, structured JSON. 8-K material items (results, officer changes,
-material agreements), Form 4 insider trades, earnings dates. Filtered to a
-material allow-list exactly like `fetchers/nse_announcements.py`, for
-holdings first. SEC's fair-access policy requires a contact email in the
-User-Agent, so this phase needs a decision from the user (see below).
+official, structured JSON. Filtered to a material allow-list like
+`fetchers/nse_announcements.py`, for holdings only.
+- `us/sec_filings.py`, timer `arcemx-us-filings` (hourly 11:00 to 23:00 UTC
+  Mon to Fri), table `us_events` keyed on accession number.
+- Both current holdings (TSM, SKHY) are foreign private issuers: they file
+  6-K and 20-F, and the `items` field is empty on every 6-K. So 6-K and 8-K
+  text is read and keyword-classified (phrase-level keywords, audited
+  against 13 real filings), periodic reports are material by form, 8-K item
+  codes are honoured when present.
+- Form 3/4 insider parsing is deliberately not built: for a foreign issuer
+  the Form 4s under its CIK are its own holdings in other companies, not
+  insider trades in it. Add it when a domestic issuer enters the book.
+- SEC contact email lives only in `/etc/arcemx.env` (`SEC_CONTACT_EMAIL`),
+  never in the repo.
+- First real run backfills 30 days silently; only filings up to 3 days old
+  send a Telegram alert.
 
 **Phase 3 - US daily brief, no trading.** Pre-open (about 18:00 IST) LLM
 brief per holding: hold, add, trim or exit with numeric stop and target,
@@ -80,10 +91,11 @@ separate, explicit decision.
 
 ## Open Decisions (need the user)
 
-1. Contact email to put in the SEC User-Agent (Phase 2). Not the user's
-   personal address by default; a project or alias address is the norm.
+1. RESOLVED 2026-09-30: SEC User-Agent contact is the user's personal
+   email, set only in `/etc/arcemx.env`.
 2. Whether Phase 3 stays advisory only (recommended) or later feeds a US
-   paper book (Phase 4, only after evidence).
+   paper book (Phase 4, only after evidence). Working assumption: advisory
+   only, the user has not objected.
 
 ## Definition Of Done, Phase 1
 
