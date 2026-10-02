@@ -2193,7 +2193,12 @@ the module self-limits to 5/s).
 deployed to Oracle (commit a8d45ca). The user applied the `us_briefs` DDL
 on 2026-10-02. A dry run with the real model passed on attempt 1 for both
 holdings (nemotron, 12s and 36s). Both timers enabled the same morning, so
-the first live brief fires 12:45 UTC on 2026-10-02.
+the first live brief was due 12:45 UTC on 2026-10-02. It was instead run by
+hand at about 09:35 UTC to exercise the insert and Telegram path early
+(ids 1 and 2 in `us_briefs`, SKHY and TSM, both hold with 5-session up), so
+that day's 12:45 timer fire journals "already briefed ... nothing to do",
+which is correct, not a fault. The first real timer-driven brief is Mon
+2026-10-05.
 - `us/market_context.py` builds point-in-time inputs: prices cut strictly
   before the session, technicals via the generic
   `analyzer.stock_deep._technicals_from_history`, SPY, QQQ, SOXX, VIX, dollar
