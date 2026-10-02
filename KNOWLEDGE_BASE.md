@@ -2217,8 +2217,8 @@ in the Supabase SQL editor.
   beside a USD price, so only dates are read from it. (2) `stock_deep`'s
   helper names the key `last_close`; a unit test caught `daily_brief`
   reading `close`, which would have crashed the first live run. (3) The
-  Write tool converts a `—` escape into a literal em dash; use
-  `chr(0x2014)` in code. (4) An unknown key in `HC_PING_URLS` is silent, so
+  Write tool turns a unicode escape for the em dash into the literal character; build
+  it with `chr(0x2014)` in code. (4) An unknown key in `HC_PING_URLS` is silent, so
   us_sync, us_filings, us_brief and us_grader have no dead-man ping until
   URLs are added to `/etc/arcemx.env`; the brief sends its own Telegram
   failure notice meanwhile. (5) Brief price levels are USD on purpose.
