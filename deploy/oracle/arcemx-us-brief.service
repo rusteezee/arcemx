@@ -1,0 +1,12 @@
+[Unit]
+Description=Arc'emX! US daily brief, advisory only (blueprint 25 Phase 3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/arcemx
+EnvironmentFile=/etc/arcemx.env
+ExecStart=/opt/arcemx/deploy/oracle/run_job.sh us_brief us.daily_brief
+TimeoutStartSec=1800
+MemoryMax=1G

@@ -36,6 +36,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from supabase import create_client
 
+from us.notify import send_telegram
+
 load_dotenv()
 
 _TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -173,18 +175,6 @@ def classify(filing: dict) -> dict:
     return filing
 
 
-def _notify(text: str) -> None:
-    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat:
-        return
-    try:
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                      json={"chat_id": chat, "text": text,
-                            "disable_web_page_preview": True}, timeout=10)
-    except requests.RequestException as e:
-        print(f"  telegram notify failed: {e}")
-
-
 def _alert_text(f: dict) -> str:
     lines = [f"SEC filing: {f['ticker']} {f['form']} filed {f['filed_date']}",
              f"Why flagged: {f['material_reason']}"]
@@ -223,7 +213,7 @@ def run(days: int = 30, dry: bool = False) -> int:
             f["alerted"] = bool(f["material"] and f["filed_date"] >= alert_cutoff)
             sb.table("us_events").upsert(f, on_conflict="accession").execute()
             if f["alerted"]:
-                _notify(_alert_text(f))
+                send_telegram(_alert_text(f))
     print(f"us_filings: {new_count} new filings across {len(tickers)} tickers"
           f"{' (dry run, nothing stored)' if dry else ''}")
     return new_count

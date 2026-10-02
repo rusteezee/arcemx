@@ -1,0 +1,10 @@
+[Unit]
+Description=Arc'emX! US brief grader, 22:15 UTC Mon-Fri (03:45 IST next day). The NYSE closes at 20:00 UTC in summer and 21:00 UTC in winter, so this is after the close in both with time for daily bars to settle. Each run grades whatever horizon has become gradeable.
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 22:15:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

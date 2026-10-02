@@ -1,0 +1,10 @@
+[Unit]
+Description=Arc'emX! US daily brief, 12:45 UTC Mon-Fri (18:15 IST). That is 08:45 ET in summer and 07:45 ET in winter, before the 09:30 ET open in both. The job itself skips US holidays and any run that starts after the open (a replayed timer), so every stored call is a genuine pre-open prediction.
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 12:45:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

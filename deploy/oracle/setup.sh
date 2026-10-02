@@ -111,7 +111,7 @@ chmod +x "$APP_DIR/deploy/oracle/run_job.sh"
 for unit in arcemx-hourly-news arcemx-daily-prices arcemx-daily-sync \
             arcemx-alerts-checker arcemx-stock-analyst-dispatch \
             arcemx-factor-mining arcemx-daily-grader arcemx-us-sync arcemx-us-filings \
-            arcemx-git-pull; do
+            arcemx-us-brief arcemx-us-grader arcemx-git-pull; do
   sudo cp "$APP_DIR/deploy/oracle/$unit.service" "/etc/systemd/system/$unit.service"
   sudo cp "$APP_DIR/deploy/oracle/$unit.timer" "/etc/systemd/system/$unit.timer"
 done

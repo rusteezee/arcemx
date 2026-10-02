@@ -277,6 +277,45 @@ create table if not exists us_events (
 );
 create index if not exists idx_us_events_ticker_filed on us_events(ticker, filed_date desc);
 
+-- US market expansion Phase 3: advisory daily brief, one row per (session,
+-- ticker), written pre-open by us.daily_brief and NEVER overwritten (a call
+-- must not be revisable after its outcome is known). The grade columns are
+-- filled later by us.grader: *_1d against the brief's own session close,
+-- *_5d against the 5th session close, both versus price_at_brief (unadjusted
+-- USD close before the session). prior_ret_1d_pct feeds the momentum
+-- baseline in us.grader.track_record. Nothing here can place an order.
+create table if not exists us_briefs (
+    id bigserial primary key,
+    brief_date date not null,
+    ticker text not null,
+    stance text not null,
+    direction_1d text not null,
+    direction_5d text not null,
+    confidence integer not null,
+    stop_price numeric not null,
+    target_price numeric not null,
+    summary text,
+    reasoning jsonb,
+    reasons_could_be_wrong jsonb,
+    context jsonb,
+    price_at_brief numeric not null,
+    prior_ret_1d_pct numeric,
+    model_used text,
+    created_at timestamptz not null default now(),
+    close_1d numeric,
+    ret_1d_pct numeric,
+    spy_ret_1d_pct numeric,
+    correct_1d boolean,
+    close_5d numeric,
+    ret_5d_pct numeric,
+    spy_ret_5d_pct numeric,
+    correct_5d boolean,
+    hit text,
+    graded_at timestamptz,
+    unique (brief_date, ticker)
+);
+create index if not exists idx_us_briefs_ticker_date on us_briefs(ticker, brief_date desc);
+
 -- Blueprint 24 (Plan C Phase 2): every LLM-proposed factor from
 -- analyzer.factor_dispatch, logged regardless of outcome - a rejected
 -- factor is real information too, not just winners. A factor NEVER
@@ -616,6 +655,7 @@ alter table portfolio_defense_snapshot enable row level security;
 alter table mined_factors enable row level security;
 alter table us_holdings enable row level security;
 alter table us_events enable row level security;
+alter table us_briefs enable row level security;
 alter table sync_log             enable row level security;
 alter table calibration_log      enable row level security;
 alter table paper_trades         enable row level security;
@@ -653,7 +693,7 @@ begin
     'calculator_runs','portfolio_score_runs','sync_log','calibration_log',
     'paper_trades','paper_signals','metrics_snapshot','ensemble_attempts',
     'backtest_runs','stock_analyses','realized_pnl','portfolio_defense_snapshot',
-    'mined_factors','us_holdings','us_events'
+    'mined_factors','us_holdings','us_events','us_briefs'
   ] loop
     execute format('drop policy if exists "anon read" on %I', t);
     execute format('drop policy if exists "owner read" on %I', t);
