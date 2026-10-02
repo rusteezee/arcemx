@@ -75,6 +75,7 @@ DATA NOTES
 - A next_earnings date inside the 5-session window is a binary event: widen the stop and cut confidence.
 - Analyst estimates are intentionally absent. Do not quote figures you were not given.
 - recent_filings are SEC filings already screened by keyword. Use them only if relevant.
+- You are writing pre-open on session_date. Call it "today's session", never "tomorrow".
 
 OUTPUT: strict JSON only, no markdown, no prose outside the JSON:
 {
