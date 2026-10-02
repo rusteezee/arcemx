@@ -2190,9 +2190,10 @@ the module self-limits to 5/s).
   A rerun stored 0 new (idempotent). `arcemx-us-filings.timer` enabled.
 
 **Phase 3 (2026-10-02): advisory US daily brief and grader.** Built and
-deployed to Oracle (commit a8d45ca). Timers are installed but NOT enabled
-until the `us_briefs` DDL (schema.sql, right after `us_events`) is applied
-in the Supabase SQL editor.
+deployed to Oracle (commit a8d45ca). The user applied the `us_briefs` DDL
+on 2026-10-02. A dry run with the real model passed on attempt 1 for both
+holdings (nemotron, 12s and 36s). Both timers enabled the same morning, so
+the first live brief fires 12:45 UTC on 2026-10-02.
 - `us/market_context.py` builds point-in-time inputs: prices cut strictly
   before the session, technicals via the generic
   `analyzer.stock_deep._technicals_from_history`, SPY, QQQ, SOXX, VIX, dollar
@@ -2248,7 +2249,7 @@ recovered from -8.35% to -2.15% unrealized. Since 2026-09-27: 18
 - **2026-10-02 (latest)** - US Phase 3 built and deployed: advisory
   pre-open brief per holding (`us/daily_brief.py`), grader against real
   closes with SPY and two naive baselines (`us/grader.py`), `us_briefs`
-  table, two timers installed but not enabled until the DDL is applied.
+  table, both timers enabled 2026-10-02.
   Also added the `/us` Telegram command and a shared Telegram sender. See
   section 46.
 - **2026-09-30 (earlier)** - US Phase 2 built: `us/sec_filings.py` and
