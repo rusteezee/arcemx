@@ -65,7 +65,9 @@ official, structured JSON. Filtered to a material allow-list like
 - First real run backfills 30 days silently; only filings up to 3 days old
   send a Telegram alert.
 
-**Phase 3 - US daily brief, no trading.** Pre-open (about 18:00 IST) LLM
+**Phase 3 - US daily brief, no trading. BUILT 2026-10-02, awaiting the
+`us_briefs` DDL before its timers are enabled.** See KB section 46 for
+what shipped and the honesty design. Pre-open (about 18:00 IST) LLM
 brief per holding: hold, add, trim or exit with numeric stop and target,
 grounded in US context (SPY, QQQ, SOXX, VIX, DXY, US 10Y, USDINR) plus the
 Phase 2 events. Graded after the US close against real session bounds by a

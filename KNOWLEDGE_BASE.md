@@ -2189,6 +2189,43 @@ the module self-limits to 5/s).
   6-K 2026-09-01 "dividend"), 0 alerts because both are older than 3 days.
   A rerun stored 0 new (idempotent). `arcemx-us-filings.timer` enabled.
 
+**Phase 3 (2026-10-02): advisory US daily brief and grader.** Built and
+deployed to Oracle (commit a8d45ca). Timers are installed but NOT enabled
+until the `us_briefs` DDL (schema.sql, right after `us_events`) is applied
+in the Supabase SQL editor.
+- `us/market_context.py` builds point-in-time inputs: prices cut strictly
+  before the session, technicals via the generic
+  `analyzer.stock_deep._technicals_from_history`, SPY, QQQ, SOXX, VIX, dollar
+  index, US 10Y, USDINR, and earnings and ex-dividend DATES only.
+  `us/daily_brief.py` asks the LLM for one strict-JSON verdict per holding
+  (stance, 1-session and 5-session direction, confidence, stop, target) and
+  inserts into `us_briefs`. `us/grader.py` scores both directions against
+  real closes and records SPY's return and which of stop or target the
+  range touched first. `us/brief_format.py` and `us/notify.py` (shared
+  Telegram sender, `sec_filings` now uses it) support both.
+- Timers: `arcemx-us-brief` 12:45 UTC Mon to Fri, `arcemx-us-grader` 22:15
+  UTC Mon to Fri. The brief skips US holidays and any run that starts after
+  the open (a replayed timer), so every stored call is a genuine pre-open
+  prediction.
+- Honesty design: a stored brief is never overwritten, the prompt says
+  large caps are efficiently priced and 50 to 58 percent is the honest
+  default confidence, and the Telegram footer shows the hit rate next to two
+  naive baselines (always-up, last-session momentum). No claim of edge
+  before 60 graded 5-session calls. Two holdings is about 2 calls a day, so
+  that gate is roughly 30 trading days after the timers go live.
+- Gotchas found building it: (1) SKHY's yfinance calendar estimates are KRW
+  beside a USD price, so only dates are read from it. (2) `stock_deep`'s
+  helper names the key `last_close`; a unit test caught `daily_brief`
+  reading `close`, which would have crashed the first live run. (3) The
+  Write tool converts a `—` escape into a literal em dash; use
+  `chr(0x2014)` in code. (4) An unknown key in `HC_PING_URLS` is silent, so
+  us_sync, us_filings, us_brief and us_grader have no dead-man ping until
+  URLs are added to `/etc/arcemx.env`; the brief sends its own Telegram
+  failure notice meanwhile. (5) Brief price levels are USD on purpose.
+- US daylight saving ends 2026-11-01. Nothing breaks: the timers are UTC
+  and sit before the open and after the close in both regimes, and the
+  calendar computes session bounds per date.
+
 **Also fixed in the same session: factor mining silently no-oped.** On
 2026-09-25 and 2026-09-28 every OpenRouter provider was down, the router
 returned an error dict, `propose_factors` turned it into an empty list,
@@ -2208,7 +2245,13 @@ recovered from -8.35% to -2.15% unrealized. Since 2026-09-27: 18
 
 ## Changelog (append new entries at top, dated)
 
-- **2026-09-30 (latest)** - US Phase 2 built: `us/sec_filings.py` and
+- **2026-10-02 (latest)** - US Phase 3 built and deployed: advisory
+  pre-open brief per holding (`us/daily_brief.py`), grader against real
+  closes with SPY and two naive baselines (`us/grader.py`), `us_briefs`
+  table, two timers installed but not enabled until the DDL is applied.
+  Also added the `/us` Telegram command and a shared Telegram sender. See
+  section 46.
+- **2026-09-30 (earlier)** - US Phase 2 built: `us/sec_filings.py` and
   `us_events` table read SEC EDGAR filings for held tickers, keyword
   classification tuned against real 6-Ks (foreign private issuers have no
   8-K items), hourly timer installed, awaiting the `us_events` DDL before
