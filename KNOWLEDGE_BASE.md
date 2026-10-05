@@ -2249,9 +2249,68 @@ recovered from -8.35% to -2.15% unrealized. Since 2026-09-27: 18
 
 ---
 
+## 47. India trader health check (2026-10-05)
+
+User asked "is the trader working properly?". Answer from evidence: the
+mechanics work, there is no edge, and one open position is under water.
+
+- **Mechanics healthy.** The daily grader (11:30 UTC on Oracle) ran on every
+  NSE trading day 28/09 to 01/10 and again on 05/10. `mark_to_market` walked
+  the 1 open trade each time and `eval_signals` evaluated 4 to 95 signals
+  with 0 entries. The 02/10 run printed "Not an NSE trading day" and
+  skipped, which is correct (Gandhi Jayanti). The US side trades that day,
+  so it looked odd.
+- **Zero entries is by design, not a fault.** 301 gate decisions since
+  20/09: 179 not_buy, 61 avoid_or_skip_listed, 50 low_conf, 11
+  regime_bearish_block. The analyst mostly says hold. Do not loosen gates to
+  force volume (see section 26).
+- **Lifetime unchanged:** 27 closed trades, net -1,298 rupees, 2 wins of 27.
+  `CHENNPETRO.NS` (long, entered 15/09, fill 1501.88, stop 1231.64, 30 day
+  horizon ending about 15/10) closed 01/10 at 1346.40, minus 10.35 percent,
+  after a 6.3 percent one-day drop. The 30/09 status note of minus 2.15
+  percent was wrong; that day's close was minus 4.37 percent.
+- **Stock Analyst flare on 05/10.** 30 of 30 runs succeeded 28/09 to 02/10
+  (the 27/09 retry fix works). On 05/10 two of six failed all 3 attempts with
+  "missing key: rating" (`LALPATHLAB.NS`, `SONACOMS.NS`), every attempt
+  served by the Nvidia nemotron free model. Failed rows do not keep the raw
+  output, so the actual shape returned is invisible. Not fixed. Cheap next
+  step if it recurs: put the received keys and a snippet in the validation
+  error.
+- **Found and fixed: FII mirror went 403, silently stopping `fii_flow_1d`
+  scoring.** `fii-diidata.mrchartist.com` answers 403 "API access is
+  restricted" from late September. The morning payload kept working because
+  `fetchers/fii_dii.py` falls back to the GitHub raw history, but
+  `analyzer/grader.py` called the mirror directly and iterated its error
+  dict, logging `'str' object has no attribute 'get'` on every analysis.
+  `fii_flow_1d` last scored 2026-09-28 while every other dimension stayed
+  current. Fix (bd33779, 2271cd8): `fetch_fii_net_for_date` reuses the
+  mirror-then-backstop fallback, and caches the rows for 10 minutes because
+  the first version downloaded them once per analysis (127 per pass) and
+  stretched the grader from about 6 to 14 minutes. 127 lookups now take 0.4
+  seconds. The backstop lags about one session, so recent sessions log "no
+  row yet" and score a pass later. The `_source` label still says
+  mrchartist.com even when the backstop served the data (cosmetic).
+- **Not explained:** four dimensions (`direction_1d`, `range_1d`,
+  `market_mood_1d`, `top_performer_1d`) show `scored_at` on Saturday 03/10
+  between 09:07 and 09:43 UTC with no GH run or Oracle timer found for that
+  window. Scoring is idempotent so the risk is low. Also `Daily Market
+  Analysis` showed four runs on 05/10 (two dispatches, two GH schedule
+  events); not investigated.
+- **Tooling gotchas:** `journalctl --since` rejects "today 11:29" (use an
+  absolute `YYYY-MM-DD HH:MM:SS`); a polling loop built on that string never
+  matched and ran into the 10 minute tool limit.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-10-02 (latest)** - US Phase 3 built and deployed: advisory
+- **2026-10-05 (latest)** - India trader health check: mechanics healthy,
+  0 entries in 301 gate decisions by design, `CHENNPETRO.NS` at minus 10.35
+  percent. Found and fixed `fii_flow_1d` grading dead since 28/09 after the
+  FII mirror went 403 (fallback plus cache, 127 lookups to 1). Two Stock
+  Analyst failures on 05/10 noted, not fixed. See section 47.
+
+- **2026-10-02 (earlier)** - US Phase 3 built and deployed: advisory
   pre-open brief per holding (`us/daily_brief.py`), grader against real
   closes with SPY and two naive baselines (`us/grader.py`), `us_briefs`
   table, both timers enabled 2026-10-02.
