@@ -75,7 +75,13 @@ def test_history_rows_prefers_mirror_when_healthy():
         assert fii_dii._history_rows() == [SHORT]
 
 
+def reset_cache():
+    fii_dii._rows_cache["at"] = None
+    fii_dii._rows_cache["rows"] = None
+
+
 def test_history_rows_none_when_both_sources_fail():
+    reset_cache()
     responses = {
         fii_dii.HISTORY_URL: requests.ConnectionError("down"),
         fii_dii.BACKSTOP_URL: FakeResp([], 200),
@@ -86,6 +92,7 @@ def test_history_rows_none_when_both_sources_fail():
 
 
 def test_fetch_fii_net_for_date_end_to_end_via_backstop():
+    reset_cache()
     responses = {
         fii_dii.HISTORY_URL: FakeResp({"error": "API access is restricted"}, 403),
         fii_dii.BACKSTOP_URL: FakeResp([LONG]),
@@ -93,3 +100,29 @@ def test_fetch_fii_net_for_date_end_to_end_via_backstop():
     with patch.object(fii_dii.requests, "get", side_effect=fake_get(responses)):
         assert fii_dii.fetch_fii_net_for_date("30-Sep-2026") == -300.0
         assert fii_dii.fetch_fii_net_for_date("01-Oct-2026") is None
+
+
+def test_rows_are_fetched_once_for_many_dates():
+    """grader.py scores 127 analyses in one pass: one fetch, not 127."""
+    reset_cache()
+    with patch.object(fii_dii, "_history_rows", return_value=[SHORT, LONG]) as rows:
+        for _ in range(127):
+            assert fii_dii.fetch_fii_net_for_date("17-Jun-2026") == -1200.5
+        assert rows.call_count == 1
+
+
+def test_cache_expires_after_ttl():
+    reset_cache()
+    with patch.object(fii_dii, "_history_rows", return_value=[SHORT]) as rows:
+        fii_dii.fetch_fii_net_for_date("17-Jun-2026")
+        fii_dii._rows_cache["at"] -= fii_dii._ROWS_TTL_S + 1
+        fii_dii.fetch_fii_net_for_date("17-Jun-2026")
+        assert rows.call_count == 2
+
+
+def test_failed_fetch_is_cached_not_retried_per_call():
+    reset_cache()
+    with patch.object(fii_dii, "_history_rows", return_value=None) as rows:
+        for _ in range(5):
+            assert fii_dii.fetch_fii_net_for_date("17-Jun-2026") is None
+        assert rows.call_count == 1

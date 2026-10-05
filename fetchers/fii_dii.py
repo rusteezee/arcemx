@@ -16,6 +16,8 @@ Returns a compact dict shaped for direct embedding in the analyzer
 payload: bare flow numbers, not the raw 30+ fields the upstream
 emits. The LLM only needs the high-signal subset.
 """
+import time
+
 import requests
 
 PRIMARY_URL = "https://fii-diidata.mrchartist.com/api/data"
@@ -126,10 +128,24 @@ def _net_for_date(rows: list[dict], date_str: str) -> float | None:
     return None
 
 
+# grader.py calls fetch_fii_net_for_date once per analysis being scored (127 in
+# one pass), so the rows are cached for a few minutes: without it each call
+# re-hit the blocked mirror and re-downloaded the GitHub file, which took a
+# 6 minute grader pass to 14. A failed fetch is cached too, so one outage is
+# not retried 127 times. The TTL keeps long-lived processes (the bot's
+# /trigger path) from serving stale rows.
+_ROWS_TTL_S = 600
+_rows_cache: dict = {"at": None, "rows": None}
+
+
 def fetch_fii_net_for_date(date_str: str) -> float | None:
     """FII cash net for one session, with the same mirror-then-backstop
     fallback as fetch_history. None when the session is not published yet."""
-    rows = _history_rows()
+    now = time.monotonic()
+    if _rows_cache["at"] is None or now - _rows_cache["at"] > _ROWS_TTL_S:
+        _rows_cache["rows"] = _history_rows()
+        _rows_cache["at"] = now
+    rows = _rows_cache["rows"]
     return _net_for_date(rows, date_str) if rows else None
 
 
