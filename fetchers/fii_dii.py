@@ -97,6 +97,42 @@ def _row_net(row: dict) -> tuple[float | None, float | None]:
     return fn, dn
 
 
+def _history_rows() -> list[dict] | None:
+    """Per-session rows, newest first: the mirror's /api/history-full, else
+    the GitHub raw backstop. Only a non-empty LIST is accepted. From late
+    September 2026 the mirror answers 403 {"error": ...}; a caller that
+    iterated that dict got its keys (strings) and died on row.get(), which
+    silently stopped grader.py's fii_flow_1d scoring while the fallback kept
+    the morning payload alive."""
+    for label, url in (("primary", HISTORY_URL), ("backstop", BACKSTOP_URL)):
+        try:
+            r = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, list) and data:
+                return data
+        except Exception as e:
+            print(f"fii_dii history {label} fail: {e}")
+    return None
+
+
+def _net_for_date(rows: list[dict], date_str: str) -> float | None:
+    """FII cash net (cr) for the session whose date string equals date_str
+    (for example "17-Jun-2026"). Exact match only: walking to a neighbouring
+    session would grade a call against a different day's flows."""
+    for row in rows:
+        if isinstance(row, dict) and (row.get("d") or row.get("date")) == date_str:
+            return _row_net(row)[0]
+    return None
+
+
+def fetch_fii_net_for_date(date_str: str) -> float | None:
+    """FII cash net for one session, with the same mirror-then-backstop
+    fallback as fetch_history. None when the session is not published yet."""
+    rows = _history_rows()
+    return _net_for_date(rows, date_str) if rows else None
+
+
 def fetch_history(days: int = 20) -> dict | None:
     """5d/20d cumulative FII/DII net flows plus a signed FII streak, so
     the morning payload's FII/DII block carries trend context instead
@@ -107,27 +143,7 @@ def fetch_history(days: int = 20) -> dict | None:
     calendar padding. Returns None on any failure or with fewer than 5
     usable trading-day rows, so the payload just omits the key rather
     than embedding a stale or partial trend."""
-    rows = None
-    try:
-        r = requests.get(HISTORY_URL, headers=_HEADERS, timeout=_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
-        if isinstance(data, list) and data:
-            rows = data
-    except Exception as e:
-        print(f"fii_dii history primary fail: {e}")
-
-    if rows is None:
-        try:
-            r = requests.get(BACKSTOP_URL, headers=_HEADERS, timeout=_TIMEOUT)
-            r.raise_for_status()
-            data = r.json()
-            if isinstance(data, list) and data:
-                rows = data
-        except Exception as e:
-            print(f"fii_dii history backstop fail: {e}")
-            return None
-
+    rows = _history_rows()
     if not rows:
         return None
 
