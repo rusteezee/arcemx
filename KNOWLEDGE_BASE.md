@@ -2302,9 +2302,98 @@ mechanics work, there is no edge, and one open position is under water.
 
 ---
 
+## 48. Telegram alerts failing, stale FII data, Stock Analyst stubs (2026-10-13)
+
+User reported "the telegram message is failing, fix everything". Findings
+and fixes, in order of how the evidence led there.
+
+- **Telegram root cause.** On 13/10 the grader's new-trade alert (trade id
+  30, `PTCIL.NS`, first entry in 28 days) got HTTP 400 "can't parse
+  entities". The text contained `via stock_analyst`: in legacy Markdown a
+  lone underscore opens an italic entity that never closes. The user never
+  received the alert. Same class as the July `daily_push` failures, which
+  had been patched one sender at a time.
+  Fix (156dec6): new `analyzer/telegram_notify.py` with `send_markdown`
+  (Markdown first, on that specific 400 resend the same text with no
+  parse_mode) and `md_escape`. Wired into grader `_telegram_notify`,
+  paper_trader `_breaker_notify` and factor_dispatch `_notify_candidate`;
+  the alert strings now escape `source_kind`. The helper logs the exception
+  type and HTTP status only, because a requests exception message embeds the
+  URL and the URL contains the bot token. The missed alert was re-sent
+  through the new path and was accepted as Markdown on the first try.
+- **Price alerts could be lost for good.** `bot/alerts_checker.py` marked an
+  alert `triggered` BEFORE pushing the Telegram message, so any failed push
+  (parse error, network) consumed it silently and it never re-fired. Now it
+  pushes first, falls back to plain text on `BadRequest` only (never after
+  other errors, so a possibly delivered message is not sent twice), and marks
+  `triggered` only if delivered. Otherwise it stays active for the next run.
+- **Secret in logs.** `fetchers/news.py` printed the raw GNews exception,
+  and a requests HTTP error embeds the full URL including `apikey=`. It sat
+  in the Oracle journal and appeared in a session transcript. Now it logs
+  type and status only. **Action for the user: rotate `GNEWS_API_KEY`.**
+- **FII data was 13 days stale and presented as current.** The mirror has
+  returned 403 since late September and the GitHub backstop's newest row is
+  30-Sep-2026 (checked 13/10). `flows` carried a 30-Sep date but
+  `flows_trend` (5 day sums, streak) carried no date at all. Fix (5610018):
+  `fetch_latest` and `fetch_history` return None when the newest row is more
+  than 5 days old, so the payload omits the key as the module promises.
+  Exact-date lookups (grader) are unaffected. Open item: `fii_flow_1d`
+  cannot be scored past 30-Sep until a live FII/DII source exists (NSE
+  blocks cloud IPs, see `data/research/fii_dii_sources.md`).
+- **Stock Analyst failures were a stub reply, not a data problem.** 9
+  failures from 05/10 to 13/10 (1 to 2 of 6 daily, after 30 of 30 clean),
+  only on the GitHub runner; the same request replayed from Oracle validated
+  2 of 2. Recording the reply head showed the model returned literally
+  `{"": ""}`. The router already rejected an empty `{}` (root-caused
+  2026-07-14, same nemotron model) but `{"": ""}` is a non-empty dict, so it
+  counted as good content and the chain never rotated. Fix (296af56):
+  `_is_stub_object` rejects any object whose values are all empty, so
+  `_post` rotates or escalates like it does for `{}`. Validation errors now
+  also record keys, finish reason, model and a 160 character head (3f510c2).
+  Re-runs through the real workflow: `PWL.NS` id 216, `LALPATHLAB.NS` id
+  179 and `SONACOMS.NS` id 181 all recovered. Run 181 showed the router now
+  logging "response unusable (empty_dict) ... rotating", and that BOTH free
+  models (minimax-m3 and nemotron) emit the stub at times, so the root
+  cause is upstream flakiness; the fix is resilience, not a cure. Watch
+  `stock_analyses` failures per day: if they stay above 0 the next step is
+  adding a non-OpenRouter provider key to the GitHub secrets. I first guessed the report was nested under the empty key
+  and wrote an unwrap helper; the head snippet disproved that, so the helper
+  and its test were removed rather than left with a false docstring.
+- **Trader sizing hole, not changed (owner decision).** `PTCIL.NS` was
+  entered as 1 share at 23,680 against a portfolio_base of 29,512. The 8
+  percent notional cap allows 0 shares, the `max(1, ...)` floor forces 1,
+  so the position is about 80 percent of the base with a stop 15.4 percent
+  away (about 3,643 at risk, 12.3 percent of base versus the 2 percent
+  budget). `paper_trader.py` documents this exact hazard (28/08: "the floor
+  quietly re-exceeded the cap") but that fix raised the cap instead of
+  skipping. Candidate rule: skip when one share breaches the notional cap
+  or more than 2x the risk budget. Tightening only, but it changes trading
+  logic, so it waits for the owner.
+- **US briefs, first 5-session grades.** Stored briefs 16; graded 1-session
+  14 (hit 92.9 percent, always-up 21.4, momentum 85.7); graded 5-session 6
+  (hit 16.7, always-up 0.0, momentum 16.7). Since the first brief SKHY is
+  down 16.2 percent, TSM 3.2, SOXX 5.5, SPY up 1.8; the user's US book is
+  down about 14.6 percent in INR. Stances were hold 13, add 1, trim 2, so
+  the advisory never signalled an exit while 5 of 6 stops were breached.
+  Consecutive daily briefs share one price path, so effective sample is
+  about 2 to 3, not 6. No conclusion on skill either way. Possible
+  follow-up: alert when a held US position closes below the latest brief's
+  stop.
+- **Tooling:** the Write and Edit tools turn a unicode escape for the em
+  dash in source into the literal character (build it with a chr() call in
+  code, and avoid writing the escape in docs), and `journalctl --since`
+  rejects "today 11:29".
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-10-05 (latest)** - India trader health check: mechanics healthy,
+- **2026-10-13 (latest)** - Telegram failure fixed at the root (shared
+  sender with plain-text fallback, price alerts no longer lost on a failed
+  push), GNews key removed from logs, stale FII data now omitted, router
+  rejects `{"": ""}` stub replies that were failing Stock Analyst runs.
+  Flagged but not changed: PTCIL.NS sizing hole. See section 48.
+- **2026-10-05 (earlier)** - India trader health check: mechanics healthy,
   0 entries in 301 gate decisions by design, `CHENNPETRO.NS` at minus 10.35
   percent. Found and fixed `fii_flow_1d` grading dead since 28/09 after the
   FII mirror went 403 (fallback plus cache, 127 lookups to 1). Two Stock
