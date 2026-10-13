@@ -269,6 +269,23 @@ def _parse_llm_json(resp: dict) -> dict | None:
         return None
 
 
+def _unwrap_candidate(candidate: dict) -> dict:
+    """Lift the report out of a wrapper key. From 2026-10-05 the GitHub-runner
+    path (not Oracle, same model and prompt) returned objects whose top-level
+    keys were ['', 'horizon_days', 'ticker'], i.e. the whole report nested
+    under an empty-string key, which failed validation as "missing key:
+    rating" on 9 analyses. If `rating` is absent at the top level but present
+    inside exactly one dict value, merge that dict up (top-level ticker and
+    horizon_days are kept; the caller re-stamps them anyway)."""
+    if not isinstance(candidate, dict) or "rating" in candidate:
+        return candidate
+    holders = [k for k, v in candidate.items() if isinstance(v, dict) and "rating" in v]
+    if len(holders) != 1:
+        return candidate
+    wrapper = candidate[holders[0]]
+    return {**{k: v for k, v in candidate.items() if k != holders[0]}, **wrapper}
+
+
 _HAS_DIGIT = re.compile(r"\d")
 
 # Free baseline before dampening starts. The system prompt MANDATES >=2
@@ -593,6 +610,7 @@ def run(run_id: int) -> dict:
                 candidate = _parse_llm_json(resp)
                 if candidate is None:
                     raise RuntimeError("LLM response did not contain valid JSON")
+                candidate = _unwrap_candidate(candidate)
                 # Sometimes models echo wrong ticker / horizon. Stamp ours.
                 candidate["ticker"] = ticker
                 candidate["horizon_days"] = horizon
@@ -603,10 +621,13 @@ def run(run_id: int) -> dict:
                     # failures from 2026-10-05, only on the GitHub runner;
                     # the same request validated from Oracle). Record what
                     # actually came back so the next failure is diagnosable.
-                    finish = ((resp.get("choices") or [{}])[0]).get("finish_reason")
+                    first = (resp.get("choices") or [{}])[0]
+                    finish = first.get("finish_reason")
+                    snippet = ((first.get("message") or {}).get("content") or "")[:160]
                     raise RuntimeError(
                         f"output validation failed: {err} "
-                        f"(keys={sorted(candidate)[:12]}, finish={finish}, model={model_used})")
+                        f"(keys={sorted(candidate)[:12]}, finish={finish}, model={model_used}, "
+                        f"head={snippet!r})")
                 out = candidate
                 break
             except Exception as e:
