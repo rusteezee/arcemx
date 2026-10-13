@@ -1,5 +1,6 @@
 """Tests for the FII history fallback used by grader.py's fii_flow_1d scoring.
 Synthetic rows and a fake requests.get only, no network."""
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 import requests
@@ -126,3 +127,51 @@ def test_failed_fetch_is_cached_not_retried_per_call():
         for _ in range(5):
             assert fii_dii.fetch_fii_net_for_date("17-Jun-2026") is None
         assert rows.call_count == 1
+
+
+# ---------- freshness guard ----------
+
+def fresh_rows(n=6):
+    today = datetime.now(fii_dii._IST).date()
+    return [{"d": (today - timedelta(days=i)).strftime("%d-%b-%Y"),
+             "fn": -100.0 * (i + 1), "dn": 50.0} for i in range(n)]
+
+
+def test_is_stale_boundary_is_five_days():
+    today = date(2026, 10, 13)
+    assert fii_dii._is_stale("30-Sep-2026", today) is True    # 13 days old
+    assert fii_dii._is_stale("07-Oct-2026", today) is True    # 6 days old
+    assert fii_dii._is_stale("08-Oct-2026", today) is False   # 5 days old
+    assert fii_dii._is_stale("13-Oct-2026", today) is False
+
+
+def test_is_stale_trusts_unparseable_dates():
+    assert fii_dii._is_stale("garbage", date(2026, 10, 13)) is False
+    assert fii_dii._is_stale(None, date(2026, 10, 13)) is False
+
+
+def test_fetch_history_omits_stale_trend():
+    stale = [{"d": "30-Sep-2026", "fn": -1.0, "dn": 1.0}] * 6
+    with patch.object(fii_dii, "_history_rows", return_value=stale):
+        assert fii_dii.fetch_history() is None
+
+
+def test_fetch_history_keeps_fresh_trend():
+    with patch.object(fii_dii, "_history_rows", return_value=fresh_rows()):
+        out = fii_dii.fetch_history()
+    assert out is not None and out["fii_streak"] < 0
+
+
+def test_fetch_latest_drops_stale_and_keeps_fresh():
+    with patch.object(fii_dii, "_fetch_latest_unchecked", return_value={"date": "30-Sep-2026"}):
+        assert fii_dii.fetch_latest() is None
+    today = datetime.now(fii_dii._IST).date().strftime("%d-%b-%Y")
+    with patch.object(fii_dii, "_fetch_latest_unchecked", return_value={"date": today}):
+        assert fii_dii.fetch_latest() == {"date": today}
+
+
+def test_exact_date_lookup_is_not_affected_by_staleness():
+    """The grader scores old sessions, so lookups must still work."""
+    reset_cache()
+    with patch.object(fii_dii, "_history_rows", return_value=[LONG]):
+        assert fii_dii.fetch_fii_net_for_date("30-Sep-2026") == -300.0

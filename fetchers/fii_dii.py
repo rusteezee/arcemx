@@ -17,6 +17,7 @@ payload: bare flow numbers, not the raw 30+ fields the upstream
 emits. The LLM only needs the high-signal subset.
 """
 import time
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -28,6 +29,25 @@ BACKSTOP_URL = (
 )
 _HEADERS = {"User-Agent": "arcemx/1.0 (https://arcemx.arcarmor.co.in)"}
 _TIMEOUT = 15
+
+# Both the mirror (403 since late Sep 2026) and the GitHub backstop (newest
+# row 30-Sep-2026 as of 13/10) stopped receiving new sessions, so the morning
+# payload was presenting 13 day old flows, and a 5 day trend and streak with
+# no date at all, as current. Older data is now dropped, as this module's own
+# docstring promises. 5 days covers a long weekend plus a holiday.
+_MAX_STALE_DAYS = 5
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _is_stale(date_str, today: date | None = None) -> bool:
+    """True when date_str ("30-Sep-2026") is more than _MAX_STALE_DAYS old.
+    An unparseable date is NOT treated as stale: dropping every FII signal
+    over a format change would be worse than the status quo."""
+    try:
+        d = datetime.strptime(str(date_str), "%d-%b-%Y").date()
+    except ValueError:
+        return False
+    return ((today or datetime.now(_IST).date()) - d).days > _MAX_STALE_DAYS
 
 
 def _shape(d: dict) -> dict:
@@ -59,6 +79,15 @@ def _shape(d: dict) -> dict:
 
 
 def fetch_latest() -> dict | None:
+    """Latest session's flows, or None when the newest session is stale."""
+    latest = _fetch_latest_unchecked()
+    if latest and _is_stale(latest.get("date")):
+        print(f"fii_dii: newest session {latest.get('date')} is stale, omitting flows")
+        return None
+    return latest
+
+
+def _fetch_latest_unchecked() -> dict | None:
     """Try the primary endpoint, fall back to the GitHub raw backstop."""
     try:
         r = requests.get(PRIMARY_URL, headers=_HEADERS, timeout=_TIMEOUT)
@@ -161,6 +190,10 @@ def fetch_history(days: int = 20) -> dict | None:
     than embedding a stale or partial trend."""
     rows = _history_rows()
     if not rows:
+        return None
+    newest = rows[0].get("d") or rows[0].get("date") if isinstance(rows[0], dict) else None
+    if _is_stale(newest):
+        print(f"fii_dii: newest history row {newest} is stale, omitting flows_trend")
         return None
 
     fii_nets: list[float] = []
