@@ -587,6 +587,19 @@ explicitly in that key's value rather than skipping it.
 """
 
 
+_EMPTY_VALUES = (None, "", [], {})
+
+
+def _is_stub_object(parsed: dict) -> bool:
+    """True when every value in the object is empty, for example the literal
+    `{"": ""}`. Same failure class as the `{}` case below, but a non-empty
+    dict, so `not parsed` let it through: nemotron-3-super returned it on
+    2026-10-05 to 2026-10-13, 9 Stock Analyst runs failed with "missing key:
+    rating" because nothing rotated to another model, since the router
+    believed it had good content."""
+    return all(v in _EMPTY_VALUES for v in parsed.values())
+
+
 def _content_ok(data: dict, json_format: bool) -> bool:
     """Best-effort check that a 200 response is actually usable.
 
@@ -658,7 +671,7 @@ def _content_reject_reason(data: dict, json_format: bool) -> str | None:
         # 2026-07-14: nemotron-3-super-120b returned literal "{}" for the
         # morning analysis call; it was saved and pushed to Telegram as a
         # real market call with every field blank).
-        if not isinstance(parsed, dict) or not parsed:
+        if not isinstance(parsed, dict) or not parsed or _is_stub_object(parsed):
             return "empty_dict"
         if _response_degenerate(parsed):
             return "degenerate_output"
