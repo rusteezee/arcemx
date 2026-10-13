@@ -326,21 +326,10 @@ def _breaker_notify(text: str) -> None:
     same simple way. Soft-fails: a notification hiccup must never block
     the eval pass."""
     try:
-        import requests
-        token = os.getenv("TELEGRAM_BOT_TOKEN")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID")
-        if not token or not chat_id:
-            print("  breaker_notify skipped (env missing)")
-            return
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=10,
-        )
-        if r.status_code >= 300:
-            print(f"  breaker_notify HTTP {r.status_code}: {r.text[:120]}")
+        from analyzer.telegram_notify import send_markdown
+        send_markdown(text, tag="breaker_notify")
     except Exception as e:
-        print(f"  breaker_notify skipped ({type(e).__name__}): {str(e)[:120]}")
+        print(f"  breaker_notify skipped ({type(e).__name__})")
 
 
 def _ticker_is_frozen(sb, ticker: str, now: datetime) -> tuple[bool, dict]:

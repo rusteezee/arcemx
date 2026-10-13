@@ -206,7 +206,11 @@ def fetch_gnews(query: str = "stock market india", max_n: int = 50) -> list[dict
             })
         return out
     except Exception as e:
-        print(f"GNews fail: {e}")
+        # Never print the exception itself: a requests HTTPError message
+        # embeds the full URL, and this URL carries the apikey query param
+        # (it ended up in the journal and in a terminal on 2026-10-13).
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        print(f"GNews fail: {type(e).__name__}" + (f" HTTP {status}" if status else ""))
         return []
 
 

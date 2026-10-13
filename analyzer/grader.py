@@ -1554,26 +1554,15 @@ def _grade_stock_analyses() -> None:
 
 
 def _telegram_notify(text: str) -> None:
-    """Thin push helper. POSTs to api.telegram.org sendMessage using
-    TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env. Soft-fails: any error
-    in the notification path must never break the grader pipeline."""
-    import os as _os
+    """Thin push helper over analyzer.telegram_notify.send_markdown, which
+    retries as plain text when Telegram rejects the Markdown (a stray _ in
+    "via stock_analyst" dropped the 2026-10-13 new-trade alert). Soft-fails:
+    any error in the notification path must never break the grader."""
     try:
-        import requests  # noqa: requests is a transitive dep already
-        token = _os.getenv("TELEGRAM_BOT_TOKEN")
-        chat_id = _os.getenv("TELEGRAM_CHAT_ID")
-        if not token or not chat_id:
-            print("  telegram_notify skipped (env missing)")
-            return
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=10,
-        )
-        if r.status_code >= 300:
-            print(f"  telegram_notify HTTP {r.status_code}: {r.text[:120]}")
+        from analyzer.telegram_notify import send_markdown
+        send_markdown(text, tag="telegram_notify")
     except Exception as e:
-        print(f"  telegram_notify skipped ({type(e).__name__}): {str(e)[:120]}")
+        print(f"  telegram_notify skipped ({type(e).__name__})")
 
 
 def _run_paper_trader() -> None:
@@ -1625,6 +1614,7 @@ def _run_paper_trader() -> None:
         print(f"  skip_attribution skipped: {str(e)[:150]}")
 
     try:
+        from analyzer.telegram_notify import md_escape
         sb = _sb()
         post = sb.table("paper_trades").select(
             "ticker,fill_px,target_px,stop_px,confidence,expected_edge_pct,entered_at,source_kind"
@@ -1635,7 +1625,7 @@ def _run_paper_trader() -> None:
             r = post[0]
             _telegram_notify(
                 f"🎯 *First paper trade fired*\n"
-                f"`{r['ticker']}` via {r.get('source_kind', '?')}\n"
+                f"`{r['ticker']}` via {md_escape(r.get('source_kind', '?'))}\n"
                 f"fill ₹{r.get('fill_px') or 0:.2f} | "
                 f"T ₹{r.get('target_px') or 0:.2f} | "
                 f"SL ₹{r.get('stop_px') or 0:.2f}\n"
@@ -1652,7 +1642,7 @@ def _run_paper_trader() -> None:
                     r = post[0]
                     _telegram_notify(
                         f"📈 New paper trade after {(latest_post - pl).days}d quiet\n"
-                        f"`{r['ticker']}` via {r.get('source_kind', '?')} | "
+                        f"`{r['ticker']}` via {md_escape(r.get('source_kind', '?'))} | "
                         f"conf {r.get('confidence', '-')} | edge {r.get('expected_edge_pct') or 0:.2f}%"
                     )
             except Exception:

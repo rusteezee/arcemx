@@ -215,24 +215,19 @@ def _notify_candidate(factor: dict, bt: dict, dsr_bundle: dict) -> None:
     NOTIFICATION, not a promotion. The user still has to manually review
     and flip status to 'promoted' before it means anything for real
     trading (see factor_lab.py's module docstring)."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        return
     try:
-        import requests
+        from analyzer.telegram_notify import md_escape, send_markdown
+        # name and hypothesis are LLM-written free text, the exact content
+        # that breaks legacy Markdown, so escape them and rely on the
+        # sender's plain-text fallback for anything else.
         msg = (f"\U0001f9ea New factor candidate: `{factor.get('name')}`\n"
-               f"{factor.get('hypothesis', '')}\n"
+               f"{md_escape(factor.get('hypothesis', ''))}\n"
                f"Trades: {bt['trade_count']} | Win rate: {bt['win_rate_pct']}% | "
                f"DSR: {dsr_bundle['dsr']:.3f}\n"
                f"Review in mined_factors before wiring anything live.")
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
-            timeout=10,
-        )
+        send_markdown(msg, tag="factor_candidate_notify")
     except Exception as e:
-        print(f"  factor candidate notify skipped: {str(e)[:120]}")
+        print(f"  factor candidate notify skipped ({type(e).__name__})")
 
 
 def run() -> dict:

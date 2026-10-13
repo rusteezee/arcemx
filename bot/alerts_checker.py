@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import yfinance as yf
 from telegram import Bot
+from telegram.error import BadRequest
 from supabase import create_client
 
 load_dotenv()
@@ -37,6 +38,23 @@ def _safe_last_price(ticker: str):
     except Exception:
         pass
     return None
+
+
+async def _push(bot: Bot, chat_id, msg: str, alert_id) -> bool:
+    """Markdown first; on Telegram's BadRequest (a parse error from a stray
+    marker character) resend the same text as plain text. Any other error is
+    treated as a failed delivery, not retried here, so a message that may
+    already have been delivered is never sent twice."""
+    for parse_mode in ("Markdown", None):
+        try:
+            await bot.send_message(chat_id=chat_id, text=msg, parse_mode=parse_mode)
+            return True
+        except BadRequest as e:
+            print(f"  alert id={alert_id} BadRequest with parse_mode={parse_mode}: {str(e)[:100]}")
+        except Exception as e:
+            print(f"  alert id={alert_id} push failed ({type(e).__name__})")
+            return False
+    return False
 
 
 async def check() -> dict:
@@ -64,25 +82,30 @@ async def check() -> dict:
         if not crossed:
             continue
 
+        # Push BEFORE marking triggered. The old order consumed the alert
+        # first, so a failed push (parse error, network blip) lost it for
+        # good: it never re-fired and the user was never told. Now an
+        # undelivered alert stays active and retries on the next run.
+        delivered = bot is None
+        if bot is not None:
+            arrow = "🔔"
+            msg = (f"{arrow} *Alert: {r['ticker']}*\n"
+                   f"Crossed {r['direction']} ₹{float(r['threshold_price']):.2f}\n"
+                   f"Now: ₹{px:.2f}")
+            # user_id on the alert row is the Telegram chat id
+            # (same convention as portfolio/wishlist - see
+            # telegram_bot.py's uid = str(update.effective_user.id)).
+            delivered = await _push(bot, r["user_id"], msg, r["id"])
+        if not delivered:
+            print(f"  alert id={r['id']} left active, will retry next run")
+            continue
+
         sb.table("alerts").update({
             "status": "triggered",
             "triggered_at": datetime.now(timezone.utc).isoformat(),
             "triggered_price": float(px),
         }).eq("id", r["id"]).execute()
         triggered += 1
-
-        if bot is not None:
-            arrow = "🔔"
-            msg = (f"{arrow} *Alert: {r['ticker']}*\n"
-                   f"Crossed {r['direction']} ₹{float(r['threshold_price']):.2f}\n"
-                   f"Now: ₹{px:.2f}")
-            try:
-                # user_id on the alert row is the Telegram chat id
-                # (same convention as portfolio/wishlist - see
-                # telegram_bot.py's uid = str(update.effective_user.id)).
-                await bot.send_message(chat_id=r["user_id"], text=msg, parse_mode="Markdown")
-            except Exception as e:
-                print(f"  alert push failed for id={r['id']}: {str(e)[:150]}")
 
     print(f"alerts_checker: checked={len(rows)} tickers={len(tickers)} triggered={triggered}")
     return {"checked": len(rows), "triggered": triggered}
