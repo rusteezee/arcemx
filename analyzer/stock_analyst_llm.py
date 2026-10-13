@@ -599,7 +599,14 @@ def run(run_id: int) -> dict:
 
                 ok, err = _validate(candidate, ticker, horizon)
                 if not ok:
-                    raise RuntimeError(f"output validation failed: {err}")
+                    # "missing key: rating" alone hid WHY for two weeks (9
+                    # failures from 2026-10-05, only on the GitHub runner;
+                    # the same request validated from Oracle). Record what
+                    # actually came back so the next failure is diagnosable.
+                    finish = ((resp.get("choices") or [{}])[0]).get("finish_reason")
+                    raise RuntimeError(
+                        f"output validation failed: {err} "
+                        f"(keys={sorted(candidate)[:12]}, finish={finish}, model={model_used})")
                 out = candidate
                 break
             except Exception as e:
