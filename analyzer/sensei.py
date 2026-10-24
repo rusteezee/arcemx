@@ -28,7 +28,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client
 
-from analyzer.llm_router import _post, _parse_json, _chain
+from analyzer.llm_router import PRIMARY_MODEL, _post, _parse_json, _chain
 from analyzer.market_context import INDEX_SYMBOLS, SECTOR_SYMBOLS
 from analyzer.grader import _session_bounds
 
@@ -44,10 +44,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # so each run paid the Ultra timeout/retry tax for nothing. Point the
 # primary straight at the proven Super checkpoint the runs already land
 # on. Same fallback chain still applies for a rate-limit / outage.
-SENSEI_PRIMARY = os.getenv(
-    "OPENROUTER_SENSEI_PRIMARY",
-    "nvidia/nemotron-3-super-120b-a12b:free",
-)
+# 2026-10-24: Super's free endpoint died on 2026-10-20 and Sensei failed every
+# EOD since. Follow the router's primary instead of pinning a slug here, so a
+# model swap is a one-place change.
+SENSEI_PRIMARY = os.getenv("OPENROUTER_SENSEI_PRIMARY", PRIMARY_MODEL)
 
 
 SENSEI_SYSTEM_PROMPT = """You are the END-OF-DAY REVIEWER for an Indian equity analyst's

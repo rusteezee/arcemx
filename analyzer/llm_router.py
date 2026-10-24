@@ -79,8 +79,15 @@ def _pick_key(keys: list[str], attempt: int) -> str | None:
 # target+stop_loss vs nemotron's 5/5) - both hit 0 missing schema fields
 # and fully filled reasoning_breakdown. One run each, not a large sample,
 # but it converges with the independent production fallback-rate data.
+# 2026-10-24: minimax-m3:free went paid-only and nemotron-3-super:free's
+# upstream started answering 404 on 2026-10-20, which took every LLM job down
+# for four days (the router also aborted on the first 404, since fixed).
+# Replacement chain chosen by running the real US brief prompt and validator
+# against every free model listed that day: these five passed or were only
+# rate-limited at test time. Free models churn; keep the chain long so one
+# dying degrades instead of failing.
 PRIMARY_MODEL = os.getenv(
-    "OPENROUTER_PRIMARY", "minimax/minimax-m3:free")
+    "OPENROUTER_PRIMARY", "nvidia/nemotron-3-ultra-550b-a55b:free")
 
 # OpenRouter routes through this list left-to-right. If the primary
 # is rate-limited or fails, the next model serves the same request.
@@ -94,7 +101,10 @@ PRIMARY_MODEL = os.getenv(
 # daily runs start going missing.
 _FALLBACK_RAW = os.getenv(
     "OPENROUTER_FALLBACKS",
-    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-31b-it:free,"
+    "dots-studio/dots-3-note-preview:free,"
+    "nvidia/nemotron-3.5-lightning:free,"
+    "google/gemma-4-26b-a4b-it:free",
 )
 FALLBACK_CHAIN = [m.strip() for m in _FALLBACK_RAW.split(",") if m.strip()]
 
@@ -130,7 +140,7 @@ _PROVIDERS = [
         # the `else` (non-openrouter) branch. Kept in sync with
         # FALLBACK_CHAIN's default anyway in case a future provider re-add
         # copies this dict as a template.
-        "default_models": "nvidia/nemotron-3-super-120b-a12b:free",
+        "default_models": "google/gemma-4-31b-it:free",
         "supports_reasoning_optout": True,
     },
 ]
