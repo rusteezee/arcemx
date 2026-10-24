@@ -726,6 +726,12 @@ def _response_degenerate(parsed: dict) -> bool:
     return False
 
 
+# OpenRouter rejects a `models` array longer than this with 400 "'models'
+# array must have 3 items or fewer" (hit 2026-10-24 the moment the chain grew
+# to 5 models: every request failed although each model worked alone).
+_OPENROUTER_MODELS_MAX = 3
+
+
 def _post_provider(provider: dict, messages: list[dict], models: list[str],
                     reasoning: bool = True, timeout: int = 180,
                     max_retries: int = 2, api_key: str | None = None,
@@ -786,7 +792,7 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
         # own attempt-loop below already advances body["model"] through
         # `models` on retry, so those providers still get the full chain,
         # just client-side instead of server-side.
-        body["models"] = models
+        body["models"] = models[:_OPENROUTER_MODELS_MAX]
     if json_format:
         body["response_format"] = {"type": "json_object"}
     # The reasoning body key (either form) is an OpenRouter-only
@@ -826,7 +832,12 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
         # targets; a 429 or network error on attempt 0 already resulted
         # in trying a fresh model by the time content quality even comes
         # into play below.
-        body["model"] = models[min(attempt, len(models) - 1)]
+        idx = min(attempt, len(models) - 1)
+        body["model"] = models[idx]
+        if provider["name"] == "openrouter":
+            # Window starting at this attempt's model, so the server-side
+            # fallback also moves forward instead of re-hitting models[0].
+            body["models"] = models[idx:idx + _OPENROUTER_MODELS_MAX]
         # First attempt honors the caller's seed key; later attempts
         # rotate over the full pool when no_rotate=False, otherwise stick
         # to the seed key. Ensemble fan-out uses no_rotate=True so each

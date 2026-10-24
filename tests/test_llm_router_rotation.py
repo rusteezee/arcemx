@@ -74,6 +74,27 @@ def test_all_dead_raises_after_last_attempt():
     assert isinstance(err, requests.HTTPError) and len(sent) == 3
 
 
+def test_models_window_never_exceeds_openrouter_cap():
+    """OpenRouter 400s on a `models` list longer than 3 (2026-10-24)."""
+    windows, queue = [], [FakeResp(502)] * 5
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        windows.append((json["model"], list(json["models"])))
+        return queue.pop(0)
+
+    with patch.object(r.requests, "post", side_effect=fake_post), \
+            patch.object(r.time, "sleep", lambda s: None):
+        try:
+            r._post_provider(PROVIDER, [{"role": "user", "content": "x"}],
+                             ["a", "b", "c", "d", "e"], reasoning=False, timeout=5,
+                             api_key="test-key", json_format=True)
+        except requests.HTTPError:
+            pass
+    assert len(windows) == 5
+    assert all(len(w) <= 3 and w[0] == m for m, w in windows)
+    assert windows[0][1] == ["a", "b", "c"] and windows[-1][1] == ["e"]
+
+
 def test_stub_content_still_rotates():
     stub = {"choices": [{"message": {"content": '{"": ""}'}, "finish_reason": "stop"}]}
     out, sent, err = run(["a", "b"], [FakeResp(200, stub), FakeResp(200, GOOD)])
