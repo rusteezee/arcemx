@@ -805,7 +805,11 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
         body["max_tokens"] = max_tokens
     delay = 5.0
     last_err: Exception | None = None
-    for attempt in range(max_retries + 1):
+    # Every model in the chain gets at least one attempt. With the old
+    # range(max_retries + 1) a 5-model chain only ever reached 3 models.
+    attempts = max(max_retries + 1, len(models))
+    last_attempt = attempts - 1
+    for attempt in range(attempts):
         # Advance to the next model in the chain on every retry (a no-op
         # when models has one entry, e.g. the ensemble fan-out's pinned
         # single-model call). This only changes which model attempt N+1
@@ -839,7 +843,7 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
                               timeout=timeout)
         except requests.RequestException as e:
             last_err = e
-            if attempt >= max_retries:
+            if attempt >= last_attempt:
                 raise
             time.sleep(min(delay, 30))
             delay *= 2
@@ -861,12 +865,31 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
             pool_label = words[n_keys] if 0 <= n_keys < len(words) else f"n={n_keys}"
             print(f"{provider['name']} 429 pool={pool_label} attempt {attempt+1}, "
                   f"retry in {wait:.0f}s")
-            if attempt >= max_retries:
+            if attempt >= last_attempt:
                 r.raise_for_status()
             # Longer back-off when sticky-pinned: rotation can't bail us
             # out, so we must wait for the actual rate window to clear.
             sleep_for = min(wait, 30) if (no_rotate or len(pool) == 1) else min(wait, 5)
             time.sleep(sleep_for)
+            delay *= 2
+            continue
+        if r.status_code >= 400 and r.status_code != 401:
+            # A dead or failing MODEL must not abort the whole chain. On
+            # 2026-10-20 minimax-m3:free became paid-only (404 "unavailable
+            # for free") and nemotron-3-super:free's upstream started
+            # answering 404; raise_for_status() here aborted on the first
+            # model, so every LLM job failed for days although other free
+            # models were working. Now any 4xx/5xx except 401 (a bad key,
+            # where switching models cannot help) rotates to the next model.
+            last_err = requests.HTTPError(
+                f"{r.status_code} from {body['model']}: {r.text[:120]}")
+            if attempt >= last_attempt:
+                r.raise_for_status()
+            next_model = models[min(attempt + 1, len(models) - 1)]
+            print(f"{provider['name']} HTTP {r.status_code} from "
+                  f"{body['model'].split('/')[-1]}, attempt {attempt+1}; "
+                  f"rotating to {next_model.split('/')[-1]}")
+            time.sleep(min(delay, 5))
             delay *= 2
             continue
         r.raise_for_status()
@@ -880,7 +903,7 @@ def _post_provider(provider: dict, messages: list[dict], models: list[str],
             data = _parse_sse(text)
         else:
             data = r.json()
-        if _content_ok(data, json_format) or attempt >= max_retries:
+        if _content_ok(data, json_format) or attempt >= last_attempt:
             return data
         # 200 OK but the content is unusable (see _content_ok). This is
         # not a 429 and not a network error, so nothing above catches
