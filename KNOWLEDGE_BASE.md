@@ -2386,9 +2386,83 @@ and fixes, in order of how the evidence led there.
 
 ---
 
+## 49. Four-day LLM outage, 20/10 to 24/10 (fixed 2026-10-24)
+
+**What broke.** Both free models in the chain died at once:
+`minimax/minimax-m3:free` became paid-only (OpenRouter 404 "unavailable for
+free") and `nvidia/nemotron-3-super-120b-a12b:free` stayed listed but its
+upstream answered 404. Last successful LLM call on Oracle 19/10 12:47 UTC.
+Every LLM job failed from then on: US brief (it sent "US brief failed"
+Telegram messages daily), factor mining, Sensei EOD, Stock Analyst (19
+GitHub failures), Daily Market Analysis (14 GitHub failures; the first one
+on 16/10 was a different cause, an INDmoney "refresh token does not exist"
+during refresh, token healthy since). No backup provider keys exist
+(GEMINI/GROQ unset), so nothing could take over.
+
+**Why one dead model was fatal (router bugs, all fixed in `llm_router.py`).**
+1. `_post_provider` called `raise_for_status()` on any non-429 error, so the
+   first 404 aborted the provider without trying the next model. Now any
+   4xx/5xx except 401 rotates to the next model (5f38304).
+2. The loop ran `max_retries + 1` times, so a long chain was never fully
+   tried. Now every model gets an attempt.
+3. OpenRouter rejects a `models` array longer than 3 (400 "'models' array
+   must have 3 items or fewer"); the 5-model chain made EVERY request fail
+   until the window was capped at 3, starting at the current model
+   (24c4a43). Each model had passed when tested alone, which hid this.
+
+**New chain (f552eda),** chosen by running the real US brief prompt and
+validator against every free model listed on 24/10:
+`nvidia/nemotron-3-ultra-550b-a55b:free` primary, then
+`google/gemma-4-31b-it:free`, `dots-studio/dots-3-note-preview:free`,
+`nvidia/nemotron-3.5-lightning:free`, `google/gemma-4-26b-a4b-it:free`.
+Sensei now follows the router primary instead of pinning its own slug.
+`analyzer/bakeoff.py` still lists the dead model; it is an offline tool.
+
+**Verified after the fix:** US brief dry run (both holdings, attempt 1,
+38s and 47s); Stock Analyst through the real GitHub workflow (fresh
+CRISIL.NS row 266, attempt 1, bear pass OK); factor mining run result
+success. Daily Market Analysis skips weekends, so its real payload plus
+`analyze()` was run on Oracle without `save()`: payload 95k chars in 67s,
+the primary errored (`empty_content:finish=error`) and OpenRouter fell
+through to `dots-3-note-preview`, which returned a valid analysis in 953s
+total (the job allows 90 minutes). Output was thin: confidence 12, 0 short
+picks, low win_prob variance warnings. Watch Monday's real run; if quality
+stays thin, the fix is a second provider key (Gemini free tier was removed
+on 2026-08-27) or a paid primary, both the user's call. Sensei shares the
+same chain and was not separately tested (weekend).
+
+**My mistake, corrected.** On 13/10 I re-ran failed Stock Analyst rows 179
+and 181 (requested 05/10) with data fetched on 13/10, giving those calls 8
+days of hindsight. Neither became a trade (both hold), but the grader would
+have scored them as 05/10 calls. Both are now `status = failed` with the
+reason in `error`, so grading and the trader ignore them. Rule: never re-run
+an old failed analysis; only fresh same-day rows are honest.
+
+**India holdings are empty at INDmoney.** Since at least 08/10 the India
+sync logs "Synced: 0 holdings". A direct read on 24/10: `holdings: []`,
+`source_status.holdings: success`, `asset_summary` total_value 0 and
+invested 0. The `portfolio` table still shows ETERNAL.NS 67 and NYKAA.NS 40
+because the prune guard skips cleanup on any empty response, so a genuinely
+sold book looks identical to a transient glitch. Waiting for the user to
+confirm the sale before clearing; the durable fix is to treat an empty
+response WITH `source_status.holdings == success` and invested 0 as
+authoritative.
+
+**Lesson.** Free models churn without notice. Keep the chain at 4 or more,
+and a failed job is only visible today through the US brief's own failure
+message and GitHub run history.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-10-13 (latest)** - Telegram failure fixed at the root (shared
+- **2026-10-24 (latest)** - Fixed the 20/10 to 24/10 LLM outage: dead free
+  models replaced with a tested 5-model chain, router now rotates on HTTP
+  errors, tries the whole chain and caps the OpenRouter models window at 3.
+  Excluded two hindsight-contaminated analyses I created on 13/10. Found
+  the India book empty at INDmoney; clearing awaits user confirmation.
+  See section 49.
+- **2026-10-13 (earlier)** - Telegram failure fixed at the root (shared
   sender with plain-text fallback, price alerts no longer lost on a failed
   push), GNews key removed from logs, stale FII data now omitted, router
   rejects `{"": ""}` stub replies that were failing Stock Analyst runs.
