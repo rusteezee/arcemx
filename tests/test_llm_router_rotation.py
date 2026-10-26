@@ -3,6 +3,7 @@
 Regression for 2026-10-20: the first model in the chain answered 404 and the
 router aborted instead of trying the next model, taking every LLM job down.
 Fake HTTP only, no network, no sleeping."""
+import os
 from unittest.mock import patch
 
 import requests
@@ -93,6 +94,41 @@ def test_models_window_never_exceeds_openrouter_cap():
     assert len(windows) == 5
     assert all(len(w) <= 3 and w[0] == m for m, w in windows)
     assert windows[0][1] == ["a", "b", "c"] and windows[-1][1] == ["e"]
+
+
+def run_post(env, gemini_resp):
+    """Full _post() with the OpenRouter chain dead (404 on every model)."""
+    hits = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        hits.append((url, dict(json)))
+        if "openrouter" in url:
+            return FakeResp(404)
+        return gemini_resp
+
+    with patch.dict(os.environ, env, clear=False), \
+            patch.object(r.requests, "post", side_effect=fake_post), \
+            patch.object(r.time, "sleep", lambda s: None):
+        try:
+            return r._post([{"role": "user", "content": "x"}], ["a:free", "b:free"],
+                           reasoning=False, timeout=5, json_format=True), hits, None
+        except Exception as e:
+            return None, hits, e
+
+
+def test_escalates_to_gemini_when_openrouter_chain_is_dead():
+    out, hits, err = run_post({"OPENROUTER_API_KEY": "or-key", "GEMINI_API_KEY": "gm-key"},
+                              FakeResp(200, GOOD))
+    assert err is None and out["model"].startswith("gemini/")
+    gemini = [body for url, body in hits if "generativelanguage" in url]
+    assert gemini and "models" not in gemini[0] and "reasoning" not in gemini[0]
+
+
+def test_gemini_is_skipped_without_a_key():
+    out, hits, err = run_post({"OPENROUTER_API_KEY": "or-key", "GEMINI_API_KEY": ""},
+                              FakeResp(200, GOOD))
+    assert err is not None
+    assert not any("generativelanguage" in url for url, _ in hits)
 
 
 def test_stub_content_still_rotates():

@@ -125,11 +125,9 @@ _X_TITLE = os.getenv("OPENROUTER_TITLE", "Arc'emX!")
 # 2026-08-27 - OpenRouter (minimax primary + nemotron fallback, see
 # PRIMARY_MODEL/FALLBACK_CHAIN above) is now the only provider, used by
 # every caller in this module (analyze, analyze_portfolio) via
-# _post()/_PROVIDERS below. GEMINI_API_KEY/GROQ_API_KEY in .env are now
-# unused dead weight - nothing in the codebase reads them anymore. Safe
-# to remove from .env/GH secrets whenever convenient; left alone here
-# since deleting secrets is the user's call, not a side effect of a
-# model-chain change.
+# _post()/_PROVIDERS below. Gemini was re-added as the escalation
+# provider on 2026-10-26 (see its entry below); GROQ_API_KEY is still
+# unused.
 _PROVIDERS = [
     {
         "name": "openrouter",
@@ -142,6 +140,20 @@ _PROVIDERS = [
         # copies this dict as a template.
         "default_models": "google/gemma-4-31b-it:free",
         "supports_reasoning_optout": True,
+    },
+    # Re-added 2026-10-26 at the user's request after the 20/10 to 24/10
+    # outage, when every OpenRouter free model in the chain died at once and
+    # nothing could take over. Restored verbatim from before dc47bb8 (proven
+    # live 2026-07-14). _post() skips it while GEMINI_API_KEY is unset, so
+    # it costs nothing until the key exists. Override models with
+    # GEMINI_MODELS if Google renames them; check with a models.list call.
+    {
+        "name": "gemini",
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "key_env": "GEMINI_API_KEY",
+        "chain_env": "GEMINI_MODELS",
+        "default_models": "gemini-3.5-flash,gemini-3.1-flash-lite",
+        "supports_reasoning_optout": False,
     },
 ]
 
