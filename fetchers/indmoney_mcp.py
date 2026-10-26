@@ -420,6 +420,24 @@ async def _refresh_tokens_if_needed(user_id: str) -> bool:
             return False
 
 
+def _is_confirmed_empty(h_data) -> bool:
+    """True when INDmoney positively reports an empty stock book, as opposed
+    to a glitchy empty reply. The prune guard below skipped cleanup on ANY
+    empty response, so after the user sold every Indian stock (by 08/10/2026)
+    ETERNAL.NS and NYKAA.NS stayed in `portfolio` for weeks and kept feeding
+    the morning analysis as holdings. An empty `holdings` list counts as real
+    only when the reply has no error, says the holdings fetch succeeded, and
+    reports zero invested."""
+    if not isinstance(h_data, dict) or h_data.get("error") or h_data.get("holdings"):
+        return False
+    if (h_data.get("source_status") or {}).get("holdings") != "success":
+        return False
+    try:
+        return float((h_data.get("asset_summary") or {}).get("invested")) == 0
+    except (TypeError, ValueError):
+        return False
+
+
 async def sync_to_supabase(user_id: str = "default"):
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")
     sb = create_client(url, key)
@@ -580,13 +598,15 @@ async def sync_to_supabase(user_id: str = "default"):
                     "user_id", user_id).execute().data or []
                 existing_tickers = {r.get("ticker") for r in existing if r.get("ticker")}
                 stale = existing_tickers - live_holding_tickers
-                if stale and live_holding_tickers:
-                    print(f"  pruning {len(stale)} stale holding rows: {sorted(stale)}")
+                confirmed_empty = not live_holding_tickers and _is_confirmed_empty(h_data)
+                if stale and (live_holding_tickers or confirmed_empty):
+                    why = " (INDmoney confirms an empty book)" if confirmed_empty else ""
+                    print(f"  pruning {len(stale)} stale holding rows{why}: {sorted(stale)}")
                     for t in stale:
                         sb.table("portfolio").delete().eq(
                             "user_id", user_id).eq("ticker", t).execute()
                 elif stale and not live_holding_tickers:
-                    print("  holdings response empty; skipping stale cleanup")
+                    print("  holdings response empty and unconfirmed; skipping stale cleanup")
             except Exception as e:
                 print(f"holding cleanup fail: {e}")
 
