@@ -2443,10 +2443,21 @@ sync logs "Synced: 0 holdings". A direct read on 24/10: `holdings: []`,
 `source_status.holdings: success`, `asset_summary` total_value 0 and
 invested 0. The `portfolio` table still shows ETERNAL.NS 67 and NYKAA.NS 40
 because the prune guard skips cleanup on any empty response, so a genuinely
-sold book looks identical to a transient glitch. Waiting for the user to
-confirm the sale before clearing; the durable fix is to treat an empty
-response WITH `source_status.holdings == success` and invested 0 as
-authoritative.
+sold book looks identical to a transient glitch. Resolved 26/10 after the
+user confirmed the sale: `_is_confirmed_empty` (e730f7a) treats an empty
+reply as real only with no error, `source_status.holdings == success` and
+invested 0, and the next sync logged "pruning 2 stale holding rows
+(INDmoney confirms an empty book)". `portfolio` is now empty.
+
+**Gemini backup re-added 26/10 (87e4381)** at the user's request: restored
+the pre-dc47bb8 provider entry, passed `GEMINI_API_KEY` to the five LLM
+workflows, added placeholders to both env templates. Inactive until the
+user creates the key and sets it in `/etc/arcemx.env` and as a GitHub
+secret; then verify the model names with a models.list call.
+
+**First real weekday on the new chain (26/10):** Daily Market Analysis
+success (served by `dots-3-note-preview`, the primary fell through again
+on the big prompt), Stock Analyst 6 of 6 ok.
 
 **Lesson.** Free models churn without notice. Keep the chain at 4 or more,
 and a failed job is only visible today through the US brief's own failure
@@ -2456,7 +2467,10 @@ message and GitHub run history.
 
 ## Changelog (append new entries at top, dated)
 
-- **2026-10-24 (latest)** - Fixed the 20/10 to 24/10 LLM outage: dead free
+- **2026-10-26 (latest)** - Sold India holdings cleared via a confirmed-
+  empty prune rule; Gemini re-added as a dormant backup provider pending
+  the user's key; first weekday on the new chain all green. See section 49.
+- **2026-10-24 (earlier)** - Fixed the 20/10 to 24/10 LLM outage: dead free
   models replaced with a tested 5-model chain, router now rotates on HTTP
   errors, tries the whole chain and caps the OpenRouter models window at 3.
   Excluded two hindsight-contaminated analyses I created on 13/10. Found
