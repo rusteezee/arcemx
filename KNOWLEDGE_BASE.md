@@ -2465,9 +2465,52 @@ message and GitHub run history.
 
 ---
 
+## 50. Oracle server down since 26/10, GitHub watchdog added (2026-11-02)
+
+**What happened.** The Oracle box stopped on the afternoon of 26/10. Last
+server-written rows: `us_holdings` 26/10 12:30 UTC, `us_briefs` 12:47,
+`paper_signals` 11:36, Stock Analyst dispatch 03:30. Since then the Stock
+Analyst dispatches stopped, `http://92.4.84.48/health` gives no response,
+and SSH to 92.4.84.48 reports **REMOTE HOST IDENTIFICATION HAS CHANGED**:
+every host key there (ED25519 and ECDSA) differs from the trusted ones, so
+a rebuilt or different machine now answers on that IP. Most likely Oracle
+reclaimed the Always Free instance (idle reclamation), but only the Oracle
+console can confirm. **Never bypass the host key check** (no
+StrictHostKeyChecking=no, no deleting known_hosts lines) unless the user
+confirms they created the new instance themselves.
+
+**Down while the server is gone:** Telegram bot, US sync, filings, brief and
+grader, India daily grader and paper trader (open `PTCIL.NS` paper trade is
+unmanaged), daily prices and sync, alerts checker, hourly news, Stock
+Analyst dispatch, factor mining. **Still running (GitHub cron):** Daily
+Market Analysis (02:50 and 03:13 UTC) and Sensei EOD. The one GitHub
+failure since 26/10 (29/10) was an INDmoney refresh-token race between two
+runs; later runs succeeded.
+
+**Recovery** is the doctrine in `deploy/oracle/setup.sh`: new Always Free VM
+(Ubuntu 24.04), run setup.sh, refill `/etc/arcemx.env` (the user must enter
+the secrets), enable timers. To stop a repeat, upgrade the tenancy to Pay
+As You Go; Always Free resources stay free and PAYG is not subject to idle
+reclamation.
+
+**Watchdog (bead25e).** Nothing noticed this for a week because every alert
+path lived on the dead server. `bot/watchdog.py` runs from
+`.github/workflows/watchdog.yml` at 06:17 and 13:37 UTC on weekdays, checks
+the latest write of `us_holdings`, `us_briefs`, `paper_signals`,
+`stock_analyses` and `analysis` in weekday hours (weekends never alarm) plus
+the `/health` page, and sends one plain Telegram message listing anything
+stale. It exits 1 when something is down, so the run is red by design.
+First real run on 02/11 reported all four server jobs and the health page.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-10-26 (latest)** - Sold India holdings cleared via a confirmed-
+- **2026-11-02 (latest)** - Oracle server found down since 26/10 (host
+  key changed, health page dead); added a GitHub-hosted watchdog that
+  alerts on Telegram when server jobs go stale. Recovery needs the user's
+  Oracle console. See section 50.
+- **2026-10-26 (earlier)** - Sold India holdings cleared via a confirmed-
   empty prune rule; Gemini re-added as a dormant backup provider pending
   the user's key; first weekday on the new chain all green. See section 49.
 - **2026-10-24 (earlier)** - Fixed the 20/10 to 24/10 LLM outage: dead free
