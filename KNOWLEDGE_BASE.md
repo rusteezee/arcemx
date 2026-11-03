@@ -2504,9 +2504,61 @@ First real run on 02/11 reported all four server jobs and the health page.
 
 ---
 
+## 51. Oracle server deleted, everything moved to GitHub Actions (2026-11-03)
+
+**Confirmed by the user on 03/11: the Oracle VM was deleted.** Decision
+taken without waiting for a rebuild: all scheduled jobs now run on GitHub
+Actions (repo is public, so minutes are free and unlimited). Commit eade32e.
+
+Schedules (UTC, weekdays unless noted), all with `workflow_dispatch` too:
+- `daily_sync` 01:55 India holdings + watchlist (INDmoney, `ARCEMX_NO_BROWSER=1`)
+- `stock_analyst_dispatch` 03:33; `daily_analysis` 02:50 and 03:13 (existing)
+- `alerts_checker` every 15 min 03:00 to 10:45; `hourly_news` hourly at :07
+- `daily_grader` 11:31 (timeout 60; now passes Telegram and LLM keys, since it
+  sends the paper-trade alerts); `daily_prices` 16:34; `sensei_eod` 14:41
+- new files: `us_sync` 11:50 and 21:33, `us_filings` hourly :11 from 11 to 23,
+  `us_brief` 12:21 (about 2 hours before the 14:30 UTC winter open, so a late
+  GitHub start still lands pre-open; the job refuses to run after the open),
+  `us_grader` 22:17, `factor_mining` 12:03; all with a `concurrency` group so
+  runs of the same job never overlap
+- INDmoney jobs are spaced hours apart on purpose: two runs refreshing the
+  shared OAuth token at once caused the 29/10 "refresh token does not exist".
+
+Verified on GitHub 03/11: daily_sync (token refreshed), us_sync, us_brief
+(both holdings, attempt 1, stored and sent), us_grader (first 5-session grades
+after the gap: SKHY +8.9% HIT, TSM -3.0% HIT), us_filings (5 new filings),
+factor_mining, hourly_news, daily_prices, alerts_checker.
+
+**New GitHub secrets needed by these jobs:** `SEC_CONTACT_EMAIL` (set 03/11
+to the user's address), `GEMINI_API_KEY` (optional, backup LLM, unset).
+
+**What is gone with the server:** only the always-on Telegram BOT (commands
+such as /us, /portfolio, /buy, /alert, and the in-process schedulers).
+Scheduled Telegram messages still arrive from the jobs above. The
+`deploy/oracle` files and `OnCalendar` timers are now documentation of the
+old setup, not live. The bot can be hosted again later (any always-on box
+runs `python -m bot.telegram_bot` with the env vars from
+`deploy/oracle/arcemx.env.template`).
+
+**Watchdog (bot/watchdog.py)** no longer pings the dead health URL
+(`ARCEMX_HEALTH_URL` empty means skip) and its footer now points at the
+Actions tab.
+
+**Known soft spots:** GitHub cron can start 5 to 60 minutes late and skips
+congested slots, so the pre-open US brief has margin but not a guarantee;
+`alerts_checker` on GitHub is best-effort at 15 minutes. The India paper
+trader's open PTCIL.NS trade was unmanaged from 26/10 until the grader ran
+again on 03/11.
+
+---
+
 ## Changelog (append new entries at top, dated)
 
-- **2026-11-02 (latest)** - Oracle server found down since 26/10 (host
+- **2026-11-03 (latest)** - User confirmed the Oracle VM was deleted. Moved
+  every scheduled job to GitHub Actions (6 re-scheduled, 5 new workflows),
+  verified each by running it. Only the interactive Telegram bot is gone.
+  Set the SEC contact secret. See section 51.
+- **2026-11-02 (earlier)** - Oracle server found down since 26/10 (host
   key changed, health page dead); added a GitHub-hosted watchdog that
   alerts on Telegram when server jobs go stale. Recovery needs the user's
   Oracle console. See section 50.
