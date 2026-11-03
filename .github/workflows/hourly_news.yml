@@ -6,6 +6,9 @@ on:
   # there and finding GH's own native cron had gone silent for hours on this
   # exact job that same morning. workflow_dispatch stays as a manual
   # recovery path.
+  # Re-enabled 2026-11-03: the Oracle server was deleted on 26/10, so GitHub runs this now.
+  schedule:
+    - cron: "7 * * * *"
   workflow_dispatch:
 
 # See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.

@@ -1,0 +1,35 @@
+name: US Brief Grader
+
+# Grades the US briefs after the close (20:00 UTC summer, 21:00 UTC winter).
+# Moved here 2026-11-03 after the Oracle server was deleted on 26/10.
+on:
+  schedule:
+    - cron: "17 22 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: us_grader
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Run us.grader
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -u -m us.grader

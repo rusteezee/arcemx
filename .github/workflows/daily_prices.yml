@@ -8,6 +8,9 @@ on:
   # blueprint 22 Phase A: moved to arcemx-daily-prices.timer on the Oracle
   # box (2026-08-31), 16:30 UTC Mon-Fri, same schedule this cron: used to
   # run. workflow_dispatch stays as a manual recovery path.
+  # Re-enabled 2026-11-03: the Oracle server was deleted on 26/10, so GitHub runs this now.
+  schedule:
+    - cron: "34 16 * * 1-5"
   workflow_dispatch:
 
 # See daily_analysis.yml for rationale on FORCE_JAVASCRIPT_ACTIONS_TO_NODE24.

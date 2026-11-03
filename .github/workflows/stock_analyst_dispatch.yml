@@ -13,6 +13,9 @@ on:
   # for this workflow had never actually fired successfully - every prior
   # run was a manual workflow_dispatch. workflow_dispatch stays as a
   # manual recovery path.
+  # Re-enabled 2026-11-03: the Oracle server was deleted on 26/10, so GitHub runs this now.
+  schedule:
+    - cron: "33 3 * * 1-5"
   workflow_dispatch:
 
 env:

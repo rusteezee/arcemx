@@ -21,6 +21,9 @@ on:
   # (2026-08-31) after confirming a real automatic fire there - GH's own
   # native cron for this job hadn't fired in 3 days at the time of cutover.
   # workflow_dispatch stays as a manual recovery path.
+  # Re-enabled 2026-11-03: the Oracle server was deleted on 26/10, so GitHub runs this now.
+  schedule:
+    - cron: "55 1 * * 1-5"
   workflow_dispatch:
 
 env:
@@ -42,6 +45,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ARCEMX_NO_BROWSER: "1"
         run: |
           python - <<'EOF'
           import asyncio, os

@@ -26,16 +26,18 @@ from supabase import create_client
 
 from us.notify import send_telegram
 
-HEALTH_URL = os.getenv("ARCEMX_HEALTH_URL", "http://92.4.84.48/health")
+# The always-on Telegram bot lived on the Oracle server, deleted 26/10. Set
+# ARCEMX_HEALTH_URL again if the bot is ever hosted somewhere; empty = skip.
+HEALTH_URL = os.getenv("ARCEMX_HEALTH_URL", "")
 _HEALTH_TIMEOUT_S = 15
 
 # (label, table, timestamp column, max weekday hours since the last write)
 CHECKS = (
-    ("US holdings sync (server)", "us_holdings", "synced_at", 30),
-    ("US daily brief (server)", "us_briefs", "created_at", 50),
-    ("Paper trader / India grader (server)", "paper_signals", "evaluated_at", 50),
-    ("Stock Analyst dispatch (server)", "stock_analyses", "requested_at", 50),
-    ("Daily Market Analysis (GitHub)", "analysis", "run_at", 50),
+    ("US holdings sync", "us_holdings", "synced_at", 30),
+    ("US daily brief", "us_briefs", "created_at", 50),
+    ("Paper trader / India grader", "paper_signals", "evaluated_at", 50),
+    ("Stock Analyst dispatch", "stock_analyses", "requested_at", 50),
+    ("Daily Market Analysis", "analysis", "run_at", 50),
 )
 
 
@@ -107,13 +109,14 @@ def _latest_writes() -> dict:
 def format_alert(problems: list[str]) -> str:
     return ("Arc'emX watchdog: something is down\n\n"
             + "\n".join(f"- {p}" for p in problems)
-            + "\n\nIf several server jobs are stale at once, the Oracle server "
-              "itself is down.")
+            + "\n\nEvery scheduled job runs on GitHub Actions; check the "
+              "repository's Actions tab for the failed runs.")
 
 
 def run(dry: bool = False) -> int:
     now = datetime.now(timezone.utc)
-    problems = evaluate(_latest_writes(), now, check_health())
+    health = check_health(HEALTH_URL) if HEALTH_URL else (True, "not monitored")
+    problems = evaluate(_latest_writes(), now, health)
     if not problems:
         print("watchdog: all fresh")
         return 0

@@ -1,0 +1,37 @@
+name: US Daily Brief
+
+# Advisory pre-open brief. 12:21 UTC is about 2 hours before the 14:30 UTC winter open (1 hour in summer), so a late GitHub start still lands pre-open; the job skips itself after the open.
+# Moved here 2026-11-03 after the Oracle server was deleted on 26/10.
+on:
+  schedule:
+    - cron: "21 12 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: us_brief
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Run us.daily_brief
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -u -m us.daily_brief

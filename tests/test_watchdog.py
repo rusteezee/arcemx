@@ -36,20 +36,20 @@ def test_normal_weekend_does_not_alarm():
     """Friday's last US sync at 21:30 is fine on Monday morning."""
     now = dt(2026, 11, 2, 6, 17)
     latest = fresh(now)
-    latest["US holdings sync (server)"] = dt(2026, 10, 30, 21, 30)
+    latest["US holdings sync"] = dt(2026, 10, 30, 21, 30)
     assert evaluate(latest, now, (True, "OK")) == []
 
 
 def test_the_real_outage_is_reported():
-    """Server writes stopped 26/10 afternoon; checked on Mon 02/11."""
+    """Writes stopped 26/10 afternoon; checked on Mon 02/11."""
     now = dt(2026, 11, 2, 6, 17)
     latest = fresh(now)
-    for label in ("US holdings sync (server)", "US daily brief (server)",
-                  "Paper trader / India grader (server)", "Stock Analyst dispatch (server)"):
+    for label in ("US holdings sync", "US daily brief",
+                  "Paper trader / India grader", "Stock Analyst dispatch"):
         latest[label] = dt(2026, 10, 26, 12, 47)
     problems = evaluate(latest, now, (False, "no response (ConnectTimeout)"))
     assert len(problems) == 5
-    assert any("US daily brief (server): last write 26/10 12:47 UTC" in p for p in problems)
+    assert any("US daily brief: last write 26/10 12:47 UTC" in p for p in problems)
     assert any("health page: no response" in p for p in problems)
     assert not any("Daily Market Analysis" in p for p in problems)
 
@@ -57,11 +57,11 @@ def test_the_real_outage_is_reported():
 def test_missing_rows_and_failed_queries_are_problems():
     now = dt(2026, 11, 2, 6, 17)
     latest = fresh(now)
-    latest["US daily brief (server)"] = None
-    latest["Daily Market Analysis (GitHub)"] = "APIError"
+    latest["US daily brief"] = None
+    latest["Daily Market Analysis"] = "APIError"
     problems = evaluate(latest, now, (True, "OK"))
-    assert "US daily brief (server): no rows found" in problems
-    assert "Daily Market Analysis (GitHub): check failed (APIError)" in problems
+    assert "US daily brief: no rows found" in problems
+    assert "Daily Market Analysis: check failed (APIError)" in problems
 
 
 def test_alert_text_house_style():

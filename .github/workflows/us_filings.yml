@@ -1,0 +1,41 @@
+name: US SEC Filings
+
+# Hourly SEC EDGAR check for held US tickers during EDGAR's main filing window.
+# Moved here 2026-11-03 after the Oracle server was deleted on 26/10.
+on:
+  schedule:
+    - cron: "11 11-23 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: us_filings
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Run us.sec_filings
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$SEC_CONTACT_EMAIL" ]; then
+            echo "SEC_CONTACT_EMAIL secret is not set, skipping (SEC requires a contact address)"
+            exit 0
+          fi
+          python -u -m us.sec_filings

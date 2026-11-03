@@ -9,6 +9,9 @@ on:
   # on Oracle, a real network-path bottleneck to Yahoo Finance from GH's
   # shared runners, not a caching bug. See section 40. workflow_dispatch
   # stays as a manual recovery path.
+  # Re-enabled 2026-11-03: the Oracle server was deleted on 26/10, so GitHub runs this now.
+  schedule:
+    - cron: "31 11 * * 1-5"
   workflow_dispatch:
     inputs:
       backfill:
@@ -46,7 +49,7 @@ jobs:
     # this. 30min gives real headroom over normal operation while turning
     # a runaway hang into a bounded, dead-man-ping-triggering failure
     # instead of silent unbounded wall-clock.
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -81,6 +84,10 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python -u -m analyzer.grader
       # Was never wired into any scheduled job; stock_analyses rows sat
       # ungraded indefinitely, starving stock_analyst_llm's learning loop
