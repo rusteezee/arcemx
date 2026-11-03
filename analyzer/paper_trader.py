@@ -70,6 +70,13 @@ MAX_NOTIONAL_PCT = 0.08          # portfolio cap on any single trade's notional.
                                  # aggressively than the level that was silently
                                  # being violated anyway. See COST_TO_PROFIT_MAX
                                  # below for the complementary, size-agnostic fix.
+MAX_ONE_SHARE_RISK_MULT = 2.0    # skip an entry when ONE share's stop-loss already
+                                 # exceeds this multiple of the per-trade risk budget.
+                                 # The max(1, ...) qty floor otherwise forces 1 share,
+                                 # so PTCIL.NS (13/10/2026: 1 share at 23,680 on a
+                                 # 29.5k base, stop 15.4% away) risked about 12% of
+                                 # the base against the 2% budget, and one stop-out
+                                 # would have tripled the lifetime paper loss.
 MIN_CONF = 55                    # stated-win_prob floor (see _conf_from_winprob).
                                  # Lowered 60->55 on 25/06: the model's B-tier
                                  # stated win_prob band is 0.50-0.65, so a 60
@@ -143,6 +150,13 @@ COST_TO_PROFIT_MAX = 0.40        # skip if estimated round-trip cost (brokerage+
                                  # every case (regime-half sizing, small
                                  # portfolio_base, expensive stocks can still
                                  # combine to force a too-small qty).
+
+
+def _one_share_too_risky(risk_per_share: float, risk_budget: float) -> bool:
+    """True when a single share's stop distance already exceeds
+    MAX_ONE_SHARE_RISK_MULT times the risk budget, i.e. no legal position
+    size exists below the floor of one share."""
+    return risk_per_share > MAX_ONE_SHARE_RISK_MULT * risk_budget
 
 
 def _sb():
@@ -928,6 +942,12 @@ def _evaluate_one(sb, analysis_row: dict, now: datetime,
     # portfolio_base flows in from eval_signals so a single lookup
     # serves the whole pass (avoids one Supabase hit per signal).
     risk_budget = portfolio_base * RISK_PER_TRADE
+    if _one_share_too_risky(risk_per_share, risk_budget):
+        _log_signal(sb, ticker, sa_id, "skip", "one_share_exceeds_risk",
+                    confidence=confidence, edge=edge,
+                    meta={"risk_per_share": risk_per_share, "risk_budget": risk_budget,
+                          "geometry": geometry})
+        return "one_share_exceeds_risk"
     qty_by_risk = int(risk_budget / risk_per_share)
     qty_by_notional_cap = int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)
     qty = max(1, min(qty_by_risk, qty_by_notional_cap))
@@ -1777,6 +1797,11 @@ def _evaluate_outlook(sb, analysis_row: dict, outlook: dict,
         return "sector_cap"
 
     risk_budget = portfolio_base * RISK_PER_TRADE
+    if _one_share_too_risky(risk_per_share, risk_budget):
+        L("skip", "one_share_exceeds_risk", edge=edge,
+          meta={"risk_per_share": risk_per_share, "risk_budget": risk_budget,
+                "geometry": geometry})
+        return "one_share_exceeds_risk"
     qty_by_risk = int(risk_budget / risk_per_share)
     qty_by_notional_cap = int((portfolio_base * MAX_NOTIONAL_PCT) / intent_px)
     qty = max(1, min(qty_by_risk, qty_by_notional_cap))
