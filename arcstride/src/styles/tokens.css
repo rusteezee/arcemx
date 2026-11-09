@@ -1,0 +1,85 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   ArcArmor Design System — System A "Arc'emX! Product System"
+   Tokens transcribed from ARCARMOR_BRAND_PLAYBOOK.md v1.0.
+   Everything here is dark-only by design: near-black, never #000.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  /* Base (playbook) */
+  --arcx-bg: #0a0a0a;
+  --arcx-surface-1: #111111;
+  --arcx-surface-2: #18181b;
+  --arcx-border: #27272a;
+  --arcx-text: #fafafa;
+  --arcx-text-muted: #a1a1aa;
+
+  /* Signal colours — semantic, not decorative (playbook) */
+  --arcx-positive: #4ade80;
+  --arcx-negative: #f87171;
+  --arcx-caution: #facc15;
+  --arcx-positive-alt: #a3e635;
+
+  /* Signal chips: 8–10 % fill + 35–50 % border of the same hue (playbook) */
+  --arcx-caution-bg: color(srgb 0.98 0.8 0.082 / 0.08);
+  --arcx-caution-border: color(srgb 0.98 0.8 0.082 / 0.35);
+  --arcx-positive-bg: color(srgb 0.29 0.871 0.502 / 0.1);
+  --arcx-positive-border: color(srgb 0.29 0.871 0.502 / 0.5);
+  --arcx-negative-bg: color(srgb 0.973 0.443 0.443 / 0.1);
+  --arcx-negative-border: color(srgb 0.973 0.443 0.443 / 0.45);
+  --arcx-lime-bg: color(srgb 0.639 0.902 0.208 / 0.1);
+  --arcx-lime-border: color(srgb 0.639 0.902 0.208 / 0.45);
+  --arcx-neutral-bg: rgba(250, 250, 250, 0.05);
+  --arcx-neutral-border: rgba(250, 250, 250, 0.16);
+
+  /* Shape & radius (playbook) */
+  --radius-pill: 999px;
+  --radius-lg: 22px;
+  --radius-md: 16px;
+  --radius-sm: 14px;
+
+  /* Fonts (playbook): Geist for UI, Geist Mono for numbers/labels */
+  --font-sans: 'Geist Variable', Geist, 'Geist Fallback', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', 'Geist Mono Fallback', ui-monospace, monospace;
+  /* Geometric glyph icons (playbook: Unicode markers instead of an icon library) */
+  --font-glyph: 'Geist Mono Variable', 'DejaVu Sans', 'Noto Sans Symbols 2', 'Segoe UI Symbol', 'Apple Symbols', sans-serif;
+
+  /* Type scale — app/dashboard context (playbook: ≈60 % of marketing sizes) */
+  --fs-h1: 48px;
+  --fs-h2: 24px;
+  --fs-h3: 18px;
+  --fs-body: 16.8px;
+  --fs-ui: 14px;
+  --fs-small: 12.5px;
+  --fs-eyebrow: 11.2px;
+  --fs-btn-sm: 11.52px;
+  --fs-btn: 14.72px;
+  --ls-h1: -0.035em;
+  --ls-h2: -0.025em;
+  --ls-h3: -0.025em;
+  --ls-body: -0.01em;
+  --ls-eyebrow: 0.1em; /* wide tracking on small caps — opposite direction, on purpose */
+
+  /* Chart roles — validated with the dataviz skill against surface #111111.
+     Identity colours are the playbook's signals; green stays reserved for status meaning. */
+  --c-ink: #fafafa; /* primary series: pace / speed / total */
+  --c-hr: #f87171; /* heart rate · fatigue */
+  --c-pwr: #facc15; /* power */
+  --c-fit: #a3e635; /* fitness · cadence · efficiency */
+  --c-pos: #4ade80; /* status: good / positive form */
+  --c-neg: #f87171; /* status: bad / negative form */
+  --c-grid: #1f1f23; /* hairline grid, one step off the surface */
+  --c-axis: #3f3f46;
+  --c-elev: #52525b;
+  --c-z1: #71717a;
+  --c-z2: #4ade80;
+  --c-z3: #a3e635;
+  --c-z4: #facc15;
+  --c-z5: #fb923c; /* documented extension within the playbook's 400-level family */
+  --c-z6: #f87171;
+  --c-z7: #e879f9;
+
+  /* Layout */
+  --gutter: clamp(16px, 4vw, 48px);
+  --maxw: 1240px;
+}
